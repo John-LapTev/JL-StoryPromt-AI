@@ -1,0 +1,5 @@
+{
+  "name": "JL StoryPrompt AI",
+  "description": "An application for creating video storyboards. Users can upload images, analyze the plot with AI to generate prompts, and create videos from the frames.",
+  "requestFramePermissions": []
+}
