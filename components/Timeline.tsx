@@ -33,6 +33,7 @@ interface TimelineProps {
     onViewImage: (index: number) => void;
     onOpenDetailView: (frame: Frame) => void;
     onOpenAssetLibrary: () => void;
+    onContextMenu: (e: React.MouseEvent, frame: Frame) => void;
 }
 
 
@@ -59,6 +60,7 @@ export const Timeline: React.FC<TimelineProps> = ({
     onViewImage,
     onOpenDetailView,
     onOpenAssetLibrary,
+    onContextMenu,
 }) => {
     const timelineRef = useRef<HTMLDivElement>(null);
     const [isPanning, setIsPanning] = useState(false);
@@ -241,6 +243,7 @@ export const Timeline: React.FC<TimelineProps> = ({
                                         onOpenDetailView={onOpenDetailView}
                                         onDragStart={(e) => handleDragStart(e, index)}
                                         onDragEnd={handleDragEnd}
+                                        onContextMenu={onContextMenu}
                                     />
                                 </div>
                                 <div className="frame-card-interactive">

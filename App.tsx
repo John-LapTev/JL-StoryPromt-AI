@@ -13,6 +13,7 @@ import { FrameDetailModal } from './components/FrameDetailModal';
 import { ProjectSaveModal } from './components/ProjectSaveModal';
 import { ProjectLoadModal } from './components/ProjectLoadModal';
 import { AssetLibraryPanel } from './components/AssetLibraryPanel';
+import { ContextMenu } from './components/ContextMenu';
 import { analyzeStory, generateSinglePrompt, generateIntermediateFrame, generateTransitionPrompt, generateImageFromPrompt, editImage, generateVideoFromFrame, generateImageInContext, createStoryFromAssets } from './services/geminiService';
 import { fileToBase64, dataUrlToFile, fetchCorsImage } from './utils/fileUtils';
 
@@ -52,6 +53,7 @@ export default function App() {
     const [generatedVideoUrl, setGeneratedVideoUrl] = useState<string | null>(null);
     const [isVeoKeySelected, setIsVeoKeySelected] = useState(false);
     const [isGenerateModalOpen, setIsGenerateModalOpen] = useState(false);
+    const [editingFrameForAdvancedModal, setEditingFrameForAdvancedModal] = useState<Frame | null>(null);
     const [generateFrameIndex, setGenerateFrameIndex] = useState(0);
     const [isChatOpen, setIsChatOpen] = useState(false);
     const [editingFrame, setEditingFrame] = useState<Frame | null>(null);
@@ -59,6 +61,7 @@ export default function App() {
     const [detailedFrame, setDetailedFrame] = useState<Frame | null>(null);
     const [transform, setTransform] = useState({ scale: 1, x: 0, y: 0 });
     const [isAssetLibraryOpen, setIsAssetLibraryOpen] = useState(false);
+    const [contextMenu, setContextMenu] = useState<{ x: number, y: number, frame: Frame } | null>(null);
     
     // Non-blocking loading states
     const [generatingIntermediateIndex, setGeneratingIntermediateIndex] = useState<number | null>(null);
@@ -404,9 +407,11 @@ export default function App() {
         }
     }, [localFrames, updateFrames]);
     
-    const handleStartFrameGeneration = async (data: { mode: 'generate' | 'edit', prompt: string, maintainContext?: boolean, file?: File, preview?: string }) => {
+    const handleStartFrameGeneration = async (data: { mode: 'generate' | 'edit', prompt: string, maintainContext?: boolean, file?: File, preview?: string }, frameIdToUpdate?: string) => {
         setIsGenerateModalOpen(false);
-        setGeneratingNewFrameIndex(generateFrameIndex);
+        if (!frameIdToUpdate) {
+            setGeneratingNewFrameIndex(generateFrameIndex);
+        }
         
         try {
             let imageUrl: string;
@@ -429,25 +434,30 @@ export default function App() {
             }
 
             const file = dataUrlToFile(imageUrl, `generated-${Date.now()}.png`);
-            const newFrame: Frame = {
-                id: crypto.randomUUID(),
-                imageUrl: imageUrl,
-                prompt: finalPrompt,
-                duration: 3.0,
-                file,
-            };
-
-            updateFrames(prev => {
-                const newFrames = [...prev];
-                newFrames.splice(generateFrameIndex, 0, newFrame);
-                return newFrames;
-            });
+            
+            if (frameIdToUpdate) {
+                updateFrames(prev => prev.map(f => f.id === frameIdToUpdate ? { ...f, imageUrl: imageUrl, file: file } : f));
+            } else {
+                const newFrame: Frame = {
+                    id: crypto.randomUUID(),
+                    imageUrl: imageUrl,
+                    prompt: finalPrompt,
+                    duration: 3.0,
+                    file,
+                };
+                updateFrames(prev => {
+                    const newFrames = [...prev];
+                    newFrames.splice(generateFrameIndex, 0, newFrame);
+                    return newFrames;
+                });
+            }
 
         } catch (error) {
             console.error("Error during generation:", error);
             alert(`Не удалось выполнить операцию: ${error instanceof Error ? error.message : String(error)}`);
         } finally {
             setGeneratingNewFrameIndex(null);
+            setEditingFrameForAdvancedModal(null);
         }
     };
 
@@ -657,6 +667,51 @@ export default function App() {
             setSelectedAssetIds(new Set());
         }
     };
+    
+    // --- Context Menu Handlers ---
+    const handleContextMenu = (e: React.MouseEvent, frame: Frame) => {
+        e.preventDefault();
+        setContextMenu({ x: e.clientX, y: e.clientY, frame });
+    };
+    const handleCloseContextMenu = () => setContextMenu(null);
+
+    const handleDuplicateFrame = async (frameId: string) => {
+        const frameIndex = localFrames.findIndex(f => f.id === frameId);
+        if (frameIndex === -1) return;
+        const frameToDuplicate = localFrames[frameIndex];
+        const newFrame: Frame = {
+            ...frameToDuplicate,
+            id: crypto.randomUUID(),
+        };
+        updateFrames(prev => {
+            const newFrames = [...prev];
+            newFrames.splice(frameIndex + 1, 0, newFrame);
+            return newFrames;
+        });
+    };
+    
+    const handleReplaceFrame = (frameId: string) => {
+        const input = document.createElement('input');
+        input.type = 'file';
+        input.accept = 'image/*';
+        input.onchange = async (e) => {
+            const file = (e.target as HTMLInputElement).files?.[0];
+            if (file) {
+                try {
+                    const base64 = await fileToBase64(file);
+                    updateFrames(prev => prev.map(f => f.id === frameId ? { ...f, imageUrl: base64, file } : f));
+                } catch (error) {
+                    console.error("Error replacing file:", error);
+                    alert("Could not load image file for replacement.");
+                }
+            }
+        };
+        input.click();
+    };
+
+    const handleOpenAdvancedEdit = (frame: Frame) => {
+        setEditingFrameForAdvancedModal(frame);
+    };
 
     return (
         <div className="relative flex h-screen w-full flex-col group/design-root overflow-hidden">
@@ -712,6 +767,7 @@ export default function App() {
                     onViewImage={setViewingFrameIndex}
                     onOpenDetailView={setDetailedFrame}
                     onOpenAssetLibrary={() => setIsAssetLibraryOpen(true)}
+                    onContextMenu={handleContextMenu}
                 />
             </main>
 
@@ -726,13 +782,17 @@ export default function App() {
             </button>
             
             {generatedVideoUrl && <VideoModal videoUrl={generatedVideoUrl} onClose={() => setGeneratedVideoUrl(null)} />}
-            {isGenerateModalOpen && (
+            {isGenerateModalOpen || editingFrameForAdvancedModal ? (
                 <AdvancedGenerateModal
                     frames={localFrames}
-                    onClose={() => setIsGenerateModalOpen(false)}
-                    onGenerate={handleStartFrameGeneration}
+                    frameToEdit={editingFrameForAdvancedModal}
+                    onClose={() => {
+                        setIsGenerateModalOpen(false);
+                        setEditingFrameForAdvancedModal(null);
+                    }}
+                    onGenerate={(data) => handleStartFrameGeneration(data, editingFrameForAdvancedModal?.id)}
                 />
-            )}
+            ) : null}
             {editingFrame && (
                 <EditPromptModal 
                     frame={editingFrame}
@@ -770,6 +830,19 @@ export default function App() {
                     onLoad={handleLoadProject}
                     onDelete={handleDeleteProject}
                     onNew={handleNewProject}
+                />
+            )}
+            {contextMenu && (
+                <ContextMenu
+                    x={contextMenu.x}
+                    y={contextMenu.y}
+                    onClose={handleCloseContextMenu}
+                    actions={[
+                        { label: 'Создать видео', icon: 'movie', onClick: () => handleGenerateVideo(contextMenu.frame) },
+                        { label: 'Редактировать кадр', icon: 'tune', onClick: () => handleOpenAdvancedEdit(contextMenu.frame) },
+                        { label: 'Дублировать', icon: 'content_copy', onClick: () => handleDuplicateFrame(contextMenu.frame.id) },
+                        { label: 'Заменить кадр', icon: 'swap_horiz', onClick: () => handleReplaceFrame(contextMenu.frame.id) },
+                    ]}
                 />
             )}
         </div>

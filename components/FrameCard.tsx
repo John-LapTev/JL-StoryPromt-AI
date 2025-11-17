@@ -18,6 +18,7 @@ interface FrameCardProps {
     onOpenDetailView: (frame: Frame) => void;
     onDragStart: (e: React.DragEvent) => void;
     onDragEnd: () => void;
+    onContextMenu: (e: React.MouseEvent, frame: Frame) => void;
 }
 
 export const FrameCard: React.FC<FrameCardProps> = ({ 
@@ -35,7 +36,8 @@ export const FrameCard: React.FC<FrameCardProps> = ({
     onGenerateVideo, 
     onOpenDetailView,
     onDragStart,
-    onDragEnd 
+    onDragEnd,
+    onContextMenu,
 }) => {
     const DURATION_STEP = 0.25;
 
@@ -60,11 +62,6 @@ export const FrameCard: React.FC<FrameCardProps> = ({
 
     const handleIncrease = () => {
         onDurationChange(frame.id, frame.duration + DURATION_STEP);
-    };
-
-    const handleGenerateVideoClick = (e: React.MouseEvent) => {
-        e.stopPropagation();
-        onGenerateVideo(frame);
     };
 
     const PromptSection: React.FC = () => {
@@ -127,50 +124,40 @@ export const FrameCard: React.FC<FrameCardProps> = ({
             draggable
             onDragStart={onDragStart}
             onDragEnd={onDragEnd}
+            onContextMenu={(e) => onContextMenu(e, frame)}
         >
-            <div className="flex flex-col items-center gap-1">
+            <div 
+                className="relative group"
+                onDoubleClick={() => onOpenDetailView(frame)}
+            >
                 <div 
-                    className="relative group"
-                    onDoubleClick={() => onOpenDetailView(frame)}
+                    className="w-48 h-28 rounded-lg bg-black/20 border-2 border-primary cursor-pointer overflow-hidden" 
+                    onClick={() => onViewImage(index)}
                 >
-                    <div 
-                        className="w-48 h-28 rounded-lg bg-black/20 border-2 border-primary cursor-pointer overflow-hidden" 
-                        onClick={() => onViewImage(index)}
-                    >
-                         <img src={frame.imageUrl} alt={`Frame ${index + 1}`} className="w-full h-full object-contain" />
+                     <img src={frame.imageUrl} alt={`Frame ${index + 1}`} className="w-full h-full object-contain" />
+                </div>
+                <button
+                    onClick={(e) => { e.stopPropagation(); onDeleteFrame(frame.id); }}
+                    className="absolute top-1.5 right-1.5 z-10 size-6 rounded-full bg-red-600/80 flex items-center justify-center text-white opacity-0 group-hover:opacity-100 hover:bg-red-500 backdrop-blur-sm transition-opacity"
+                    aria-label="Delete frame"
+                >
+                    <span className="material-symbols-outlined text-base">delete</span>
+                </button>
+                {generatingVideoState && (
+                     <div className="absolute inset-0 bg-black/80 backdrop-blur-[2px] flex flex-col items-center justify-center text-white rounded-lg p-2 gap-2 text-center">
+                        <div className="w-8 h-8 border-4 border-primary border-t-transparent rounded-full animate-spin"></div>
+                        <p className="text-xs font-medium">{generatingVideoState.message}</p>
                     </div>
-                    <button
-                        onClick={(e) => { e.stopPropagation(); onDeleteFrame(frame.id); }}
-                        className="absolute top-1.5 right-1.5 z-10 size-6 rounded-full bg-red-600/80 flex items-center justify-center text-white opacity-0 group-hover:opacity-100 hover:bg-red-500 backdrop-blur-sm transition-opacity"
-                        aria-label="Delete frame"
-                    >
-                        <span className="material-symbols-outlined text-base">delete</span>
-                    </button>
-                    <div 
-                        className="absolute inset-0 bg-black/50 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity rounded-lg"
-                        onClick={(e) => { e.stopPropagation(); onViewImage(index); }}
-                    >
-                        <button onClick={handleGenerateVideoClick} className="size-10 rounded-full bg-white/20 flex flex-col items-center justify-center text-white hover:bg-white/30 backdrop-blur-sm text-xs">
-                             <span className="material-symbols-outlined text-lg">movie</span>
-                             <span className="text-[10px]">VEO</span>
-                        </button>
+                )}
+                <div className="absolute top-1.5 left-1.5 bg-black/60 text-white text-xs font-bold w-6 h-6 flex items-center justify-center rounded-full">{index + 1}</div>
+            </div>
+             <div className="flex items-center justify-center">
+                <div className="flex h-6 items-center rounded-full bg-white/5 px-0.5">
+                    <button onClick={handleDecrease} className="flex size-5 items-center justify-center rounded-full text-white/80 transition-colors hover:bg-white/20 hover:text-white"><span className="material-symbols-outlined text-base font-bold">remove</span></button>
+                    <div className="flex items-baseline whitespace-nowrap px-1.5 text-xs font-medium text-white">
+                        <span>({frame.duration.toFixed(2)})</span><span className="text-[0.625rem] ml-0.5">s</span>
                     </div>
-                    {generatingVideoState && (
-                         <div className="absolute inset-0 bg-black/80 backdrop-blur-[2px] flex flex-col items-center justify-center text-white rounded-lg p-2 gap-2 text-center">
-                            <div className="w-8 h-8 border-4 border-primary border-t-transparent rounded-full animate-spin"></div>
-                            <p className="text-xs font-medium">{generatingVideoState.message}</p>
-                        </div>
-                    )}
-                    <div className="absolute top-1.5 left-1.5 bg-black/60 text-white text-xs font-bold w-6 h-6 flex items-center justify-center rounded-full">{index + 1}</div>
-                    <div className="absolute bottom-1.5 left-1.5 right-1.5 flex items-center justify-center">
-                        <div className="flex h-6 items-center rounded-full bg-black/50 px-0.5 backdrop-blur-sm transition-colors group-hover:bg-black/70">
-                            <button onClick={handleDecrease} className="flex size-5 items-center justify-center rounded-full text-white/80 transition-colors hover:bg-white/20 hover:text-white"><span className="material-symbols-outlined text-base font-bold">remove</span></button>
-                            <div className="flex items-baseline whitespace-nowrap px-1.5 text-xs font-medium text-white">
-                                <span>({frame.duration.toFixed(2)})</span><span className="text-[0.625rem] ml-0.5">s</span>
-                            </div>
-                            <button onClick={handleIncrease} className="flex size-5 items-center justify-center rounded-full text-white/80 transition-colors hover:bg-white/20 hover:text-white"><span className="material-symbols-outlined text-base font-bold">add</span></button>
-                        </div>
-                    </div>
+                    <button onClick={handleIncrease} className="flex size-5 items-center justify-center rounded-full text-white/80 transition-colors hover:bg-white/20 hover:text-white"><span className="material-symbols-outlined text-base font-bold">add</span></button>
                 </div>
             </div>
             <PromptSection />

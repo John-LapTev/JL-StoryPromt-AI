@@ -1,5 +1,4 @@
-
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { fileToBase64, dataUrlToFile, fetchCorsImage } from '../utils/fileUtils';
 import type { Frame } from '../types';
 
@@ -7,17 +6,26 @@ interface AdvancedGenerateModalProps {
     onClose: () => void;
     onGenerate: (data: { mode: 'generate' | 'edit', prompt: string, maintainContext?: boolean, file?: File, preview?: string }) => void;
     frames: Frame[];
+    frameToEdit?: Frame | null;
 }
 
 type Mode = 'generate' | 'edit';
 
-export const AdvancedGenerateModal: React.FC<AdvancedGenerateModalProps> = ({ onClose, onGenerate, frames }) => {
+export const AdvancedGenerateModal: React.FC<AdvancedGenerateModalProps> = ({ onClose, onGenerate, frames, frameToEdit }) => {
     const [mode, setMode] = useState<Mode>('generate');
     const [prompt, setPrompt] = useState('');
     const [editImageFile, setEditImageFile] = useState<File | null>(null);
     const [editImagePreview, setEditImagePreview] = useState<string | null>(null);
     const [selectedFrameId, setSelectedFrameId] = useState<string | null>(null);
     const [maintainContext, setMaintainContext] = useState(true);
+
+    useEffect(() => {
+        if (frameToEdit) {
+            setMode('edit');
+            setPrompt(''); // Edit prompts are instructions, not descriptions. Start fresh.
+            handleSelectFrameForEdit(frameToEdit);
+        }
+    }, [frameToEdit]);
 
     const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0];
@@ -82,9 +90,9 @@ export const AdvancedGenerateModal: React.FC<AdvancedGenerateModalProps> = ({ on
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50" onClick={onClose}>
             <div className="bg-[#191C2D] border border-white/10 rounded-xl p-6 flex flex-col gap-4 text-white max-w-lg w-full" onClick={e => e.stopPropagation()}>
                 <div className="flex items-center justify-between">
-                     <h3 className="text-xl font-bold">Создать новый кадр</h3>
+                     <h3 className="text-xl font-bold">{frameToEdit ? 'Редактировать кадр' : 'Создать новый кадр'}</h3>
                      <div className="flex items-center bg-white/5 rounded-lg p-1 text-sm">
-                        <button onClick={() => setMode('generate')} className={`px-3 py-1 rounded-md ${mode === 'generate' ? 'bg-primary' : ''}`}>Сгенерировать</button>
+                        <button onClick={() => setMode('generate')} className={`px-3 py-1 rounded-md ${mode === 'generate' ? 'bg-primary' : ''}`} disabled={!!frameToEdit}>Сгенерировать</button>
                         <button onClick={() => setMode('edit')} className={`px-3 py-1 rounded-md ${mode === 'edit' ? 'bg-primary' : ''}`}>Редактировать</button>
                      </div>
                 </div>
@@ -162,7 +170,7 @@ export const AdvancedGenerateModal: React.FC<AdvancedGenerateModalProps> = ({ on
                         Отмена
                     </button>
                     <button onClick={handleGenerateClick} disabled={mode === 'edit' && !editImageFile} className="flex min-w-[84px] cursor-pointer items-center justify-center overflow-hidden rounded-lg h-10 px-4 bg-primary text-white text-sm font-bold hover:bg-primary/90 disabled:bg-gray-500 disabled:cursor-not-allowed">
-                        Создать
+                        {frameToEdit ? 'Сохранить изменения' : 'Создать'}
                     </button>
                 </div>
             </div>
