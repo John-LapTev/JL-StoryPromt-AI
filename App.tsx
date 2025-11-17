@@ -428,80 +428,76 @@ export default function App() {
         }
     }, [localFrames, updateFrames]);
     
-    const handleStartFrameGeneration = async (data: { mode: 'generate' | 'edit', prompt: string, maintainContext?: boolean }, frameIdToUpdate?: string) => {
+    const handleStartFrameGeneration = async (data: { mode: 'generate', prompt: string, maintainContext?: boolean }) => {
         setIsAdvancedGenerateModalOpen(false);
         
         const insertIndex = advancedGenerateModalConfig.insertIndex ?? 0;
-        const frameToEdit = advancedGenerateModalConfig.frameToEdit;
-
-        if (frameIdToUpdate) {
-            updateFrames(prev => prev.map(f => f.id === frameIdToUpdate ? { ...f, isGenerating: true } : f));
-        } else {
-             setGeneratingNewFrameIndex(insertIndex);
-        }
+        
+        // This function now only handles 'generate' mode. 'edit' is handled by handleApplyEdit.
+        setGeneratingNewFrameIndex(insertIndex);
         
         try {
             let imageUrl: string;
             let finalPrompt = data.prompt;
 
-            if (data.mode === 'generate') {
-                if (data.maintainContext) {
-                    const leftFrame = localFrames[insertIndex - 1] || null;
-                    const rightFrame = localFrames[insertIndex] || null;
-                    const result = await generateImageInContext(data.prompt, leftFrame, rightFrame);
-                    imageUrl = result.imageUrl;
-                    finalPrompt = result.prompt;
-                } else {
-                    imageUrl = await generateImageFromPrompt(data.prompt);
-                }
-            } else if (data.mode === 'edit' && frameToEdit) {
-                imageUrl = await editImage(frameToEdit, data.prompt);
+            if (data.maintainContext) {
+                const leftFrame = localFrames[insertIndex - 1] || null;
+                const rightFrame = localFrames[insertIndex] || null;
+                const result = await generateImageInContext(data.prompt, leftFrame, rightFrame);
+                imageUrl = result.imageUrl;
+                finalPrompt = result.prompt;
             } else {
-                 throw new Error("Invalid state for generation.");
+                imageUrl = await generateImageFromPrompt(data.prompt);
             }
             
-            if (frameIdToUpdate) {
-                const file = dataUrlToFile(imageUrl, `edited-${frameIdToUpdate}-${Date.now()}.png`);
-                updateFrames(prev => prev.map(f => {
-                    if (f.id === frameIdToUpdate) {
-                        const newImageUrls = [...f.imageUrls, imageUrl];
-                        return {
-                            ...f,
-                            imageUrls: newImageUrls,
-                            activeVersionIndex: newImageUrls.length - 1,
-                            file,
-                            isGenerating: false,
-                        };
-                    }
-                    return f;
-                }));
-            } else {
-                const file = dataUrlToFile(imageUrl, `generated-${Date.now()}.png`);
-                const newFrame: Frame = {
-                    id: crypto.randomUUID(),
-                    imageUrls: [imageUrl],
-                    activeVersionIndex: 0,
-                    prompt: finalPrompt,
-                    duration: 3.0,
-                    file,
-                };
-                updateFrames(prev => {
-                    const newFrames = [...prev];
-                    newFrames.splice(insertIndex, 0, newFrame);
-                    return newFrames;
-                });
-            }
+            const file = dataUrlToFile(imageUrl, `generated-${Date.now()}.png`);
+            const newFrame: Frame = {
+                id: crypto.randomUUID(),
+                imageUrls: [imageUrl],
+                activeVersionIndex: 0,
+                prompt: finalPrompt,
+                duration: 3.0,
+                file,
+            };
+            updateFrames(prev => {
+                const newFrames = [...prev];
+                newFrames.splice(insertIndex, 0, newFrame);
+                return newFrames;
+            });
 
         } catch (error) {
             console.error("Error during generation:", error);
             alert(`Не удалось выполнить операцию: ${error instanceof Error ? error.message : String(error)}`);
-            if (frameIdToUpdate) {
-                 updateFrames(prev => prev.map(f => f.id === frameIdToUpdate ? { ...f, isGenerating: false } : f));
-            }
         } finally {
             setGeneratingNewFrameIndex(null);
         }
     };
+
+    const handleApplyEdit = useCallback(async (frameId: string, newImageUrl: string, newPrompt: string) => {
+        try {
+            const file = dataUrlToFile(newImageUrl, `edited-${frameId}-${Date.now()}.png`);
+            updateFrames(prev => prev.map(f => {
+                if (f.id === frameId) {
+                    const newImageUrls = [...f.imageUrls, newImageUrl];
+                    return {
+                        ...f,
+                        imageUrls: newImageUrls,
+                        activeVersionIndex: newImageUrls.length - 1,
+                        file,
+                        prompt: newPrompt,
+                        isTransition: false,
+                        isGenerating: false,
+                    };
+                }
+                return f;
+            }));
+            setIsAdvancedGenerateModalOpen(false);
+        } catch (error) {
+            console.error("Error applying edit:", error);
+            alert(`Не удалось применить изменения: ${error instanceof Error ? error.message : String(error)}`);
+        }
+    }, [updateFrames]);
+
 
     const handleAnalyzeStory = async () => {
         if (localFrames.length === 0) {
@@ -868,7 +864,8 @@ export default function App() {
             {isAdvancedGenerateModalOpen && (
                 <AdvancedGenerateModal
                     onClose={() => setIsAdvancedGenerateModalOpen(false)}
-                    onGenerate={(data) => handleStartFrameGeneration(data, advancedGenerateModalConfig.frameToEdit?.id)}
+                    onGenerate={handleStartFrameGeneration}
+                    onApplyEdit={handleApplyEdit}
                     config={advancedGenerateModalConfig}
                     frames={localFrames}
                 />

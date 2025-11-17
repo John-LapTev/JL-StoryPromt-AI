@@ -30,7 +30,7 @@ export const Chatbot: React.FC<ChatbotProps> = ({ isOpen, onClose }) => {
             const chatSession = ai.chats.create({
                 model: 'gemini-2.5-flash',
                 config: {
-                    systemInstruction: 'You are a helpful and creative assistant for a video storyboard creator. Provide ideas, suggestions, and answer questions concisely.',
+                    systemInstruction: 'Ты — полезный и креативный ассистент для создателя видео-раскадровок. Предлагай идеи, давай советы и отвечай на вопросы кратко и по делу.',
                 },
             });
             setChat(chatSession);
@@ -77,7 +77,7 @@ export const Chatbot: React.FC<ChatbotProps> = ({ isOpen, onClose }) => {
             <div className="flex items-center justify-between p-4 border-b border-white/10 shrink-0">
                 <h3 className="text-lg font-bold text-white flex items-center gap-2">
                     <span className="material-symbols-outlined text-primary">spark</span>
-                    AI Assistant
+                    AI Ассистент
                 </h3>
                 <button onClick={onClose} className="text-white/70 hover:text-white">
                     <span className="material-symbols-outlined">close</span>

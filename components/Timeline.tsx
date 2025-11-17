@@ -74,6 +74,11 @@ export const Timeline: React.FC<TimelineProps> = ({
      // Keyboard listener for Spacebar to enable global panning mode
     useEffect(() => {
         const handleKeyDown = (e: KeyboardEvent) => {
+            const target = e.target as HTMLElement;
+            if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable) {
+                return;
+            }
+
             if (e.code === 'Space' && !e.repeat) {
                 e.preventDefault(); // Prevent page scroll
                 setIsSpaceDown(true);
