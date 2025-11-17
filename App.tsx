@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import type { Frame } from './types';
+import type { Frame, Project } from './types';
 import { initialFrames } from './constants';
+import { projectService } from './services/projectService';
 import { Header } from './components/Header';
 import { Timeline } from './components/Timeline';
 import { VideoModal } from './components/VideoModal';
@@ -9,12 +10,11 @@ import { Chatbot } from './components/Chatbot';
 import { EditPromptModal } from './components/EditPromptModal';
 import { ImageViewerModal } from './components/ImageViewerModal';
 import { FrameDetailModal } from './components/FrameDetailModal';
+import { ProjectSaveModal } from './components/ProjectSaveModal';
+import { ProjectLoadModal } from './components/ProjectLoadModal';
 import { analyzeStory, generateSinglePrompt, generateIntermediateFrame, generateTransitionPrompt, generateImageFromPrompt, editImage, generateVideoFromFrame, generateImageInContext } from './services/geminiService';
 import { fileToBase64 } from './utils/fileUtils';
 
-// Fix: Corrected the type definition for `window.aistudio` to use a named interface `AIStudio`.
-// This resolves a TypeScript error where subsequent property declarations had conflicting types.
-// By augmenting the global `AIStudio` interface, this change ensures type consistency across the application.
 declare global {
     interface AIStudio {
         hasSelectedApiKey: () => Promise<boolean>;
@@ -27,8 +27,20 @@ declare global {
 
 export type GeneratingVideoState = { frameId: string; message: string } | null;
 
+const DEMO_PROJECT_ID = 'demo-project';
+
 export default function App() {
-    const [frames, setFrames] = useState<Frame[]>(initialFrames);
+    // Project State
+    const [projects, setProjects] = useState<Project[]>([]);
+    const [currentProjectId, setCurrentProjectId] = useState<string | null>(null);
+    const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
+    const [localFrames, setLocalFrames] = useState<Frame[]>([]);
+
+    // Modal States
+    const [isSaveModalOpen, setIsSaveModalOpen] = useState(false);
+    const [isLoadModalOpen, setIsLoadModalOpen] = useState(false);
+
+    // UI States
     const [generatedVideoUrl, setGeneratedVideoUrl] = useState<string | null>(null);
     const [isVeoKeySelected, setIsVeoKeySelected] = useState(false);
     const [isGenerateModalOpen, setIsGenerateModalOpen] = useState(false);
@@ -46,6 +58,54 @@ export default function App() {
     const [generatingVideoState, setGeneratingVideoState] = useState<GeneratingVideoState>(null);
     const [generatingNewFrameIndex, setGeneratingNewFrameIndex] = useState<number | null>(null);
 
+    // Derived state
+    const currentProject = useMemo(() => projects.find(p => p.id === currentProjectId), [projects, currentProjectId]);
+
+    // Initial project loading
+    useEffect(() => {
+        const allProjects = projectService.getProjects();
+        let lastId = projectService.getLastProjectId();
+        let projectToLoad = allProjects.find(p => p.id === lastId);
+
+        if (!projectToLoad && allProjects.length > 0) {
+            projectToLoad = allProjects.sort((a,b) => b.lastModified - a.lastModified)[0];
+            lastId = projectToLoad.id;
+        }
+
+        if (!projectToLoad) {
+            const demoProject: Project = {
+                id: DEMO_PROJECT_ID,
+                name: 'Демо проект',
+                frames: initialFrames,
+                lastModified: Date.now()
+            };
+            allProjects.push(demoProject);
+            projectService.saveProjects(allProjects);
+            projectToLoad = demoProject;
+            lastId = demoProject.id;
+        }
+        
+        setProjects(allProjects);
+        setCurrentProjectId(lastId);
+        if (lastId) {
+            projectService.setLastProjectId(lastId);
+        }
+    }, []);
+
+    // Sync localFrames with currentProject frames
+    useEffect(() => {
+        if (currentProject) {
+            setLocalFrames(currentProject.frames);
+        }
+    }, [currentProject]);
+
+    const updateFrames = useCallback((newFrames: Frame[] | ((prev: Frame[]) => Frame[])) => {
+        const framesToSet = typeof newFrames === 'function' ? newFrames(localFrames) : newFrames;
+        setLocalFrames(framesToSet);
+        setHasUnsavedChanges(true);
+    }, [localFrames]);
+    
+    // VEO Key check
     useEffect(() => {
         const checkKey = async () => {
             if (window.aistudio && await window.aistudio.hasSelectedApiKey()) {
@@ -56,19 +116,111 @@ export default function App() {
     }, []);
 
     const totalDuration = useMemo(() => {
-        return frames.reduce((acc, frame) => acc + frame.duration, 0);
-    }, [frames]);
+        return localFrames.reduce((acc, frame) => acc + frame.duration, 0);
+    }, [localFrames]);
+    
+    const handleConfirmUnsaved = () => {
+        if (!hasUnsavedChanges) return true;
+        return window.confirm("У вас есть несохраненные изменения. Вы уверены, что хотите продолжить без сохранения?");
+    };
 
+    const handleNewProject = () => {
+        if (!handleConfirmUnsaved()) return;
+        setIsLoadModalOpen(false);
+        
+        const newProject: Project = {
+            id: crypto.randomUUID(),
+            name: 'Новый проект',
+            frames: [],
+            lastModified: Date.now(),
+        };
+
+        const updatedProjects = [...projects, newProject];
+        setProjects(updatedProjects);
+        setCurrentProjectId(newProject.id);
+        projectService.setLastProjectId(newProject.id);
+        projectService.saveProjects(updatedProjects); 
+        setHasUnsavedChanges(false);
+    };
+
+    const handleSaveProject = () => {
+        if (!currentProject) return;
+        if (currentProject.id === DEMO_PROJECT_ID || hasUnsavedChanges === false && projects.some(p => p.id === currentProject.id)) {
+            // It's the demo project, force "Save As"
+            setIsSaveModalOpen(true);
+            return;
+        }
+
+        const framesToSave = localFrames.map(({ file, ...rest }) => rest);
+        const updatedProject = { ...currentProject, frames: framesToSave, lastModified: Date.now() };
+        const updatedProjects = projects.map(p => p.id === currentProject.id ? updatedProject : p);
+        
+        setProjects(updatedProjects);
+        projectService.saveProjects(updatedProjects);
+        setHasUnsavedChanges(false);
+        alert(`Проект "${currentProject.name}" сохранен!`);
+    };
+
+    const handleSaveAs = (newName: string) => {
+        if (!currentProject) return;
+        
+        const projectToSave: Project = {
+            ...currentProject,
+            id: currentProject.id === DEMO_PROJECT_ID ? crypto.randomUUID() : currentProject.id,
+            name: newName,
+            frames: localFrames.map(({ file, ...rest }) => rest),
+            lastModified: Date.now(),
+        };
+        
+        const updatedProjects = projects.some(p => p.id === projectToSave.id)
+            ? projects.map(p => p.id === projectToSave.id ? projectToSave : p)
+            : [...projects, projectToSave];
+            
+        setProjects(updatedProjects);
+        setCurrentProjectId(projectToSave.id);
+        projectService.setLastProjectId(projectToSave.id);
+        projectService.saveProjects(updatedProjects);
+        setHasUnsavedChanges(false);
+        setIsSaveModalOpen(false);
+    };
+
+    const handleLoadProject = (id: string) => {
+        if (!handleConfirmUnsaved()) return;
+        setCurrentProjectId(id);
+        projectService.setLastProjectId(id);
+        setHasUnsavedChanges(false);
+        setIsLoadModalOpen(false);
+    };
+
+    const handleDeleteProject = (id: string) => {
+        const projectToDelete = projects.find(p => p.id === id);
+        if (!projectToDelete || !window.confirm(`Вы уверены, что хотите удалить проект "${projectToDelete.name}"? Это действие нельзя отменить.`)) return;
+        
+        const updatedProjects = projects.filter(p => p.id !== id);
+        setProjects(updatedProjects);
+        projectService.saveProjects(updatedProjects);
+        
+        if (currentProjectId === id) {
+            if (updatedProjects.length > 0) {
+                const nextProject = updatedProjects.sort((a,b) => b.lastModified - a.lastModified)[0];
+                setCurrentProjectId(nextProject.id);
+                projectService.setLastProjectId(nextProject.id);
+            } else {
+                handleNewProject();
+            }
+        }
+    };
+    
     const handleDurationChange = useCallback((id: string, newDuration: number) => {
-        setFrames(prevFrames =>
+        updateFrames(prevFrames =>
             prevFrames.map(frame =>
                 frame.id === id ? { ...frame, duration: Math.max(0.25, newDuration) } : frame
             )
         );
-    }, []);
+    }, [updateFrames]);
 
     const handlePromptChange = useCallback((id: string, newPrompt: string) => {
-        setFrames(prevFrames =>
+        updateFrames(prevFrames =>
             prevFrames.map(frame =>
                 frame.id === id ? { ...frame, prompt: newPrompt, isTransition: false } : frame
             )
@@ -76,7 +228,7 @@ export default function App() {
         if (editingFrame?.id === id) {
             setEditingFrame(prev => prev ? { ...prev, prompt: newPrompt } : null);
         }
-    }, [editingFrame]);
+    }, [editingFrame, updateFrames]);
     
     const handleSavePrompt = (id: string, newPrompt: string) => {
         handlePromptChange(id, newPrompt);
@@ -84,7 +236,7 @@ export default function App() {
     }
 
     const handleSaveFrameDetails = useCallback((id: string, newPrompt: string, newDuration: number) => {
-        setFrames(prevFrames =>
+        updateFrames(prevFrames =>
             prevFrames.map(frame =>
                 frame.id === id ? { ...frame, prompt: newPrompt, duration: Math.max(0.25, newDuration), isTransition: false } : frame
             )
@@ -92,11 +244,11 @@ export default function App() {
         if (detailedFrame?.id === id) {
             setDetailedFrame(prev => prev ? { ...prev, prompt: newPrompt, duration: newDuration } : null);
         }
-    }, [detailedFrame]);
+    }, [detailedFrame, updateFrames]);
 
     const handleDeleteFrame = useCallback((id: string) => {
-        setFrames(prevFrames => prevFrames.filter(frame => frame.id !== id));
-    }, []);
+        updateFrames(prevFrames => prevFrames.filter(frame => frame.id !== id));
+    }, [updateFrames]);
 
     const handleAddFrame = useCallback(async (index: number, type: 'upload' | 'generate' | 'intermediate') => {
         if (type === 'upload') {
@@ -115,7 +267,7 @@ export default function App() {
                             duration: 3.0,
                             file: file,
                         };
-                        setFrames(prev => {
+                        updateFrames(prev => {
                             const newFrames = [...prev];
                             newFrames.splice(index, 0, newFrame);
                             return newFrames;
@@ -131,8 +283,8 @@ export default function App() {
             setGenerateFrameIndex(index);
             setIsGenerateModalOpen(true);
         } else if (type === 'intermediate') {
-            const leftFrame = frames[index - 1];
-            const rightFrame = frames[index];
+            const leftFrame = localFrames[index - 1];
+            const rightFrame = localFrames[index];
             if (!leftFrame || !rightFrame) {
                 alert("Не удалось найти соседние кадры для создания промежуточного.");
                 return;
@@ -146,7 +298,7 @@ export default function App() {
                     prompt,
                     duration: Number(((leftFrame.duration + rightFrame.duration) / 2).toFixed(2)),
                 };
-                setFrames(prev => {
+                updateFrames(prev => {
                     const newFrames = [...prev];
                     newFrames.splice(index, 0, newFrame);
                     return newFrames;
@@ -158,7 +310,7 @@ export default function App() {
                 setGeneratingIntermediateIndex(null);
             }
         }
-    }, [frames]);
+    }, [localFrames, updateFrames]);
     
     const handleStartFrameGeneration = async (data: { mode: 'generate' | 'edit', prompt: string, maintainContext?: boolean, file?: File, preview?: string }) => {
         setIsGenerateModalOpen(false);
@@ -170,8 +322,8 @@ export default function App() {
 
             if (data.mode === 'generate') {
                 if (data.maintainContext) {
-                    const leftFrame = frames[generateFrameIndex - 1] || null;
-                    const rightFrame = frames[generateFrameIndex] || null;
+                    const leftFrame = localFrames[generateFrameIndex - 1] || null;
+                    const rightFrame = localFrames[generateFrameIndex] || null;
                     const result = await generateImageInContext(data.prompt, leftFrame, rightFrame);
                     imageUrl = result.imageUrl;
                     finalPrompt = result.prompt;
@@ -191,7 +343,7 @@ export default function App() {
                 duration: 3.0,
             };
 
-            setFrames(prev => {
+            updateFrames(prev => {
                 const newFrames = [...prev];
                 newFrames.splice(generateFrameIndex, 0, newFrame);
                 return newFrames;
@@ -206,15 +358,15 @@ export default function App() {
     };
 
     const handleAnalyzeStory = async () => {
-        if (frames.length === 0) {
+        if (localFrames.length === 0) {
             alert("Please add at least one frame to analyze.");
             return;
         }
         setGeneratingStory(true);
         try {
-            const prompts = await analyzeStory(frames);
-            if (prompts.length === frames.length) {
-                setFrames(prevFrames =>
+            const prompts = await analyzeStory(localFrames);
+            if (prompts.length === localFrames.length) {
+                updateFrames(prevFrames =>
                     prevFrames.map((frame, index) => ({
                         ...frame,
                         prompt: prompts[index],
@@ -233,12 +385,12 @@ export default function App() {
     };
     
     const handleGenerateSinglePrompt = async (frameId: string) => {
-        const frameToUpdate = frames.find(f => f.id === frameId);
+        const frameToUpdate = localFrames.find(f => f.id === frameId);
         if (!frameToUpdate) return;
 
         setGeneratingPromptFrameId(frameId);
         try {
-            const newPrompt = await generateSinglePrompt(frameToUpdate, frames);
+            const newPrompt = await generateSinglePrompt(frameToUpdate, localFrames);
             handlePromptChange(frameId, newPrompt);
         } catch (error) {
              console.error("Error generating single prompt:", error);
@@ -249,8 +401,8 @@ export default function App() {
     };
 
     const handleGenerateTransition = useCallback(async (index: number) => {
-        const leftFrame = frames[index - 1];
-        const rightFrame = frames[index];
+        const leftFrame = localFrames[index - 1];
+        const rightFrame = localFrames[index];
 
         if (!leftFrame || !rightFrame) {
             alert("Не удалось найти соседние кадры для создания перехода.");
@@ -260,7 +412,7 @@ export default function App() {
         setGeneratingPromptFrameId(leftFrame.id);
         try {
             const transitionPrompt = await generateTransitionPrompt(leftFrame, rightFrame);
-            setFrames(prevFrames =>
+            updateFrames(prevFrames =>
                 prevFrames.map(frame =>
                     frame.id === leftFrame.id
                         ? { ...frame, prompt: transitionPrompt, isTransition: true }
@@ -274,9 +426,10 @@ export default function App() {
         } finally {
             setGeneratingPromptFrameId(null);
         }
-    }, [frames]);
+    }, [localFrames, updateFrames]);
 
     const handleGenerateVideo = async (frame: Frame) => {
+        // This function remains largely the same, no project state changes needed here.
         let retriesLeft = 1;
         let keyIsValid = isVeoKeySelected;
 
@@ -329,13 +482,19 @@ export default function App() {
         }
     };
 
-
     return (
         <div className="relative flex h-screen w-full flex-col group/design-root overflow-hidden">
-            <Header />
+            <Header 
+                projectName={currentProject?.name || 'Загрузка...'}
+                hasUnsavedChanges={hasUnsavedChanges}
+                onNewProject={handleNewProject}
+                onSaveProject={handleSaveProject}
+                onSaveAsProject={() => setIsSaveModalOpen(true)}
+                onLoadProject={() => setIsLoadModalOpen(true)}
+            />
             <main className="flex flex-1 flex-col overflow-auto p-6">
                 <Timeline
-                    frames={frames}
+                    frames={localFrames}
                     totalDuration={totalDuration}
                     transform={transform}
                     setTransform={setTransform}
@@ -371,7 +530,7 @@ export default function App() {
             {generatedVideoUrl && <VideoModal videoUrl={generatedVideoUrl} onClose={() => setGeneratedVideoUrl(null)} />}
             {isGenerateModalOpen && (
                 <AdvancedGenerateModal
-                    frames={frames}
+                    frames={localFrames}
                     onClose={() => setIsGenerateModalOpen(false)}
                     onGenerate={handleStartFrameGeneration}
                 />
@@ -385,7 +544,7 @@ export default function App() {
             )}
             {viewingFrameIndex !== null && (
                 <ImageViewerModal 
-                    frames={frames}
+                    frames={localFrames}
                     startIndex={viewingFrameIndex}
                     onClose={() => setViewingFrameIndex(null)} 
                 />
@@ -395,6 +554,24 @@ export default function App() {
                     frame={detailedFrame}
                     onClose={() => setDetailedFrame(null)}
                     onSave={handleSaveFrameDetails}
+                />
+            )}
+            {isSaveModalOpen && (
+                <ProjectSaveModal 
+                    onClose={() => setIsSaveModalOpen(false)}
+                    onSave={handleSaveAs}
+                    initialName={currentProject?.name}
+                    title={currentProject?.id === DEMO_PROJECT_ID ? "Сохранить демо как новый проект" : "Сохранить проект как"}
+                />
+            )}
+            {isLoadModalOpen && (
+                <ProjectLoadModal
+                    projects={projects}
+                    currentProjectId={currentProjectId}
+                    onClose={() => setIsLoadModalOpen(false)}
+                    onLoad={handleLoadProject}
+                    onDelete={handleDeleteProject}
+                    onNew={handleNewProject}
                 />
             )}
         </div>
