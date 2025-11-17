@@ -1,5 +1,3 @@
-
-
 import React, { useState, useRef, useEffect } from 'react';
 
 interface AddFrameButtonProps {
@@ -7,9 +5,23 @@ interface AddFrameButtonProps {
     onAddFrame: (index: number, type: 'upload' | 'generate' | 'intermediate') => void;
     onGenerateTransition?: (index: number) => void;
     showIntermediateOption?: boolean;
+    // Drag and drop props
+    onDragOver?: (e: React.DragEvent) => void;
+    onDragLeave?: () => void;
+    onDrop?: (e: React.DragEvent) => void;
+    isDropTarget?: boolean;
 }
 
-export const AddFrameButton: React.FC<AddFrameButtonProps> = ({ index, onAddFrame, onGenerateTransition, showIntermediateOption = false }) => {
+export const AddFrameButton: React.FC<AddFrameButtonProps> = ({ 
+    index, 
+    onAddFrame, 
+    onGenerateTransition, 
+    showIntermediateOption = false,
+    onDragOver,
+    onDragLeave,
+    onDrop,
+    isDropTarget 
+}) => {
     const [isOpen, setIsOpen] = useState(false);
     const wrapperRef = useRef<HTMLDivElement>(null);
 
@@ -25,11 +37,18 @@ export const AddFrameButton: React.FC<AddFrameButtonProps> = ({ index, onAddFram
         };
     }, [wrapperRef]);
     
+    const dropTargetClasses = isDropTarget 
+        ? 'border-primary bg-primary/20 scale-105'
+        : 'border-white/20 hover:border-white/40 hover:text-white/80';
+    
     return (
         <div className="relative shrink-0" ref={wrapperRef}>
             <button
                 onClick={() => setIsOpen(prev => !prev)}
-                className="flex flex-col items-center justify-center rounded-lg border-2 border-dashed border-white/20 w-12 h-[152px] p-2 text-white/50 hover:border-white/40 hover:text-white/80 transition-colors"
+                onDragOver={onDragOver}
+                onDragLeave={onDragLeave}
+                onDrop={onDrop}
+                className={`flex flex-col items-center justify-center rounded-lg border-2 border-dashed w-12 h-[152px] p-2 text-white/50 transition-all duration-200 ${dropTargetClasses}`}
             >
                 <span className="material-symbols-outlined text-3xl">add</span>
             </button>

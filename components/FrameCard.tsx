@@ -1,4 +1,3 @@
-
 import React from 'react';
 import type { Frame } from '../types';
 import { GeneratingVideoState } from '../App';
@@ -8,6 +7,7 @@ interface FrameCardProps {
     index: number;
     isGeneratingPrompt: boolean;
     generatingVideoState: GeneratingVideoState;
+    isDragging: boolean;
     onDurationChange: (id: string, newDuration: number) => void;
     onPromptChange: (id: string, newPrompt: string) => void;
     onDeleteFrame: (id: string) => void;
@@ -16,9 +16,27 @@ interface FrameCardProps {
     onViewImage: (index: number) => void;
     onGenerateVideo: (frame: Frame) => void;
     onOpenDetailView: (frame: Frame) => void;
+    onDragStart: (e: React.DragEvent) => void;
+    onDragEnd: () => void;
 }
 
-export const FrameCard: React.FC<FrameCardProps> = ({ frame, index, isGeneratingPrompt, generatingVideoState, onDurationChange, onPromptChange, onDeleteFrame, onGenerateSinglePrompt, onEditPrompt, onViewImage, onGenerateVideo, onOpenDetailView }) => {
+export const FrameCard: React.FC<FrameCardProps> = ({ 
+    frame, 
+    index, 
+    isGeneratingPrompt, 
+    generatingVideoState,
+    isDragging,
+    onDurationChange, 
+    onPromptChange, 
+    onDeleteFrame, 
+    onGenerateSinglePrompt, 
+    onEditPrompt, 
+    onViewImage, 
+    onGenerateVideo, 
+    onOpenDetailView,
+    onDragStart,
+    onDragEnd 
+}) => {
     const DURATION_STEP = 0.25;
 
     if (frame.isGenerating) {
@@ -104,7 +122,12 @@ export const FrameCard: React.FC<FrameCardProps> = ({ frame, index, isGenerating
 
 
     return (
-        <div className="flex flex-col gap-2 shrink-0">
+        <div 
+            className={`flex flex-col gap-2 shrink-0 transition-opacity ${isDragging ? 'opacity-40' : 'opacity-100'}`}
+            draggable
+            onDragStart={onDragStart}
+            onDragEnd={onDragEnd}
+        >
             <div className="flex flex-col items-center gap-1">
                 <div 
                     className="relative group"

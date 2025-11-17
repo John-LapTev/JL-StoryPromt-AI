@@ -1,4 +1,3 @@
-
 import React, { useRef, useState, useEffect } from 'react';
 import type { Frame } from '../types';
 import { FrameCard } from './FrameCard';
@@ -25,6 +24,7 @@ interface TimelineProps {
     onPromptChange: (id: string, newPrompt: string) => void;
     onAddFrame: (index: number, type: 'upload' | 'generate' | 'intermediate') => void;
     onDeleteFrame: (id: string) => void;
+    onReorderFrame: (dragIndex: number, dropIndex: number) => void;
     onAnalyzeStory: () => void;
     onGenerateSinglePrompt: (id: string) => void;
     onGenerateTransition: (index: number) => void;
@@ -50,6 +50,7 @@ export const Timeline: React.FC<TimelineProps> = ({
     onPromptChange,
     onAddFrame,
     onDeleteFrame,
+    onReorderFrame,
     onAnalyzeStory,
     onGenerateSinglePrompt,
     onGenerateTransition,
@@ -60,12 +61,14 @@ export const Timeline: React.FC<TimelineProps> = ({
     onOpenAssetLibrary,
 }) => {
     const timelineRef = useRef<HTMLDivElement>(null);
-    const [isDragging, setIsDragging] = useState(false);
+    const [isPanning, setIsPanning] = useState(false);
     const [startPos, setStartPos] = useState({ x: 0, y: 0 });
+    const [draggedIndex, setDraggedIndex] = useState<number | null>(null);
+    const [dropTargetIndex, setDropTargetIndex] = useState<number | null>(null);
 
     useEffect(() => {
         const handleMouseMove = (e: MouseEvent) => {
-            if (!isDragging) return;
+            if (!isPanning) return;
             e.preventDefault();
             const dx = e.clientX - startPos.x;
             const dy = e.clientY - startPos.y;
@@ -74,13 +77,13 @@ export const Timeline: React.FC<TimelineProps> = ({
         };
 
         const handleMouseUp = () => {
-            setIsDragging(false);
+            setIsPanning(false);
             if(timelineRef.current) {
-                timelineRef.current.style.cursor = 'default';
+                timelineRef.current.style.cursor = 'grab';
             }
         };
 
-        if (isDragging) {
+        if (isPanning) {
             window.addEventListener('mousemove', handleMouseMove);
             window.addEventListener('mouseup', handleMouseUp);
         }
@@ -89,14 +92,15 @@ export const Timeline: React.FC<TimelineProps> = ({
             window.removeEventListener('mousemove', handleMouseMove);
             window.removeEventListener('mouseup', handleMouseUp);
         };
-    }, [isDragging, startPos, setTransform]);
+    }, [isPanning, startPos, setTransform]);
 
     const handleMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
+        // Prevent panning when interacting with cards or buttons
         if ((e.target as HTMLElement).closest('.frame-card-interactive')) {
             return;
         }
         e.preventDefault();
-        setIsDragging(true);
+        setIsPanning(true);
         setStartPos({ x: e.clientX, y: e.clientY });
          if(timelineRef.current) {
             timelineRef.current.style.cursor = 'grabbing';
@@ -121,6 +125,43 @@ export const Timeline: React.FC<TimelineProps> = ({
     const handleResetView = () => {
         setTransform({ scale: 1, x: 0, y: 0 });
     };
+
+    // --- Drag and Drop Handlers ---
+    const handleDragStart = (e: React.DragEvent, index: number) => {
+        setDraggedIndex(index);
+        e.dataTransfer.effectAllowed = 'move';
+        // Hiding the default drag preview
+        // e.dataTransfer.setDragImage(new Image(), 0, 0); 
+    };
+
+    const handleDragEnd = () => {
+        setDraggedIndex(null);
+        setDropTargetIndex(null);
+    };
+
+    const handleDragOver = (e: React.DragEvent, index: number) => {
+        e.preventDefault();
+        // A frame cannot be dropped onto the slot immediately before or after itself.
+        if (index !== draggedIndex && index !== (draggedIndex ?? -1) + 1) {
+             setDropTargetIndex(index);
+        } else {
+             setDropTargetIndex(null);
+        }
+    };
+
+    const handleDragLeave = () => {
+        setDropTargetIndex(null);
+    };
+
+    const handleDrop = (e: React.DragEvent) => {
+        e.preventDefault();
+        if (draggedIndex !== null && dropTargetIndex !== null) {
+            onReorderFrame(draggedIndex, dropTargetIndex);
+        }
+        setDraggedIndex(null);
+        setDropTargetIndex(null);
+    };
+
 
     return (
         <div className="flex flex-col flex-1">
@@ -156,7 +197,7 @@ export const Timeline: React.FC<TimelineProps> = ({
                 className="flex-1 rounded-lg p-4 overflow-hidden grid-bg-metallic border border-white/20 min-h-[220px] relative"
                 onMouseDown={handleMouseDown}
                 onWheel={handleWheel}
-                style={{ cursor: isDragging ? 'grabbing' : 'grab' }}
+                style={{ cursor: isPanning ? 'grabbing' : 'grab' }}
             >
                 <div
                      style={{
@@ -167,7 +208,19 @@ export const Timeline: React.FC<TimelineProps> = ({
                 >
                     <div className="flex items-start gap-4 h-full p-4">
                         <div className="frame-card-interactive">
-                             {generatingNewFrameIndex === 0 ? <IntermediateLoadingCard /> : <AddFrameButton index={0} onAddFrame={onAddFrame} showIntermediateOption={false} />}
+                             {generatingNewFrameIndex === 0 ? (
+                                <IntermediateLoadingCard />
+                             ) : (
+                                <AddFrameButton 
+                                    index={0} 
+                                    onAddFrame={onAddFrame} 
+                                    showIntermediateOption={false}
+                                    onDragOver={(e) => handleDragOver(e, 0)}
+                                    onDragLeave={handleDragLeave}
+                                    onDrop={handleDrop}
+                                    isDropTarget={dropTargetIndex === 0}
+                                />
+                             )}
                         </div>
                         {frames.map((frame, index) => (
                             <React.Fragment key={frame.id}>
@@ -177,6 +230,7 @@ export const Timeline: React.FC<TimelineProps> = ({
                                         index={index}
                                         isGeneratingPrompt={generatingPromptFrameId === frame.id}
                                         generatingVideoState={generatingVideoState?.frameId === frame.id ? generatingVideoState : null}
+                                        isDragging={draggedIndex === index}
                                         onDurationChange={onDurationChange}
                                         onPromptChange={onPromptChange}
                                         onDeleteFrame={onDeleteFrame}
@@ -185,6 +239,8 @@ export const Timeline: React.FC<TimelineProps> = ({
                                         onViewImage={onViewImage}
                                         onGenerateVideo={onGenerateVideo}
                                         onOpenDetailView={onOpenDetailView}
+                                        onDragStart={(e) => handleDragStart(e, index)}
+                                        onDragEnd={handleDragEnd}
                                     />
                                 </div>
                                 <div className="frame-card-interactive">
@@ -196,6 +252,10 @@ export const Timeline: React.FC<TimelineProps> = ({
                                             onAddFrame={onAddFrame}
                                             onGenerateTransition={onGenerateTransition}
                                             showIntermediateOption={index < frames.length - 1}
+                                            onDragOver={(e) => handleDragOver(e, index + 1)}
+                                            onDragLeave={handleDragLeave}
+                                            onDrop={handleDrop}
+                                            isDropTarget={dropTargetIndex === index + 1}
                                         />
                                     )}
                                 </div>

@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import type { Frame, Project, Asset } from './types';
 import { initialFrames, initialAssets } from './constants';
@@ -224,7 +223,7 @@ export default function App() {
             return;
         }
 
-        const framesToSave = localFrames.map(({ file, ...rest }) => rest);
+        const framesToSave = localFrames.map(({ file, ...rest }) => ({ ...rest, isGenerating: undefined }));
         const assetsToSave = localAssets.map(({ file, ...rest }) => rest);
         const updatedProject = { ...currentProject, frames: framesToSave, assets: assetsToSave, lastModified: Date.now() };
         const updatedProjects = projects.map(p => p.id === currentProject.id ? updatedProject : p);
@@ -242,7 +241,7 @@ export default function App() {
             ...currentProject,
             id: currentProject.id === DEMO_PROJECT_ID ? crypto.randomUUID() : currentProject.id,
             name: newName,
-            frames: localFrames.map(({ file, ...rest }) => rest),
+            frames: localFrames.map(({ file, ...rest }) => ({...rest, isGenerating: undefined })),
             assets: localAssets.map(({ file, ...rest }) => rest),
             lastModified: Date.now(),
         };
@@ -328,6 +327,17 @@ export default function App() {
 
     const handleDeleteFrame = useCallback((id: string) => {
         updateFrames(prevFrames => prevFrames.filter(frame => frame.id !== id));
+    }, [updateFrames]);
+    
+    const handleReorderFrame = useCallback((dragIndex: number, dropIndex: number) => {
+        updateFrames(prevFrames => {
+            const framesCopy = [...prevFrames];
+            const [draggedFrame] = framesCopy.splice(dragIndex, 1);
+            // Adjust drop index if we are moving an item from before the drop point to after it
+            const effectiveDropIndex = dragIndex < dropIndex ? dropIndex - 1 : dropIndex;
+            framesCopy.splice(effectiveDropIndex, 0, draggedFrame);
+            return framesCopy;
+        });
     }, [updateFrames]);
 
     const handleAddFrame = useCallback(async (index: number, type: 'upload' | 'generate' | 'intermediate') => {
@@ -693,6 +703,7 @@ export default function App() {
                     onPromptChange={handlePromptChange}
                     onAddFrame={handleAddFrame}
                     onDeleteFrame={handleDeleteFrame}
+                    onReorderFrame={handleReorderFrame}
                     onAnalyzeStory={handleAnalyzeStory}
                     onGenerateSinglePrompt={handleGenerateSinglePrompt}
                     onGenerateTransition={handleGenerateTransition}
