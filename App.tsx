@@ -396,6 +396,31 @@ export default function App() {
         }
     }, [updateFrames]);
     
+    const handleAddFramesFromAssets = useCallback((assetIds: string[], index: number) => {
+        const assetsToConvert = localAssets.filter(asset => assetIds.includes(asset.id));
+        if (assetsToConvert.length === 0) return;
+    
+        // Preserve the order from the drag operation
+        const orderedAssets = assetIds
+            .map(id => assetsToConvert.find(a => a.id === id))
+            .filter((a): a is Asset => !!a);
+    
+        const newFrames: Frame[] = orderedAssets.map(asset => ({
+            id: crypto.randomUUID(),
+            imageUrls: [asset.imageUrl],
+            activeVersionIndex: 0,
+            prompt: '',
+            duration: 3.0,
+            file: asset.file,
+        }));
+    
+        updateFrames(prev => {
+            const framesCopy = [...prev];
+            framesCopy.splice(index, 0, ...newFrames);
+            return framesCopy;
+        });
+    }, [localAssets, updateFrames]);
+
     const handleStartFrameGeneration = async (data: { prompt: string }) => {
         setIsAdvancedGenerateModalOpen(false);
         const insertIndex = advancedGenerateModalConfig.insertIndex ?? 0;
@@ -828,6 +853,7 @@ export default function App() {
                     onDurationChange={handleDurationChange}
                     onPromptChange={handlePromptChange}
                     onAddFrame={handleAddFrame}
+                    onAddFramesFromAssets={handleAddFramesFromAssets}
                     onDeleteFrame={handleDeleteFrame}
                     onReorderFrame={handleReorderFrame}
                     onAnalyzeStory={handleAnalyzeStory}

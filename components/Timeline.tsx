@@ -20,6 +20,7 @@ interface TimelineProps {
     onDurationChange: (id: string, newDuration: number) => void;
     onPromptChange: (id: string, newPrompt: string) => void;
     onAddFrame: (index: number, type: 'upload' | 'generate') => void;
+    onAddFramesFromAssets: (assetIds: string[], index: number) => void;
     onDeleteFrame: (id: string) => void;
     onReorderFrame: (dragIndex: number, dropIndex: number) => void;
     onAnalyzeStory: () => void;
@@ -46,6 +47,7 @@ export const Timeline: React.FC<TimelineProps> = ({
     onDurationChange,
     onPromptChange,
     onAddFrame,
+    onAddFramesFromAssets,
     onDeleteFrame,
     onReorderFrame,
     onAnalyzeStory,
@@ -197,11 +199,22 @@ export const Timeline: React.FC<TimelineProps> = ({
 
     const handleDragOver = (e: React.DragEvent, index: number) => {
         e.preventDefault();
-        // A frame cannot be dropped onto the slot immediately before or after itself.
-        if (index !== draggedIndex && index !== (draggedIndex ?? -1) + 1) {
-             setDropTargetIndex(index);
-        } else {
-             setDropTargetIndex(null);
+        
+        // If dragging assets, highlight the drop target
+        if (e.dataTransfer.types.includes('application/json;type=asset-ids')) {
+            e.dataTransfer.dropEffect = 'copy';
+            setDropTargetIndex(index);
+            return;
+        }
+        
+        // If reordering frames
+        if (draggedIndex !== null) {
+            e.dataTransfer.dropEffect = 'move';
+            if (index !== draggedIndex && index !== (draggedIndex ?? -1) + 1) {
+                 setDropTargetIndex(index);
+            } else {
+                 setDropTargetIndex(null);
+            }
         }
     };
 
@@ -211,9 +224,21 @@ export const Timeline: React.FC<TimelineProps> = ({
 
     const handleDrop = (e: React.DragEvent) => {
         e.preventDefault();
-        if (draggedIndex !== null && dropTargetIndex !== null) {
+        const assetIdsJson = e.dataTransfer.getData('application/json;type=asset-ids');
+    
+        if (assetIdsJson && dropTargetIndex !== null) {
+            try {
+                const assetIds = JSON.parse(assetIdsJson);
+                if (Array.isArray(assetIds) && assetIds.length > 0) {
+                    onAddFramesFromAssets(assetIds, dropTargetIndex);
+                }
+            } catch (err) {
+                console.error("Failed to parse dropped asset data", err);
+            }
+        } else if (draggedIndex !== null && dropTargetIndex !== null) {
             onReorderFrame(draggedIndex, dropTargetIndex);
         }
+    
         setDraggedIndex(null);
         setDropTargetIndex(null);
     };

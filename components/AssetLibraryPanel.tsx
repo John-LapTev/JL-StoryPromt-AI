@@ -58,6 +58,60 @@ export const AssetLibraryPanel: React.FC<AssetLibraryPanelProps> = ({
         }
     };
 
+    const handleDragStart = (e: React.DragEvent, assetId: string) => {
+        const isMultiDrag = isSelectionMode && selectedAssetIds.has(assetId);
+        const idsToDrag = isMultiDrag ? Array.from(selectedAssetIds) : [assetId];
+        
+        const dragImage = e.currentTarget.querySelector('img');
+        if (dragImage) {
+            if (isMultiDrag) {
+                const wrapper = document.createElement('div');
+                wrapper.style.position = 'absolute';
+                wrapper.style.top = '-1000px';
+                wrapper.style.left = '-1000px';
+    
+                const countBadge = document.createElement('div');
+                countBadge.textContent = `${idsToDrag.length}`;
+                countBadge.style.position = 'absolute';
+                countBadge.style.top = '0px';
+                countBadge.style.right = '0px';
+                countBadge.style.background = '#1337ec';
+                countBadge.style.color = 'white';
+                countBadge.style.borderRadius = '9999px';
+                countBadge.style.width = '24px';
+                countBadge.style.height = '24px';
+                countBadge.style.display = 'flex';
+                countBadge.style.alignItems = 'center';
+                countBadge.style.justifyContent = 'center';
+                countBadge.style.fontSize = '12px';
+                countBadge.style.fontWeight = 'bold';
+    
+                const imageClone = dragImage.cloneNode(true) as HTMLImageElement;
+                imageClone.style.width = '96px';
+                imageClone.style.height = '56px';
+                imageClone.style.objectFit = 'cover';
+                imageClone.style.borderRadius = '8px';
+    
+                const container = document.createElement('div');
+                container.style.position = 'relative';
+                container.appendChild(imageClone);
+                container.appendChild(countBadge);
+                
+                wrapper.appendChild(container);
+                document.body.appendChild(wrapper);
+                
+                e.dataTransfer.setDragImage(container, 10, 10);
+    
+                setTimeout(() => document.body.removeChild(wrapper), 0);
+            } else {
+                e.dataTransfer.setDragImage(dragImage, dragImage.width / 2, dragImage.height / 2);
+            }
+        }
+    
+        e.dataTransfer.setData('application/json;type=asset-ids', JSON.stringify(idsToDrag));
+        e.dataTransfer.effectAllowed = 'copy';
+    };
+
     const createStoryButtonText = selectedAssetIds.size > 0
         ? `Создать сюжет (${selectedAssetIds.size})`
         : 'Создать сюжет';
@@ -109,7 +163,13 @@ export const AssetLibraryPanel: React.FC<AssetLibraryPanelProps> = ({
                 <div className="flex-1 p-4 overflow-y-auto space-y-4">
                     <div className="grid grid-cols-3 gap-3">
                         {assets.map((asset, index) => (
-                            <div key={asset.id} className="relative group/asset cursor-pointer" onClick={() => handleAssetClick(asset.id, index)}>
+                            <div 
+                                key={asset.id} 
+                                className="relative group/asset cursor-pointer" 
+                                onClick={() => handleAssetClick(asset.id, index)}
+                                draggable={true}
+                                onDragStart={(e) => handleDragStart(e, asset.id)}
+                            >
                                 <img 
                                     src={asset.imageUrl}
                                     alt={asset.name}
