@@ -55,12 +55,25 @@ export const FrameCard: React.FC<FrameCardProps> = ({ frame, index, isGenerating
                     >
                         {frame.isTransition ? 'sync_alt' : 'auto_awesome'}
                     </span>
-                     <p className="text-xs text-white/80 leading-snug w-full h-full overflow-hidden">
+                     <p className="text-xs text-white/80 leading-snug w-full h-full overflow-hidden flex-1">
                         {frame.prompt}
                     </p>
-                    <button onClick={() => onEditPrompt(frame)} className="absolute top-1 right-1 p-0.5 bg-white/10 rounded-sm text-white opacity-0 group-hover/prompt:opacity-100 hover:bg-white/20 focus:opacity-100">
-                        <span className="material-symbols-outlined text-sm">edit</span>
-                    </button>
+                    <div className="flex flex-col gap-1 pl-1 opacity-0 group-hover/prompt:opacity-100 focus-within:opacity-100">
+                        <button 
+                            onClick={() => onGenerateSinglePrompt(frame.id)}
+                            className="p-0.5 bg-white/10 rounded-sm text-white hover:bg-white/20"
+                            title="Перегенерировать промт"
+                        >
+                            <span className="material-symbols-outlined text-sm">autorenew</span>
+                        </button>
+                        <button 
+                            onClick={() => onEditPrompt(frame)} 
+                            className="p-0.5 bg-white/10 rounded-sm text-white hover:bg-white/20"
+                            title="Редактировать промт"
+                        >
+                            <span className="material-symbols-outlined text-sm">edit</span>
+                        </button>
+                    </div>
                 </div>
             );
         }

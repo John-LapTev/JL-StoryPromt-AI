@@ -166,11 +166,15 @@ export default function App() {
         
         try {
             let imageUrl: string;
+            let finalPrompt = data.prompt;
+
             if (data.mode === 'generate') {
                 if (data.maintainContext) {
                     const leftFrame = frames[generateFrameIndex - 1] || null;
                     const rightFrame = frames[generateFrameIndex] || null;
-                    imageUrl = await generateImageInContext(data.prompt, leftFrame, rightFrame);
+                    const result = await generateImageInContext(data.prompt, leftFrame, rightFrame);
+                    imageUrl = result.imageUrl;
+                    finalPrompt = result.prompt;
                 } else {
                     imageUrl = await generateImageFromPrompt(data.prompt);
                 }
@@ -183,7 +187,7 @@ export default function App() {
             const newFrame: Frame = {
                 id: crypto.randomUUID(),
                 imageUrl: imageUrl,
-                prompt: data.prompt,
+                prompt: finalPrompt,
                 duration: 3.0,
             };
 

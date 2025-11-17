@@ -341,13 +341,14 @@ export async function generateImageInContext(
     userPrompt: string,
     leftFrame: Frame | null,
     rightFrame: Frame | null
-): Promise<string> {
+): Promise<{ imageUrl: string; prompt: string }>{
     if (!process.env.API_KEY) {
         throw new Error("API_KEY environment variable not set");
     }
     const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
-    const parts: any[] = [];
+    // --- STEP 1: Generate the image ---
+    const imageGenParts: any[] = [];
     
     let instructionText = `You are an expert storyboard artist creating a new frame based on a user's prompt. The goal is to make this new frame fit seamlessly between two existing frames in a story.
 
@@ -361,32 +362,63 @@ Your task:
 
     if (leftFrame) {
         const { mimeType, data } = await urlOrFileToBase64(leftFrame);
-        parts.push({ inlineData: { mimeType, data } });
+        imageGenParts.push({ inlineData: { mimeType, data } });
         instructionText += `\nContext from LEFT frame: The prompt was "${leftFrame.prompt || 'no prompt'}". The image is provided.`;
     }
     if (rightFrame) {
         const { mimeType, data } = await urlOrFileToBase64(rightFrame);
-        parts.push({ inlineData: { mimeType, data } });
+        imageGenParts.push({ inlineData: { mimeType, data } });
         instructionText += `\nContext from RIGHT frame: The prompt was "${rightFrame.prompt || 'no prompt'}". The image is provided.`;
     }
 
-    // Add the main instruction text at the beginning
-    parts.unshift({ text: instructionText });
+    imageGenParts.unshift({ text: instructionText });
 
-    const response = await ai.models.generateContent({
+    const imageGenResponse = await ai.models.generateContent({
         model: 'gemini-2.5-flash-image',
-        contents: { parts },
+        contents: { parts: imageGenParts },
         config: {
             responseModalities: [Modality.IMAGE],
         },
     });
 
-    for (const part of response.candidates[0].content.parts) {
+    let newImageUrl: string | null = null;
+    let newImagePartForPromptGen: any = null;
+
+    for (const part of imageGenResponse.candidates[0].content.parts) {
         if (part.inlineData) {
-            const base64ImageBytes: string = part.inlineData.data;
-            return `data:${part.inlineData.mimeType};base64,${base64ImageBytes}`;
+            newImageUrl = `data:${part.inlineData.mimeType};base64,${part.inlineData.data}`;
+            newImagePartForPromptGen = { inlineData: { mimeType: part.inlineData.mimeType, data: part.inlineData.data } };
+            break;
         }
     }
 
-    throw new Error("AI failed to generate an image with context.");
+    if (!newImageUrl || !newImagePartForPromptGen) {
+        throw new Error("AI failed to generate an image with context.");
+    }
+
+    // --- STEP 2: Generate a prompt for the new image ---
+    let promptGenText = `You are a professional storyboard artist creating a prompt for a video generation model. Analyze the provided image, which was created to fit between two other frames based on the user request: "${userPrompt}".
+
+Context:`;
+    if (leftFrame?.prompt) {
+        promptGenText += `\n- Previous frame's prompt: "${leftFrame.prompt}"`;
+    }
+    if (rightFrame?.prompt) {
+        promptGenText += `\n- Next frame's prompt: "${rightFrame.prompt}"`;
+    }
+    promptGenText += `\n\nBased on all this context, create a concise but descriptive prompt for the provided new image. This prompt will be used to generate a video clip. Focus on action, camera movement, and mood to ensure a smooth narrative flow. Output only the prompt text itself.`;
+    
+    const promptGenResponse = await ai.models.generateContent({
+        model: 'gemini-2.5-flash',
+        contents: { parts: [{ text: promptGenText }, newImagePartForPromptGen] },
+    });
+
+    const newPrompt = promptGenResponse.text.trim();
+    
+    if (!newPrompt) {
+        console.warn("AI failed to generate a descriptive prompt. Falling back to user input.");
+        return { imageUrl: newImageUrl, prompt: userPrompt };
+    }
+
+    return { imageUrl: newImageUrl, prompt: newPrompt };
 }
