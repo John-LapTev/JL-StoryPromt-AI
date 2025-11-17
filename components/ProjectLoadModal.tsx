@@ -1,3 +1,4 @@
+
 import React from 'react';
 import type { Project } from '../types';
 
@@ -34,13 +35,15 @@ export const ProjectLoadModal: React.FC<ProjectLoadModalProps> = ({ projects, cu
                                     </p>
                                 </div>
                                 <div className="flex items-center gap-2">
-                                    <button
-                                        onClick={() => onDelete(project.id)}
-                                        className="flex size-8 items-center justify-center rounded-md text-white/60 hover:bg-red-500/20 hover:text-red-400"
-                                        title="Удалить"
-                                    >
-                                        <span className="material-symbols-outlined text-xl">delete</span>
-                                    </button>
+                                    {project.id !== 'demo-project' && (
+                                        <button
+                                            onClick={() => onDelete(project.id)}
+                                            className="flex size-8 items-center justify-center rounded-md text-white/60 hover:bg-red-500/20 hover:text-red-400"
+                                            title="Удалить"
+                                        >
+                                            <span className="material-symbols-outlined text-xl">delete</span>
+                                        </button>
+                                    )}
                                     <button
                                         onClick={() => onLoad(project.id)}
                                         className="flex items-center justify-center rounded-md h-8 px-3 bg-white/10 text-white text-xs font-bold hover:bg-white/20"

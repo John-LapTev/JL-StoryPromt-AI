@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { fileToBase64 } from '../utils/fileUtils';
+import { fileToBase64, dataUrlToFile, fetchCorsImage } from '../utils/fileUtils';
 import type { Frame } from '../types';
 
 interface AdvancedGenerateModalProps {
@@ -36,9 +36,16 @@ export const AdvancedGenerateModal: React.FC<AdvancedGenerateModalProps> = ({ on
             setEditImageFile(frame.file);
         } else {
             try {
-                const res = await fetch(frame.imageUrl);
-                const blob = await res.blob();
-                const file = new File([blob], `frame-${frame.id}.${blob.type.split('/')[1] || 'jpeg'}`, { type: blob.type });
+                let file: File;
+                if (frame.imageUrl.startsWith('data:')) {
+                    const mimeType = frame.imageUrl.match(/:(.*?);/)?.[1] || 'image/png';
+                    const extension = mimeType.split('/')[1] || 'png';
+                    file = dataUrlToFile(frame.imageUrl, `frame-${frame.id}.${extension}`);
+                } else {
+                    const blob = await fetchCorsImage(frame.imageUrl);
+                    const extension = blob.type.split('/')[1] || 'jpeg';
+                    file = new File([blob], `frame-${frame.id}.${extension}`, { type: blob.type });
+                }
                 setEditImageFile(file);
             } catch (e) {
                 console.error("Could not fetch image from URL to create a file:", e);

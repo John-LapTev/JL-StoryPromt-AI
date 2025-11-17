@@ -1,6 +1,7 @@
+
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import type { Frame, Project } from './types';
-import { initialFrames } from './constants';
+import type { Frame, Project, Asset } from './types';
+import { initialFrames, initialAssets } from './constants';
 import { projectService } from './services/projectService';
 import { Header } from './components/Header';
 import { Timeline } from './components/Timeline';
@@ -12,8 +13,9 @@ import { ImageViewerModal } from './components/ImageViewerModal';
 import { FrameDetailModal } from './components/FrameDetailModal';
 import { ProjectSaveModal } from './components/ProjectSaveModal';
 import { ProjectLoadModal } from './components/ProjectLoadModal';
-import { analyzeStory, generateSinglePrompt, generateIntermediateFrame, generateTransitionPrompt, generateImageFromPrompt, editImage, generateVideoFromFrame, generateImageInContext } from './services/geminiService';
-import { fileToBase64 } from './utils/fileUtils';
+import { AssetLibraryPanel } from './components/AssetLibraryPanel';
+import { analyzeStory, generateSinglePrompt, generateIntermediateFrame, generateTransitionPrompt, generateImageFromPrompt, editImage, generateVideoFromFrame, generateImageInContext, createStoryFromAssets } from './services/geminiService';
+import { fileToBase64, dataUrlToFile, fetchCorsImage } from './utils/fileUtils';
 
 declare global {
     interface AIStudio {
@@ -26,6 +28,7 @@ declare global {
 }
 
 export type GeneratingVideoState = { frameId: string; message: string } | null;
+export type StoryGenerationState = { active: boolean; message: string; };
 
 const DEMO_PROJECT_ID = 'demo-project';
 
@@ -35,6 +38,8 @@ export default function App() {
     const [currentProjectId, setCurrentProjectId] = useState<string | null>(null);
     const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
     const [localFrames, setLocalFrames] = useState<Frame[]>([]);
+    const [localAssets, setLocalAssets] = useState<Asset[]>([]);
+    const [selectedAssetIds, setSelectedAssetIds] = useState<Set<string>>(new Set());
 
     // Modal States
     const [isSaveModalOpen, setIsSaveModalOpen] = useState(false);
@@ -50,10 +55,12 @@ export default function App() {
     const [viewingFrameIndex, setViewingFrameIndex] = useState<number | null>(null);
     const [detailedFrame, setDetailedFrame] = useState<Frame | null>(null);
     const [transform, setTransform] = useState({ scale: 1, x: 0, y: 0 });
+    const [isAssetLibraryOpen, setIsAssetLibraryOpen] = useState(false);
     
     // Non-blocking loading states
     const [generatingIntermediateIndex, setGeneratingIntermediateIndex] = useState<number | null>(null);
     const [generatingStory, setGeneratingStory] = useState(false);
+    const [storyGenerationState, setStoryGenerationState] = useState<StoryGenerationState>({ active: false, message: '' });
     const [generatingPromptFrameId, setGeneratingPromptFrameId] = useState<string | null>(null);
     const [generatingVideoState, setGeneratingVideoState] = useState<GeneratingVideoState>(null);
     const [generatingNewFrameIndex, setGeneratingNewFrameIndex] = useState<number | null>(null);
@@ -63,48 +70,106 @@ export default function App() {
 
     // Initial project loading
     useEffect(() => {
-        const allProjects = projectService.getProjects();
-        let lastId = projectService.getLastProjectId();
-        let projectToLoad = allProjects.find(p => p.id === lastId);
+        let allProjects = projectService.getProjects();
+        const demoProjectExists = allProjects.some(p => p.id === DEMO_PROJECT_ID);
 
-        if (!projectToLoad && allProjects.length > 0) {
-            projectToLoad = allProjects.sort((a,b) => b.lastModified - a.lastModified)[0];
-            lastId = projectToLoad.id;
-        }
-
-        if (!projectToLoad) {
+        // Ensure the demo project always exists.
+        if (!demoProjectExists) {
             const demoProject: Project = {
                 id: DEMO_PROJECT_ID,
                 name: 'Демо проект',
                 frames: initialFrames,
-                lastModified: Date.now()
+                assets: initialAssets,
+                lastModified: 0 // Set a very old timestamp so it doesn't appear as the most recent by default.
             };
-            allProjects.push(demoProject);
-            projectService.saveProjects(allProjects);
-            projectToLoad = demoProject;
-            lastId = demoProject.id;
+            allProjects.unshift(demoProject);
         }
         
-        setProjects(allProjects);
-        setCurrentProjectId(lastId);
-        if (lastId) {
-            projectService.setLastProjectId(lastId);
+        let lastId = projectService.getLastProjectId();
+        let projectToLoad = allProjects.find(p => p.id === lastId);
+
+        // If there's no valid last project ID (e.g., it was deleted), load the most recently modified one.
+        if (!projectToLoad && allProjects.length > 0) {
+            projectToLoad = [...allProjects].sort((a,b) => b.lastModified - a.lastModified)[0];
+            lastId = projectToLoad.id;
+        }
+
+        if (projectToLoad) {
+            setProjects(allProjects);
+            setCurrentProjectId(projectToLoad.id);
+            projectService.setLastProjectId(projectToLoad.id);
+            projectService.saveProjects(allProjects); // Save back to LS in case demo project was added
+        } else {
+            // This is a safety net, should not be reached if the demo project logic is correct.
+            console.error("Could not determine a project to load.");
         }
     }, []);
 
-    // Sync localFrames with currentProject frames
+    // Sync and hydrate local state from the current project
     useEffect(() => {
         if (currentProject) {
-            setLocalFrames(currentProject.frames);
+            const hydrateAllData = async () => {
+                // Hydrate frames by creating File objects
+                const hydratedFrames: Frame[] = await Promise.all(
+                    (currentProject.frames || []).map(async (frame) => {
+                        try {
+                            const filename = `frame-${frame.id}.${frame.imageUrl.split('.').pop()?.split('?')[0] || 'png'}`;
+                            let file: File;
+                            if (frame.imageUrl.startsWith('data:')) {
+                                file = dataUrlToFile(frame.imageUrl, filename);
+                            } else {
+                                const blob = await fetchCorsImage(frame.imageUrl);
+                                file = new File([blob], filename, { type: blob.type });
+                            }
+                            return { ...frame, file };
+                        } catch (e) {
+                            console.error(`Could not create file for frame image ${frame.id}:`, e);
+                            const emptyFile = new File([], `failed-${frame.id}.txt`, { type: 'text/plain' });
+                            return { ...frame, file: emptyFile };
+                        }
+                    })
+                );
+                setLocalFrames(hydratedFrames);
+
+                // Hydrate assets by creating File objects
+                const hydratedAssets: Asset[] = await Promise.all(
+                    (currentProject.assets || []).map(async (asset) => {
+                        try {
+                            let file: File;
+                            if (asset.imageUrl.startsWith('data:')) {
+                                file = dataUrlToFile(asset.imageUrl, asset.name);
+                            } else {
+                                const blob = await fetchCorsImage(asset.imageUrl);
+                                file = new File([blob], asset.name, { type: blob.type });
+                            }
+                            return { ...asset, file };
+                        } catch (e) {
+                             console.error(`Could not create file for asset image ${asset.name}:`, e);
+                            const emptyFile = new File([], `failed-${asset.name}.txt`, {type: 'text/plain'});
+                            return { ...asset, file: emptyFile };
+                        }
+                    })
+                );
+                 setLocalAssets(hydratedAssets);
+            };
+
+            hydrateAllData();
+        } else {
+            setLocalFrames([]);
+            setLocalAssets([]);
         }
     }, [currentProject]);
 
-    const updateFrames = useCallback((newFrames: Frame[] | ((prev: Frame[]) => Frame[])) => {
-        const framesToSet = typeof newFrames === 'function' ? newFrames(localFrames) : newFrames;
-        setLocalFrames(framesToSet);
+    const updateFrames = useCallback((updater: React.SetStateAction<Frame[]>) => {
+        setLocalFrames(updater);
         setHasUnsavedChanges(true);
-    }, [localFrames]);
+    }, []);
     
+    const updateAssets = useCallback((updater: React.SetStateAction<Asset[]>) => {
+        setLocalAssets(updater);
+        setHasUnsavedChanges(true);
+    }, []);
+
     // VEO Key check
     useEffect(() => {
         const checkKey = async () => {
@@ -126,33 +191,39 @@ export default function App() {
 
     const handleNewProject = () => {
         if (!handleConfirmUnsaved()) return;
-        setIsLoadModalOpen(false);
-        
+    
         const newProject: Project = {
             id: crypto.randomUUID(),
             name: 'Новый проект',
             frames: [],
+            assets: [],
             lastModified: Date.now(),
         };
-
-        const updatedProjects = [...projects, newProject];
-        setProjects(updatedProjects);
+    
+        setProjects(prevProjects => {
+            const updatedProjects = [...prevProjects, newProject];
+            projectService.saveProjects(updatedProjects);
+            projectService.setLastProjectId(newProject.id);
+            return updatedProjects;
+        });
+        
         setCurrentProjectId(newProject.id);
-        projectService.setLastProjectId(newProject.id);
-        projectService.saveProjects(updatedProjects); 
         setHasUnsavedChanges(false);
+        setSelectedAssetIds(new Set()); // Clear selection
+    
+        setIsLoadModalOpen(false);
     };
 
     const handleSaveProject = () => {
         if (!currentProject) return;
         if (currentProject.id === DEMO_PROJECT_ID || hasUnsavedChanges === false && projects.some(p => p.id === currentProject.id)) {
-            // It's the demo project, force "Save As"
             setIsSaveModalOpen(true);
             return;
         }
 
         const framesToSave = localFrames.map(({ file, ...rest }) => rest);
-        const updatedProject = { ...currentProject, frames: framesToSave, lastModified: Date.now() };
+        const assetsToSave = localAssets.map(({ file, ...rest }) => rest);
+        const updatedProject = { ...currentProject, frames: framesToSave, assets: assetsToSave, lastModified: Date.now() };
         const updatedProjects = projects.map(p => p.id === currentProject.id ? updatedProject : p);
         
         setProjects(updatedProjects);
@@ -169,6 +240,7 @@ export default function App() {
             id: currentProject.id === DEMO_PROJECT_ID ? crypto.randomUUID() : currentProject.id,
             name: newName,
             frames: localFrames.map(({ file, ...rest }) => rest),
+            assets: localAssets.map(({ file, ...rest }) => rest),
             lastModified: Date.now(),
         };
         
@@ -189,10 +261,15 @@ export default function App() {
         setCurrentProjectId(id);
         projectService.setLastProjectId(id);
         setHasUnsavedChanges(false);
+        setSelectedAssetIds(new Set()); // Clear selection
         setIsLoadModalOpen(false);
     };
 
     const handleDeleteProject = (id: string) => {
+        if (id === DEMO_PROJECT_ID) {
+            alert("Демонстрационный проект нельзя удалить.");
+            return;
+        }
         const projectToDelete = projects.find(p => p.id === id);
         if (!projectToDelete || !window.confirm(`Вы уверены, что хотите удалить проект "${projectToDelete.name}"? Это действие нельзя отменить.`)) return;
         
@@ -292,11 +369,13 @@ export default function App() {
             setGeneratingIntermediateIndex(index);
             try {
                 const { imageUrl, prompt } = await generateIntermediateFrame(leftFrame, rightFrame);
+                const file = dataUrlToFile(imageUrl, `intermediate-${leftFrame.id}-${rightFrame.id}.png`);
                 const newFrame: Frame = {
                     id: crypto.randomUUID(),
                     imageUrl,
                     prompt,
                     duration: Number(((leftFrame.duration + rightFrame.duration) / 2).toFixed(2)),
+                    file,
                 };
                 updateFrames(prev => {
                     const newFrames = [...prev];
@@ -336,11 +415,13 @@ export default function App() {
                  throw new Error("Invalid state for generation.");
             }
 
+            const file = dataUrlToFile(imageUrl, `generated-${Date.now()}.png`);
             const newFrame: Frame = {
                 id: crypto.randomUUID(),
                 imageUrl: imageUrl,
                 prompt: finalPrompt,
                 duration: 3.0,
+                file,
             };
 
             updateFrames(prev => {
@@ -429,7 +510,6 @@ export default function App() {
     }, [localFrames, updateFrames]);
 
     const handleGenerateVideo = async (frame: Frame) => {
-        // This function remains largely the same, no project state changes needed here.
         let retriesLeft = 1;
         let keyIsValid = isVeoKeySelected;
 
@@ -482,6 +562,93 @@ export default function App() {
         }
     };
 
+    const handleAddAssets = useCallback(async (files: File[]) => {
+        const newAssets: Asset[] = await Promise.all(
+            files.map(async (file) => {
+                const imageUrl = await fileToBase64(file);
+                return {
+                    id: crypto.randomUUID(),
+                    imageUrl,
+                    file,
+                    name: file.name,
+                };
+            })
+        );
+        updateAssets(prev => [...prev, ...newAssets]);
+    }, [updateAssets]);
+
+    const handleDeleteAsset = useCallback((id: string) => {
+        updateAssets(prev => prev.filter(a => a.id !== id));
+        setSelectedAssetIds(prev => {
+            const newSet = new Set(prev);
+            newSet.delete(id);
+            return newSet;
+        });
+    }, [updateAssets]);
+
+    const handleCreateStoryFromAssets = async (frameCount: number) => {
+        console.log("--- [JL StoryPrompt AI Debug] ---");
+        console.log("`handleCreateStoryFromAssets` called with frameCount:", frameCount);
+        
+        try {
+            console.log("Current `localAssets` count:", localAssets.length, localAssets);
+            console.log("Current `selectedAssetIds` count:", selectedAssetIds.size, selectedAssetIds);
+    
+            const assetsToUse = selectedAssetIds.size > 0
+                ? localAssets.filter(a => selectedAssetIds.has(a.id))
+                : localAssets;
+            
+            console.log("Calculated `assetsToUse` count:", assetsToUse.length, assetsToUse);
+    
+            if (assetsToUse.length === 0) {
+                if (localAssets.length === 0) {
+                    console.error("Stopping: No assets in the library.");
+                    alert("Пожалуйста, загрузите хотя бы один ассет, чтобы создать сюжет.");
+                } else {
+                    console.error("Stopping: `assetsToUse` is empty, but `localAssets` is not. This might indicate a state mismatch where selected IDs don't match any existing assets.");
+                    alert("Не удалось найти выбранные ассеты. Пожалуйста, снимите и снова установите выбор и попробуйте еще раз.");
+                }
+                return;
+            }
+            
+            // The confirmation dialog was causing confusion. Removing it to make the action immediate.
+            console.log("Proceeding with story generation without confirmation.");
+    
+            setStoryGenerationState({ active: true, message: 'Начало...' });
+            setIsAssetLibraryOpen(false);
+    
+            const updateCallback = (message: string) => {
+                console.log("Story generation progress:", message);
+                setStoryGenerationState({ active: true, message });
+            };
+            
+            console.log("Calling `createStoryFromAssets` service...");
+            const newFramesData = await createStoryFromAssets(assetsToUse, frameCount, updateCallback);
+            console.log("`createStoryFromAssets` service returned:", newFramesData);
+    
+            const hydratedNewFrames = await Promise.all(
+                newFramesData.map(async (frame) => {
+                    const file = dataUrlToFile(frame.imageUrl, `story-frame-${frame.id}.png`);
+                    return { ...frame, file };
+                })
+            );
+            console.log("Hydrated new frames:", hydratedNewFrames);
+    
+            updateFrames(hydratedNewFrames);
+            console.log("Frames updated in state.");
+    
+        } catch (error) {
+            console.error("--- [JL StoryPrompt AI Debug] ---");
+            console.error("An unexpected error occurred in `handleCreateStoryFromAssets`:", error);
+            alert(`Произошла непредвиденная ошибка при создании сюжета: ${error instanceof Error ? error.message : String(error)}`);
+        } finally {
+            console.log("Resetting story generation state and selection.");
+            setStoryGenerationState({ active: false, message: '' });
+            setSelectedAssetIds(new Set());
+            console.log("--- [JL StoryPrompt AI Debug End] ---");
+        }
+    };
+
     return (
         <div className="relative flex h-screen w-full flex-col group/design-root overflow-hidden">
             <Header 
@@ -492,7 +659,27 @@ export default function App() {
                 onSaveAsProject={() => setIsSaveModalOpen(true)}
                 onLoadProject={() => setIsLoadModalOpen(true)}
             />
-            <main className="flex flex-1 flex-col overflow-auto p-6">
+            <main className="flex flex-1 flex-col overflow-auto p-6 relative">
+                 <AssetLibraryPanel 
+                    isOpen={isAssetLibraryOpen}
+                    onClose={() => setIsAssetLibraryOpen(false)}
+                    assets={localAssets}
+                    selectedAssetIds={selectedAssetIds}
+                    onAddAssets={handleAddAssets}
+                    onDeleteAsset={handleDeleteAsset}
+                    onToggleSelectAsset={(id) => {
+                        setSelectedAssetIds(prev => {
+                            const newSet = new Set(prev);
+                            if (newSet.has(id)) {
+                                newSet.delete(id);
+                            } else {
+                                newSet.add(id);
+                            }
+                            return newSet;
+                        });
+                    }}
+                    onGenerateStory={handleCreateStoryFromAssets}
+                />
                 <Timeline
                     frames={localFrames}
                     totalDuration={totalDuration}
@@ -501,6 +688,7 @@ export default function App() {
                     generatingIntermediateIndex={generatingIntermediateIndex}
                     generatingNewFrameIndex={generatingNewFrameIndex}
                     generatingStory={generatingStory}
+                    storyGenerationState={storyGenerationState}
                     generatingPromptFrameId={generatingPromptFrameId}
                     generatingVideoState={generatingVideoState}
                     onDurationChange={handleDurationChange}
@@ -514,6 +702,7 @@ export default function App() {
                     onEditPrompt={setEditingFrame}
                     onViewImage={setViewingFrameIndex}
                     onOpenDetailView={setDetailedFrame}
+                    onOpenAssetLibrary={() => setIsAssetLibraryOpen(true)}
                 />
             </main>
 

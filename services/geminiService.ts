@@ -1,12 +1,13 @@
-import { GoogleGenAI, Type, Modality } from "@google/genai";
-import type { Frame } from '../types';
-import { fileToBase64 } from '../utils/fileUtils';
 
-async function urlOrFileToBase64(frame: Frame): Promise<{ mimeType: string; data: string }> {
+import { GoogleGenAI, Type, Modality } from "@google/genai";
+import type { Frame, Asset } from '../types';
+import { fileToBase64, fetchCorsImage } from '../utils/fileUtils';
+
+async function urlOrFileToBase64(frame: Frame | Omit<Asset, 'file'>): Promise<{ mimeType: string; data: string }> {
     let base64Data: string;
     let mimeType: string;
 
-    if (frame.file) {
+    if ('file' in frame && frame.file) {
         base64Data = await fileToBase64(frame.file);
         mimeType = frame.file.type;
     } else if (frame.imageUrl.startsWith('data:')) {
@@ -17,8 +18,7 @@ async function urlOrFileToBase64(frame: Frame): Promise<{ mimeType: string; data
         return { mimeType, data: base64Data };
     }
     else {
-        const response = await fetch(frame.imageUrl);
-        const blob = await response.blob();
+        const blob = await fetchCorsImage(frame.imageUrl);
         const reader = new FileReader();
         base64Data = await new Promise((resolve, reject) => {
             reader.onloadend = () => resolve(reader.result as string);
@@ -421,4 +421,107 @@ Context:`;
     }
 
     return { imageUrl: newImageUrl, prompt: newPrompt };
+}
+
+export async function createStoryFromAssets(
+    assets: Asset[],
+    frameCount: number,
+    updateStatus: (message: string) => void
+): Promise<Omit<Frame, 'file'>[]> {
+    if (!process.env.API_KEY) {
+        throw new Error("API_KEY environment variable not set");
+    }
+    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+    
+    // Step 1: Generate the story plan
+    updateStatus("Анализ ассетов и создание плана сюжета...");
+    const assetImageParts = await Promise.all(
+        assets.map(async (asset) => {
+            const { mimeType, data } = await urlOrFileToBase64(asset);
+            return { inlineData: { mimeType, data } };
+        })
+    );
+    
+    const assetNames = assets.map(a => a.name).join(', ');
+    const storyPlanPrompt = `You are an AI screenwriter and storyboard director. Based on the provided asset images (representing key characters, items, or locations named: ${assetNames}), create a compelling short story.
+
+    Your task is to break this story down into exactly ${frameCount} distinct scenes or frames.
+
+    For each frame, you must provide:
+    1.  'description': A brief, one-sentence description of the action and composition of the scene.
+    2.  'prompt': A concise, powerful prompt for an AI image generator to create the visual for this scene. This prompt should focus on visual details, camera angles, and mood, and MUST be stylistically consistent with the provided assets.
+
+    Return your response ONLY as a valid JSON array of objects, where each object has a 'description' and a 'prompt' key. Do not include any other text, explanations, or markdown formatting. The array must contain exactly ${frameCount} elements.
+    `;
+
+    const planResponse = await ai.models.generateContent({
+        model: 'gemini-2.5-pro',
+        contents: { parts: [{ text: storyPlanPrompt }, ...assetImageParts] },
+        config: {
+            responseMimeType: "application/json",
+            responseSchema: {
+                type: Type.ARRAY,
+                items: {
+                    type: Type.OBJECT,
+                    properties: {
+                        description: { type: Type.STRING },
+                        prompt: { type: Type.STRING },
+                    },
+                    required: ["description", "prompt"],
+                },
+            },
+        },
+    });
+
+    const storyPlan: { description: string, prompt: string }[] = JSON.parse(planResponse.text.trim());
+
+    if (!storyPlan || storyPlan.length === 0) {
+        throw new Error("AI failed to generate a story plan.");
+    }
+
+    // Step 2: Generate an image for each frame in the plan
+    const newFrames: Omit<Frame, 'file'>[] = [];
+    for (let i = 0; i < storyPlan.length; i++) {
+        const plan = storyPlan[i];
+        updateStatus(`Генерация кадра ${i + 1} из ${storyPlan.length}: ${plan.description}`);
+
+        const imageGenPrompt = `Generate an image for a storyboard.
+        Scene Description: "${plan.description}".
+        The final video prompt will be: "${plan.prompt}".
+
+        Crucially, you MUST maintain the artistic style, color palette, and character/object design established in the provided reference asset images. The new image must feel like it belongs in the same universe as the assets.
+        `;
+
+        const imageGenResponse = await ai.models.generateContent({
+            model: 'gemini-2.5-flash-image',
+            contents: { parts: [{ text: imageGenPrompt }, ...assetImageParts] },
+            config: {
+                responseModalities: [Modality.IMAGE],
+            },
+        });
+        
+        let imageUrl: string | null = null;
+        for (const part of imageGenResponse.candidates[0].content.parts) {
+            if (part.inlineData) {
+                imageUrl = `data:${part.inlineData.mimeType};base64,${part.inlineData.data}`;
+                break;
+            }
+        }
+        
+        if (!imageUrl) {
+            console.warn(`Failed to generate image for frame ${i+1}. Skipping.`);
+            // Optionally, create a placeholder frame
+            continue;
+        }
+
+        newFrames.push({
+            id: crypto.randomUUID(),
+            imageUrl,
+            prompt: plan.prompt,
+            duration: 3.0, // Default duration
+        });
+    }
+    
+    updateStatus("Генерация сюжета завершена!");
+    return newFrames;
 }
