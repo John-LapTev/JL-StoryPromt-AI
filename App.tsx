@@ -28,9 +28,13 @@ declare global {
 }
 
 export type GeneratingVideoState = { frameId: string; message: string } | null;
-export type StoryGenerationState = { active: boolean; message: string; };
 
 const DEMO_PROJECT_ID = 'demo-project';
+
+const hydrateFrame = async (frameData: Omit<Frame, 'file'>): Promise<Frame> => {
+    const file = dataUrlToFile(frameData.imageUrl, `story-frame-${frameData.id}.png`);
+    return { ...frameData, file };
+};
 
 export default function App() {
     // Project State
@@ -60,7 +64,6 @@ export default function App() {
     // Non-blocking loading states
     const [generatingIntermediateIndex, setGeneratingIntermediateIndex] = useState<number | null>(null);
     const [generatingStory, setGeneratingStory] = useState(false);
-    const [storyGenerationState, setStoryGenerationState] = useState<StoryGenerationState>({ active: false, message: '' });
     const [generatingPromptFrameId, setGeneratingPromptFrameId] = useState<string | null>(null);
     const [generatingVideoState, setGeneratingVideoState] = useState<GeneratingVideoState>(null);
     const [generatingNewFrameIndex, setGeneratingNewFrameIndex] = useState<number | null>(null);
@@ -181,7 +184,7 @@ export default function App() {
     }, []);
 
     const totalDuration = useMemo(() => {
-        return localFrames.reduce((acc, frame) => acc + frame.duration, 0);
+        return localFrames.reduce((acc, frame) => acc + (frame.isGenerating ? 0 : frame.duration), 0);
     }, [localFrames]);
     
     const handleConfirmUnsaved = () => {
@@ -587,65 +590,61 @@ export default function App() {
     }, [updateAssets]);
 
     const handleCreateStoryFromAssets = async (frameCount: number) => {
-        console.log("--- [JL StoryPrompt AI Debug] ---");
-        console.log("`handleCreateStoryFromAssets` called with frameCount:", frameCount);
-        
-        try {
-            console.log("Current `localAssets` count:", localAssets.length, localAssets);
-            console.log("Current `selectedAssetIds` count:", selectedAssetIds.size, selectedAssetIds);
-    
-            const assetsToUse = selectedAssetIds.size > 0
-                ? localAssets.filter(a => selectedAssetIds.has(a.id))
-                : localAssets;
-            
-            console.log("Calculated `assetsToUse` count:", assetsToUse.length, assetsToUse);
-    
-            if (assetsToUse.length === 0) {
-                if (localAssets.length === 0) {
-                    console.error("Stopping: No assets in the library.");
-                    alert("Пожалуйста, загрузите хотя бы один ассет, чтобы создать сюжет.");
-                } else {
-                    console.error("Stopping: `assetsToUse` is empty, but `localAssets` is not. This might indicate a state mismatch where selected IDs don't match any existing assets.");
-                    alert("Не удалось найти выбранные ассеты. Пожалуйста, снимите и снова установите выбор и попробуйте еще раз.");
-                }
-                return;
-            }
-            
-            // The confirmation dialog was causing confusion. Removing it to make the action immediate.
-            console.log("Proceeding with story generation without confirmation.");
-    
-            setStoryGenerationState({ active: true, message: 'Начало...' });
-            setIsAssetLibraryOpen(false);
-    
-            const updateCallback = (message: string) => {
-                console.log("Story generation progress:", message);
-                setStoryGenerationState({ active: true, message });
-            };
-            
-            console.log("Calling `createStoryFromAssets` service...");
-            const newFramesData = await createStoryFromAssets(assetsToUse, frameCount, updateCallback);
-            console.log("`createStoryFromAssets` service returned:", newFramesData);
-    
-            const hydratedNewFrames = await Promise.all(
-                newFramesData.map(async (frame) => {
-                    const file = dataUrlToFile(frame.imageUrl, `story-frame-${frame.id}.png`);
-                    return { ...frame, file };
-                })
+        const assetsToUse = selectedAssetIds.size > 0
+            ? localAssets.filter(a => selectedAssetIds.has(a.id))
+            : localAssets;
+
+        if (assetsToUse.length === 0) {
+            alert(localAssets.length === 0
+                ? "Пожалуйста, загрузите хотя бы один ассет, чтобы создать сюжет."
+                : "Не удалось найти выбранные ассеты. Пожалуйста, снимите и снова установите выбор и попробуйте еще раз."
             );
-            console.log("Hydrated new frames:", hydratedNewFrames);
-    
-            updateFrames(hydratedNewFrames);
-            console.log("Frames updated in state.");
-    
+            return;
+        }
+
+        try {
+            setGeneratingStory(true);
+            setIsAssetLibraryOpen(false);
+
+            const placeholderFrames: Frame[] = Array.from({ length: frameCount }, (_, i) => ({
+                id: `placeholder-${crypto.randomUUID()}`,
+                imageUrl: '',
+                prompt: `Ожидание кадра ${i + 1}...`,
+                duration: 3.0,
+                isGenerating: true,
+                file: new File([], 'placeholder.txt', { type: 'text/plain' })
+            }));
+            updateFrames(placeholderFrames);
+
+            for await (const update of createStoryFromAssets(assetsToUse, frameCount)) {
+                if (update.type === 'progress' || update.type === 'plan' || update.type === 'complete') {
+                    if (update.type === 'progress') {
+                        updateFrames(prev => {
+                            const newFrames = [...prev];
+                            if (newFrames[update.index] && newFrames[update.index].isGenerating) {
+                                newFrames[update.index] = { ...newFrames[update.index], prompt: update.message };
+                            }
+                            return newFrames;
+                        });
+                    }
+                } else if (update.type === 'frame') {
+                    const hydratedFrame = await hydrateFrame(update.frame);
+                    updateFrames(prev => {
+                        const newFrames = [...prev];
+                        if (newFrames[update.index] && newFrames[update.index].isGenerating) {
+                            newFrames[update.index] = hydratedFrame;
+                        }
+                        return newFrames;
+                    });
+                }
+            }
         } catch (error) {
-            console.error("--- [JL StoryPrompt AI Debug] ---");
             console.error("An unexpected error occurred in `handleCreateStoryFromAssets`:", error);
             alert(`Произошла непредвиденная ошибка при создании сюжета: ${error instanceof Error ? error.message : String(error)}`);
+            updateFrames([]);
         } finally {
-            console.log("Resetting story generation state and selection.");
-            setStoryGenerationState({ active: false, message: '' });
+            setGeneratingStory(false);
             setSelectedAssetIds(new Set());
-            console.log("--- [JL StoryPrompt AI Debug End] ---");
         }
     };
 
@@ -688,7 +687,6 @@ export default function App() {
                     generatingIntermediateIndex={generatingIntermediateIndex}
                     generatingNewFrameIndex={generatingNewFrameIndex}
                     generatingStory={generatingStory}
-                    storyGenerationState={storyGenerationState}
                     generatingPromptFrameId={generatingPromptFrameId}
                     generatingVideoState={generatingVideoState}
                     onDurationChange={handleDurationChange}

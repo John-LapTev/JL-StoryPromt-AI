@@ -1,3 +1,4 @@
+
 import type { Project } from '../types';
 
 const PROJECTS_KEY = 'jl-storyprompt-ai-projects';

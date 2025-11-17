@@ -1,10 +1,10 @@
+
 import React, { useRef, useState, useEffect } from 'react';
 import type { Frame } from '../types';
 import { FrameCard } from './FrameCard';
 import { AddFrameButton } from './AddFrameButton';
 import { IntermediateLoadingCard } from './IntermediateLoadingCard';
 import { GeneratingVideoState } from '../App';
-import type { StoryGenerationState } from '../App';
 
 interface Transform {
     scale: number;
@@ -19,7 +19,6 @@ interface TimelineProps {
     generatingIntermediateIndex: number | null;
     generatingNewFrameIndex: number | null;
     generatingStory: boolean;
-    storyGenerationState: StoryGenerationState;
     generatingPromptFrameId: string | null;
     generatingVideoState: GeneratingVideoState;
     onDurationChange: (id: string, newDuration: number) => void;
@@ -45,7 +44,6 @@ export const Timeline: React.FC<TimelineProps> = ({
     generatingIntermediateIndex,
     generatingNewFrameIndex,
     generatingStory,
-    storyGenerationState,
     generatingPromptFrameId,
     generatingVideoState,
     onDurationChange,
@@ -123,8 +121,6 @@ export const Timeline: React.FC<TimelineProps> = ({
     const handleResetView = () => {
         setTransform({ scale: 1, x: 0, y: 0 });
     };
-    
-    const isLoading = generatingStory || storyGenerationState.active;
 
     return (
         <div className="flex flex-col flex-1">
@@ -135,23 +131,17 @@ export const Timeline: React.FC<TimelineProps> = ({
                         <span className="material-symbols-outlined text-sm">timer</span>
                         <span>{totalDuration.toFixed(2)} s</span>
                     </div>
-                     {isLoading && (
-                         <div className="flex items-center gap-2 text-sm text-primary">
-                             <div className="w-4 h-4 border-2 border-primary border-t-transparent rounded-full animate-spin"></div>
-                             <span>{storyGenerationState.active ? storyGenerationState.message : 'Анализ...'}</span>
-                         </div>
-                    )}
                 </div>
                 <div className="flex items-center gap-2">
-                     <button onClick={onOpenAssetLibrary} className="flex min-w-[84px] max-w-[480px] cursor-pointer items-center justify-center overflow-hidden rounded-lg h-10 px-4 bg-white/10 text-white text-sm font-bold leading-normal tracking-[0.015em] gap-2 hover:bg-white/20">
+                     <button onClick={onOpenAssetLibrary} className="flex min-w-[84px] max-w-[480px] cursor-pointer items-center justify-center overflow-hidden rounded-lg h-10 px-4 bg-white/10 text-white text-sm font-bold leading-normal tracking-[-0.015em] gap-2 hover:bg-white/20">
                         <span className="material-symbols-outlined text-base">photo_library</span>
                         <span className="truncate">Библиотека</span>
                     </button>
-                     <button onClick={handleResetView} className="flex min-w-[84px] max-w-[480px] cursor-pointer items-center justify-center overflow-hidden rounded-lg h-10 px-4 bg-white/10 text-white text-sm font-bold leading-normal tracking-[0.015em] gap-2 hover:bg-white/20">
+                     <button onClick={handleResetView} className="flex min-w-[84px] max-w-[480px] cursor-pointer items-center justify-center overflow-hidden rounded-lg h-10 px-4 bg-white/10 text-white text-sm font-bold leading-normal tracking-[-0.015em] gap-2 hover:bg-white/20">
                         <span className="material-symbols-outlined text-base">settings_backup_restore</span>
                         <span className="truncate">Сбросить вид</span>
                     </button>
-                    <button onClick={onAnalyzeStory} disabled={isLoading} className="flex min-w-[84px] max-w-[480px] cursor-pointer items-center justify-center overflow-hidden rounded-lg h-10 px-4 bg-primary text-white text-sm font-bold leading-normal tracking-[0.015em] gap-2 hover:bg-primary/90 disabled:bg-primary/50 disabled:cursor-not-allowed">
+                    <button onClick={onAnalyzeStory} disabled={generatingStory} className="flex min-w-[84px] max-w-[480px] cursor-pointer items-center justify-center overflow-hidden rounded-lg h-10 px-4 bg-primary text-white text-sm font-bold leading-normal tracking-[0.015em] gap-2 hover:bg-primary/90 disabled:bg-primary/50 disabled:cursor-not-allowed">
                         {generatingStory ? (
                              <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
                         ) : (

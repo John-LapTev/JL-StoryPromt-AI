@@ -1,3 +1,4 @@
+
 import React from 'react';
 import type { Frame } from '../types';
 import { GeneratingVideoState } from '../App';
@@ -19,6 +20,21 @@ interface FrameCardProps {
 
 export const FrameCard: React.FC<FrameCardProps> = ({ frame, index, isGeneratingPrompt, generatingVideoState, onDurationChange, onPromptChange, onDeleteFrame, onGenerateSinglePrompt, onEditPrompt, onViewImage, onGenerateVideo, onOpenDetailView }) => {
     const DURATION_STEP = 0.25;
+
+    if (frame.isGenerating) {
+        return (
+            <div className="flex flex-col gap-2 shrink-0">
+                <div className="relative group">
+                    <div className="w-48 h-28 rounded-lg bg-primary/10 border-2 border-dashed border-primary/50 flex items-center justify-center">
+                        <div className="w-8 h-8 border-4 border-white/80 border-t-transparent rounded-full animate-spin"></div>
+                    </div>
+                </div>
+                <div className="flex items-center justify-center gap-2 w-48 h-[76px] bg-white/5 p-2 rounded-lg text-xs text-center text-white/60 overflow-hidden">
+                    <p className="leading-snug">{frame.prompt}</p>
+                </div>
+            </div>
+        );
+    }
 
     const handleDecrease = () => {
         onDurationChange(frame.id, frame.duration - DURATION_STEP);

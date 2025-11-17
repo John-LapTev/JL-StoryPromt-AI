@@ -1,3 +1,4 @@
+
 import React, { useState } from 'react';
 import { fileToBase64, dataUrlToFile, fetchCorsImage } from '../utils/fileUtils';
 import type { Frame } from '../types';

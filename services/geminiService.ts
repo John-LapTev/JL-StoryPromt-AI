@@ -423,18 +423,23 @@ Context:`;
     return { imageUrl: newImageUrl, prompt: newPrompt };
 }
 
-export async function createStoryFromAssets(
+export type StoryGenerationUpdate =
+    | { type: 'plan', message: string }
+    | { type: 'progress', message: string, index: number }
+    | { type: 'frame', frame: Omit<Frame, 'file'>, index: number }
+    | { type: 'complete', message: string };
+
+export async function* createStoryFromAssets(
     assets: Asset[],
     frameCount: number,
-    updateStatus: (message: string) => void
-): Promise<Omit<Frame, 'file'>[]> {
+): AsyncGenerator<StoryGenerationUpdate, Omit<Frame, 'file'>[], void> {
     if (!process.env.API_KEY) {
         throw new Error("API_KEY environment variable not set");
     }
     const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
     
-    // Step 1: Generate the story plan
-    updateStatus("Анализ ассетов и создание плана сюжета...");
+    yield { type: 'plan', message: "Анализ ассетов и создание плана сюжета..." };
+
     const assetImageParts = await Promise.all(
         assets.map(async (asset) => {
             const { mimeType, data } = await urlOrFileToBase64(asset);
@@ -479,11 +484,10 @@ export async function createStoryFromAssets(
         throw new Error("AI failed to generate a story plan.");
     }
 
-    // Step 2: Generate an image for each frame in the plan
     const newFrames: Omit<Frame, 'file'>[] = [];
     for (let i = 0; i < storyPlan.length; i++) {
         const plan = storyPlan[i];
-        updateStatus(`Генерация кадра ${i + 1} из ${storyPlan.length}: ${plan.description}`);
+        yield { type: 'progress', message: `Генерация кадра ${i + 1} из ${storyPlan.length}: ${plan.description}`, index: i };
 
         const imageGenPrompt = `Generate an image for a storyboard.
         Scene Description: "${plan.description}".
@@ -510,18 +514,19 @@ export async function createStoryFromAssets(
         
         if (!imageUrl) {
             console.warn(`Failed to generate image for frame ${i+1}. Skipping.`);
-            // Optionally, create a placeholder frame
             continue;
         }
 
-        newFrames.push({
+        const newFrameData = {
             id: crypto.randomUUID(),
             imageUrl,
             prompt: plan.prompt,
-            duration: 3.0, // Default duration
-        });
+            duration: 3.0,
+        };
+        newFrames.push(newFrameData);
+        yield { type: 'frame', frame: newFrameData, index: i };
     }
     
-    updateStatus("Генерация сюжета завершена!");
+    yield { type: 'complete', message: "Генерация сюжета завершена!" };
     return newFrames;
 }

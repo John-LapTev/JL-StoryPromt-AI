@@ -1,3 +1,4 @@
+
 import type { Frame, Asset } from './types';
 
 // The content of this file has been completely replaced to match the user's original HTML file.
