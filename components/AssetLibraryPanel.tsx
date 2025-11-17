@@ -57,6 +57,14 @@ export const AssetLibraryPanel: React.FC<AssetLibraryPanelProps> = ({
             setViewingAssetIndex(index);
         }
     };
+    
+    const handleToggleSelectionMode = () => {
+        const newMode = !isSelectionMode;
+        setIsSelectionMode(newMode);
+        if (!newMode) { // If turning selection mode OFF
+            onDeselectAllAssets();
+        }
+    };
 
     const handleDragStart = (e: React.DragEvent, assetId: string) => {
         const isMultiDrag = isSelectionMode && selectedAssetIds.has(assetId);
@@ -140,7 +148,7 @@ export const AssetLibraryPanel: React.FC<AssetLibraryPanelProps> = ({
                             id="selection-mode-toggle"
                             role="switch"
                             aria-checked={isSelectionMode}
-                            onClick={() => setIsSelectionMode(!isSelectionMode)}
+                            onClick={handleToggleSelectionMode}
                             className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
                                 isSelectionMode ? 'bg-primary' : 'bg-white/20'
                             }`}
