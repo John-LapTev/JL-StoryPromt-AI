@@ -35,7 +35,7 @@ export default function App() {
     const [generateFrameIndex, setGenerateFrameIndex] = useState(0);
     const [isChatOpen, setIsChatOpen] = useState(false);
     const [editingFrame, setEditingFrame] = useState<Frame | null>(null);
-    const [viewingImage, setViewingImage] = useState<string | null>(null);
+    const [viewingFrameIndex, setViewingFrameIndex] = useState<number | null>(null);
     const [detailedFrame, setDetailedFrame] = useState<Frame | null>(null);
     const [transform, setTransform] = useState({ scale: 1, x: 0, y: 0 });
     
@@ -353,7 +353,7 @@ export default function App() {
                     onGenerateTransition={handleGenerateTransition}
                     onGenerateVideo={handleGenerateVideo}
                     onEditPrompt={setEditingFrame}
-                    onViewImage={setViewingImage}
+                    onViewImage={setViewingFrameIndex}
                     onOpenDetailView={setDetailedFrame}
                 />
             </main>
@@ -383,8 +383,12 @@ export default function App() {
                     onSave={handleSavePrompt}
                 />
             )}
-            {viewingImage && (
-                <ImageViewerModal imageUrl={viewingImage} onClose={() => setViewingImage(null)} />
+            {viewingFrameIndex !== null && (
+                <ImageViewerModal 
+                    frames={frames}
+                    startIndex={viewingFrameIndex}
+                    onClose={() => setViewingFrameIndex(null)} 
+                />
             )}
             {detailedFrame && (
                 <FrameDetailModal 

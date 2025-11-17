@@ -12,7 +12,7 @@ interface FrameCardProps {
     onDeleteFrame: (id: string) => void;
     onGenerateSinglePrompt: (id: string) => void;
     onEditPrompt: (frame: Frame) => void;
-    onViewImage: (imageUrl: string) => void;
+    onViewImage: (index: number) => void;
     onGenerateVideo: (frame: Frame) => void;
     onOpenDetailView: (frame: Frame) => void;
 }
@@ -95,10 +95,11 @@ export const FrameCard: React.FC<FrameCardProps> = ({ frame, index, isGenerating
                     onDoubleClick={() => onOpenDetailView(frame)}
                 >
                     <div 
-                        className="w-48 h-28 rounded-lg bg-cover bg-center border-2 border-primary cursor-pointer" 
-                        style={{ backgroundImage: `url(${frame.imageUrl})` }}
-                        onClick={() => onViewImage(frame.imageUrl)}
-                    ></div>
+                        className="w-48 h-28 rounded-lg bg-black/20 border-2 border-primary cursor-pointer overflow-hidden" 
+                        onClick={() => onViewImage(index)}
+                    >
+                         <img src={frame.imageUrl} alt={`Frame ${index + 1}`} className="w-full h-full object-contain" />
+                    </div>
                     <button
                         onClick={(e) => { e.stopPropagation(); onDeleteFrame(frame.id); }}
                         className="absolute top-1.5 right-1.5 z-10 size-6 rounded-full bg-red-600/80 flex items-center justify-center text-white opacity-0 group-hover:opacity-100 hover:bg-red-500 backdrop-blur-sm transition-opacity"
@@ -108,7 +109,7 @@ export const FrameCard: React.FC<FrameCardProps> = ({ frame, index, isGenerating
                     </button>
                     <div 
                         className="absolute inset-0 bg-black/50 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity rounded-lg"
-                        onClick={() => onViewImage(frame.imageUrl)}
+                        onClick={(e) => { e.stopPropagation(); onViewImage(index); }}
                     >
                         <button onClick={handleGenerateVideoClick} className="size-10 rounded-full bg-white/20 flex flex-col items-center justify-center text-white hover:bg-white/30 backdrop-blur-sm text-xs">
                              <span className="material-symbols-outlined text-lg">movie</span>
@@ -123,7 +124,7 @@ export const FrameCard: React.FC<FrameCardProps> = ({ frame, index, isGenerating
                     )}
                     <div className="absolute top-1.5 left-1.5 bg-black/60 text-white text-xs font-bold w-6 h-6 flex items-center justify-center rounded-full">{index + 1}</div>
                     <div className="absolute bottom-1.5 left-1.5 right-1.5 flex items-center justify-center">
-                        <div className="flex h-6 items-center rounded-full bg-black/70 px-0.5 backdrop-blur-sm">
+                        <div className="flex h-6 items-center rounded-full bg-black/50 px-0.5 backdrop-blur-sm transition-colors group-hover:bg-black/70">
                             <button onClick={handleDecrease} className="flex size-5 items-center justify-center rounded-full text-white/80 transition-colors hover:bg-white/20 hover:text-white"><span className="material-symbols-outlined text-base font-bold">remove</span></button>
                             <div className="flex items-baseline whitespace-nowrap px-1.5 text-xs font-medium text-white">
                                 <span>({frame.duration.toFixed(2)})</span><span className="text-[0.625rem] ml-0.5">s</span>

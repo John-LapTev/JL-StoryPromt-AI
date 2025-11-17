@@ -1,4 +1,3 @@
-
 import React, { useRef, useState, useEffect } from 'react';
 import type { Frame } from '../types';
 import { FrameCard } from './FrameCard';
@@ -30,7 +29,7 @@ interface TimelineProps {
     onGenerateTransition: (index: number) => void;
     onGenerateVideo: (frame: Frame) => void;
     onEditPrompt: (frame: Frame) => void;
-    onViewImage: (imageUrl: string) => void;
+    onViewImage: (index: number) => void;
     onOpenDetailView: (frame: Frame) => void;
 }
 
