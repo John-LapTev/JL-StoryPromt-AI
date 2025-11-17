@@ -34,6 +34,7 @@ interface TimelineProps {
     onOpenDetailView: (frame: Frame) => void;
     onOpenAssetLibrary: () => void;
     onContextMenu: (e: React.MouseEvent, frame: Frame) => void;
+    onVersionChange: (frameId: string, direction: 'next' | 'prev') => void;
 }
 
 
@@ -61,68 +62,111 @@ export const Timeline: React.FC<TimelineProps> = ({
     onOpenDetailView,
     onOpenAssetLibrary,
     onContextMenu,
+    onVersionChange,
 }) => {
     const timelineRef = useRef<HTMLDivElement>(null);
-    const [isPanning, setIsPanning] = useState(false);
-    const [startPos, setStartPos] = useState({ x: 0, y: 0 });
+    const isPanning = useRef(false);
+    const startPos = useRef({ x: 0, y: 0 });
+    const [isSpaceDown, setIsSpaceDown] = useState(false);
     const [draggedIndex, setDraggedIndex] = useState<number | null>(null);
     const [dropTargetIndex, setDropTargetIndex] = useState<number | null>(null);
 
+     // Keyboard listener for Spacebar to enable global panning mode
     useEffect(() => {
-        const handleMouseMove = (e: MouseEvent) => {
-            if (!isPanning) return;
-            e.preventDefault();
-            const dx = e.clientX - startPos.x;
-            const dy = e.clientY - startPos.y;
-            setTransform(prev => ({ ...prev, x: prev.x + dx, y: prev.y + dy }));
-            setStartPos({ x: e.clientX, y: e.clientY });
+        const handleKeyDown = (e: KeyboardEvent) => {
+            if (e.code === 'Space' && !e.repeat) {
+                e.preventDefault(); // Prevent page scroll
+                setIsSpaceDown(true);
+            }
         };
+        const handleKeyUp = (e: KeyboardEvent) => {
+            if (e.code === 'Space') {
+                setIsSpaceDown(false);
+            }
+        };
+        window.addEventListener('keydown', handleKeyDown);
+        window.addEventListener('keyup', handleKeyUp);
+        return () => {
+            window.removeEventListener('keydown', handleKeyDown);
+            window.removeEventListener('keyup', handleKeyUp);
+        };
+    }, []);
 
-        const handleMouseUp = () => {
-            setIsPanning(false);
-            if(timelineRef.current) {
-                timelineRef.current.style.cursor = 'grab';
+    // Effect for all mouse interactions (panning, zooming)
+    useEffect(() => {
+        const timelineEl = timelineRef.current;
+        if (!timelineEl) return;
+
+        const handleMouseDown = (e: MouseEvent) => {
+            const isMiddleClick = e.button === 1;
+            const isSpaceAndLeftClick = isSpaceDown && e.button === 0;
+            const isBackgroundLeftClick = !(e.target as HTMLElement).closest('.frame-card-interactive') && e.button === 0 && !isSpaceDown;
+
+            if (isMiddleClick || isSpaceAndLeftClick) {
+                e.preventDefault();
+                e.stopPropagation();
+                isPanning.current = true;
+                startPos.current = { x: e.clientX, y: e.clientY };
+                timelineEl.style.cursor = 'grabbing';
+            } else if (isBackgroundLeftClick) {
+                e.preventDefault();
+                isPanning.current = true;
+                startPos.current = { x: e.clientX, y: e.clientY };
+                timelineEl.style.cursor = 'grabbing';
             }
         };
 
-        if (isPanning) {
-            window.addEventListener('mousemove', handleMouseMove);
-            window.addEventListener('mouseup', handleMouseUp);
-        }
+        const handleMouseMove = (e: MouseEvent) => {
+            if (!isPanning.current) return;
+            e.preventDefault();
+            const dx = e.clientX - startPos.current.x;
+            const dy = e.clientY - startPos.current.y;
+            setTransform(prev => ({ ...prev, x: prev.x + dx, y: prev.y + dy }));
+            startPos.current = { x: e.clientX, y: e.clientY };
+        };
+
+        const handleMouseUp = () => {
+            if (isPanning.current) {
+                isPanning.current = false;
+                timelineEl.style.cursor = 'grab';
+            }
+        };
+        
+        const handleWheel = (e: WheelEvent) => {
+            e.preventDefault();
+            const scaleAmount = -e.deltaY * 0.001;
+            const newScale = Math.max(0.2, Math.min(8, transform.scale + scaleAmount));
+            
+            const rect = timelineEl.getBoundingClientRect();
+            const mouseX = e.clientX - rect.left;
+            const mouseY = e.clientY - rect.top;
+
+            const newX = mouseX - (mouseX - transform.x) * (newScale / transform.scale);
+            const newY = mouseY - (mouseY - transform.y) * (newScale / transform.scale);
+            
+            setTransform({ scale: newScale, x: newX, y: newY });
+        };
+        
+        timelineEl.addEventListener('mousedown', handleMouseDown);
+        window.addEventListener('mousemove', handleMouseMove);
+        window.addEventListener('mouseup', handleMouseUp);
+        timelineEl.addEventListener('wheel', handleWheel);
 
         return () => {
+            timelineEl.removeEventListener('mousedown', handleMouseDown);
             window.removeEventListener('mousemove', handleMouseMove);
             window.removeEventListener('mouseup', handleMouseUp);
+            timelineEl.removeEventListener('wheel', handleWheel);
         };
-    }, [isPanning, startPos, setTransform]);
+    }, [isSpaceDown, transform.scale, transform.x, transform.y, setTransform]);
 
-    const handleMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
-        // Prevent panning when interacting with cards or buttons
-        if ((e.target as HTMLElement).closest('.frame-card-interactive')) {
-            return;
+    // Effect to manage cursor style based on spacebar state
+    useEffect(() => {
+        const timelineEl = timelineRef.current;
+        if (timelineEl && !isPanning.current) {
+             timelineEl.style.cursor = isSpaceDown ? 'grab' : 'grab';
         }
-        e.preventDefault();
-        setIsPanning(true);
-        setStartPos({ x: e.clientX, y: e.clientY });
-         if(timelineRef.current) {
-            timelineRef.current.style.cursor = 'grabbing';
-        }
-    };
-    
-    const handleWheel = (e: React.WheelEvent<HTMLDivElement>) => {
-        e.preventDefault();
-        const scaleAmount = -e.deltaY * 0.001;
-        const newScale = Math.max(0.2, Math.min(2, transform.scale + scaleAmount));
-        
-        const rect = timelineRef.current!.getBoundingClientRect();
-        const mouseX = e.clientX - rect.left;
-        const mouseY = e.clientY - rect.top;
-
-        const newX = mouseX - (mouseX - transform.x) * (newScale / transform.scale);
-        const newY = mouseY - (mouseY - transform.y) * (newScale / transform.scale);
-        
-        setTransform({ scale: newScale, x: newX, y: newY });
-    };
+    }, [isSpaceDown]);
 
     const handleResetView = () => {
         setTransform({ scale: 1, x: 0, y: 0 });
@@ -197,9 +241,7 @@ export const Timeline: React.FC<TimelineProps> = ({
             <div 
                 ref={timelineRef}
                 className="flex-1 rounded-lg p-4 overflow-hidden grid-bg-metallic border border-white/20 min-h-[220px] relative"
-                onMouseDown={handleMouseDown}
-                onWheel={handleWheel}
-                style={{ cursor: isPanning ? 'grabbing' : 'grab' }}
+                style={{ cursor: 'grab' }}
             >
                 <div
                      style={{
@@ -244,6 +286,7 @@ export const Timeline: React.FC<TimelineProps> = ({
                                         onDragStart={(e) => handleDragStart(e, index)}
                                         onDragEnd={handleDragEnd}
                                         onContextMenu={onContextMenu}
+                                        onVersionChange={onVersionChange}
                                     />
                                 </div>
                                 <div className="frame-card-interactive">

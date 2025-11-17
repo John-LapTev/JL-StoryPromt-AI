@@ -19,6 +19,7 @@ interface FrameCardProps {
     onDragStart: (e: React.DragEvent) => void;
     onDragEnd: () => void;
     onContextMenu: (e: React.MouseEvent, frame: Frame) => void;
+    onVersionChange: (frameId: string, direction: 'next' | 'prev') => void;
 }
 
 export const FrameCard: React.FC<FrameCardProps> = ({ 
@@ -38,8 +39,12 @@ export const FrameCard: React.FC<FrameCardProps> = ({
     onDragStart,
     onDragEnd,
     onContextMenu,
+    onVersionChange,
 }) => {
     const DURATION_STEP = 0.25;
+
+    const activeImageUrl = frame.imageUrls[frame.activeVersionIndex];
+    const hasVersions = frame.imageUrls.length > 1;
 
     if (frame.isGenerating) {
         return (
@@ -131,10 +136,10 @@ export const FrameCard: React.FC<FrameCardProps> = ({
                 onDoubleClick={() => onOpenDetailView(frame)}
             >
                 <div 
-                    className="w-48 h-28 rounded-lg bg-black/20 border-2 border-primary cursor-pointer overflow-hidden" 
+                    className="w-48 h-28 rounded-lg bg-black/20 border-2 border-primary cursor-zoom-in overflow-hidden" 
                     onClick={() => onViewImage(index)}
                 >
-                     <img src={frame.imageUrl} alt={`Frame ${index + 1}`} className="w-full h-full object-contain" />
+                     <img src={activeImageUrl} alt={`Frame ${index + 1}`} className="w-full h-full object-contain transition-transform duration-300 group-hover:scale-105" />
                 </div>
                 <button
                     onClick={(e) => { e.stopPropagation(); onDeleteFrame(frame.id); }}
@@ -150,6 +155,32 @@ export const FrameCard: React.FC<FrameCardProps> = ({
                     </div>
                 )}
                 <div className="absolute top-1.5 left-1.5 bg-black/60 text-white text-xs font-bold w-6 h-6 flex items-center justify-center rounded-full">{index + 1}</div>
+                
+                 {hasVersions && (
+                    <div className="absolute inset-0 flex items-center justify-between p-1 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
+                        <button 
+                            onClick={(e) => { e.stopPropagation(); onVersionChange(frame.id, 'prev'); }}
+                            disabled={frame.activeVersionIndex === 0}
+                            className="size-8 rounded-full bg-black/50 backdrop-blur-sm text-white flex items-center justify-center hover:bg-black/80 disabled:opacity-30 disabled:cursor-not-allowed pointer-events-auto"
+                            aria-label="Previous version"
+                        >
+                            <span className="material-symbols-outlined">chevron_left</span>
+                        </button>
+                        <button 
+                            onClick={(e) => { e.stopPropagation(); onVersionChange(frame.id, 'next'); }}
+                            disabled={frame.activeVersionIndex === frame.imageUrls.length - 1}
+                            className="size-8 rounded-full bg-black/50 backdrop-blur-sm text-white flex items-center justify-center hover:bg-black/80 disabled:opacity-30 disabled:cursor-not-allowed pointer-events-auto"
+                             aria-label="Next version"
+                        >
+                            <span className="material-symbols-outlined">chevron_right</span>
+                        </button>
+                    </div>
+                )}
+                 {hasVersions && (
+                    <div className="absolute bottom-1.5 left-1/2 -translate-x-1/2 bg-black/60 text-white text-xs font-bold px-2 py-0.5 rounded-full opacity-40 group-hover:opacity-100 transition-opacity duration-300">
+                        {frame.activeVersionIndex + 1} / {frame.imageUrls.length}
+                    </div>
+                )}
             </div>
              <div className="flex items-center justify-center">
                 <div className="flex h-6 items-center rounded-full bg-white/5 px-0.5">

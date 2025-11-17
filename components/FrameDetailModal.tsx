@@ -1,5 +1,3 @@
-
-
 import React, { useState, useEffect } from 'react';
 import type { Frame } from '../types';
 
@@ -30,12 +28,14 @@ export const FrameDetailModal: React.FC<FrameDetailModalProps> = ({ frame, onClo
         setDuration(frame.duration);
         setIsEditing(false);
     }
+    
+    const activeImageUrl = frame.imageUrls[frame.activeVersionIndex];
 
     return (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4" onClick={onClose}>
             <div className="bg-[#191C2D] border border-white/10 rounded-xl p-6 flex flex-col md:flex-row gap-6 text-white max-w-4xl w-full max-h-[90vh]" onClick={e => e.stopPropagation()}>
                 <div className="w-full md:w-1/2 flex-shrink-0">
-                    <img src={frame.imageUrl} alt={`Frame ${frame.id.substring(0,4)}`} className="w-full h-auto object-contain rounded-lg max-h-[80vh]" />
+                    <img src={activeImageUrl} alt={`Frame ${frame.id.substring(0,4)}`} className="w-full h-auto object-contain rounded-lg max-h-[80vh]" />
                 </div>
                 <div className="w-full md:w-1/2 flex flex-col">
                     <h3 className="text-xl font-bold mb-4">Детали кадра #{frame.id.substring(0, 4)}</h3>

@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useRef } from 'react';
 import type { Frame } from '../types';
 
@@ -50,6 +49,9 @@ export const ImageViewerModal: React.FC<ImageViewerModalProps> = ({ frames, star
     if (!frames || frames.length === 0) {
         return null;
     }
+    
+    const currentFrame = frames[currentIndex];
+    const activeImageUrl = currentFrame.imageUrls[currentFrame.activeVersionIndex];
 
     return (
         <div
@@ -62,7 +64,7 @@ export const ImageViewerModal: React.FC<ImageViewerModalProps> = ({ frames, star
                 {/* Main Image Display */}
                 <div className="flex-1 flex items-center justify-center w-full min-h-0 relative">
                      <img
-                        src={frames[currentIndex].imageUrl}
+                        src={activeImageUrl}
                         alt={`Enlarged frame view ${currentIndex + 1}`}
                         className="object-contain max-w-full max-h-full rounded-lg shadow-2xl"
                     />
@@ -101,7 +103,7 @@ export const ImageViewerModal: React.FC<ImageViewerModalProps> = ({ frames, star
                                 <div key={frame.id} className="relative shrink-0">
                                     <img
                                         ref={index === currentIndex ? activeThumbnailRef : null}
-                                        src={frame.imageUrl}
+                                        src={frame.imageUrls[frame.activeVersionIndex]}
                                         alt={`Thumbnail ${index + 1}`}
                                         className={`w-24 h-14 object-cover rounded-md cursor-pointer border-2 transition-all ${
                                             currentIndex === index ? 'border-primary' : 'border-transparent opacity-60 hover:opacity-100'

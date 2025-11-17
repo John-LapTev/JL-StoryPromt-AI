@@ -32,8 +32,15 @@ export type GeneratingVideoState = { frameId: string; message: string } | null;
 const DEMO_PROJECT_ID = 'demo-project';
 
 const hydrateFrame = async (frameData: Omit<Frame, 'file'>): Promise<Frame> => {
-    const file = dataUrlToFile(frameData.imageUrl, `story-frame-${frameData.id}.png`);
-    return { ...frameData, file };
+    // Migration for old frame structure
+    const frameWithVersions = {
+      ...frameData,
+      imageUrls: frameData.imageUrls || [(frameData as any).imageUrl],
+      activeVersionIndex: frameData.activeVersionIndex || 0,
+    };
+    const activeImageUrl = frameWithVersions.imageUrls[frameWithVersions.activeVersionIndex];
+    const file = dataUrlToFile(activeImageUrl, `story-frame-${frameData.id}.png`);
+    return { ...frameWithVersions, file };
 };
 
 export default function App() {
@@ -48,13 +55,17 @@ export default function App() {
     // Modal States
     const [isSaveModalOpen, setIsSaveModalOpen] = useState(false);
     const [isLoadModalOpen, setIsLoadModalOpen] = useState(false);
+    const [isAdvancedGenerateModalOpen, setIsAdvancedGenerateModalOpen] = useState(false);
+    const [advancedGenerateModalConfig, setAdvancedGenerateModalConfig] = useState<{
+        mode: 'generate' | 'edit';
+        frameToEdit?: Frame;
+        insertIndex?: number;
+    }>({ mode: 'generate' });
+
 
     // UI States
     const [generatedVideoUrl, setGeneratedVideoUrl] = useState<string | null>(null);
     const [isVeoKeySelected, setIsVeoKeySelected] = useState(false);
-    const [isGenerateModalOpen, setIsGenerateModalOpen] = useState(false);
-    const [editingFrameForAdvancedModal, setEditingFrameForAdvancedModal] = useState<Frame | null>(null);
-    const [generateFrameIndex, setGenerateFrameIndex] = useState(0);
     const [isChatOpen, setIsChatOpen] = useState(false);
     const [editingFrame, setEditingFrame] = useState<Frame | null>(null);
     const [viewingFrameIndex, setViewingFrameIndex] = useState<number | null>(null);
@@ -116,21 +127,29 @@ export default function App() {
             const hydrateAllData = async () => {
                 // Hydrate frames by creating File objects
                 const hydratedFrames: Frame[] = await Promise.all(
-                    (currentProject.frames || []).map(async (frame) => {
+                    (currentProject.frames || []).map(async (frameData) => {
+                        // Migration for old frame structure
+                        const frameWithVersions = {
+                            ...(frameData as any), // Cast to any to handle old structure with imageUrl
+                            imageUrls: frameData.imageUrls || [(frameData as any).imageUrl],
+                            activeVersionIndex: frameData.activeVersionIndex ?? 0,
+                        };
+                        const activeImageUrl = frameWithVersions.imageUrls[frameWithVersions.activeVersionIndex];
+
                         try {
-                            const filename = `frame-${frame.id}.${frame.imageUrl.split('.').pop()?.split('?')[0] || 'png'}`;
+                            const filename = `frame-${frameWithVersions.id}.${activeImageUrl.split('.').pop()?.split('?')[0] || 'png'}`;
                             let file: File;
-                            if (frame.imageUrl.startsWith('data:')) {
-                                file = dataUrlToFile(frame.imageUrl, filename);
+                            if (activeImageUrl.startsWith('data:')) {
+                                file = dataUrlToFile(activeImageUrl, filename);
                             } else {
-                                const blob = await fetchCorsImage(frame.imageUrl);
+                                const blob = await fetchCorsImage(activeImageUrl);
                                 file = new File([blob], filename, { type: blob.type });
                             }
-                            return { ...frame, file };
+                            return { ...frameWithVersions, file };
                         } catch (e) {
-                            console.error(`Could not create file for frame image ${frame.id}:`, e);
-                            const emptyFile = new File([], `failed-${frame.id}.txt`, { type: 'text/plain' });
-                            return { ...frame, file: emptyFile };
+                            console.error(`Could not create file for frame image ${frameWithVersions.id}:`, e);
+                            const emptyFile = new File([], `failed-${frameWithVersions.id}.txt`, { type: 'text/plain' });
+                            return { ...frameWithVersions, file: emptyFile };
                         }
                     })
                 );
@@ -355,7 +374,8 @@ export default function App() {
                         const base64 = await fileToBase64(file);
                         const newFrame: Frame = {
                             id: crypto.randomUUID(),
-                            imageUrl: base64,
+                            imageUrls: [base64],
+                            activeVersionIndex: 0,
                             prompt: '',
                             duration: 3.0,
                             file: file,
@@ -373,8 +393,8 @@ export default function App() {
             };
             input.click();
         } else if (type === 'generate') {
-            setGenerateFrameIndex(index);
-            setIsGenerateModalOpen(true);
+            setAdvancedGenerateModalConfig({ mode: 'generate', insertIndex: index });
+            setIsAdvancedGenerateModalOpen(true);
         } else if (type === 'intermediate') {
             const leftFrame = localFrames[index - 1];
             const rightFrame = localFrames[index];
@@ -388,7 +408,8 @@ export default function App() {
                 const file = dataUrlToFile(imageUrl, `intermediate-${leftFrame.id}-${rightFrame.id}.png`);
                 const newFrame: Frame = {
                     id: crypto.randomUUID(),
-                    imageUrl,
+                    imageUrls: [imageUrl],
+                    activeVersionIndex: 0,
                     prompt,
                     duration: Number(((leftFrame.duration + rightFrame.duration) / 2).toFixed(2)),
                     file,
@@ -407,10 +428,16 @@ export default function App() {
         }
     }, [localFrames, updateFrames]);
     
-    const handleStartFrameGeneration = async (data: { mode: 'generate' | 'edit', prompt: string, maintainContext?: boolean, file?: File, preview?: string }, frameIdToUpdate?: string) => {
-        setIsGenerateModalOpen(false);
-        if (!frameIdToUpdate) {
-            setGeneratingNewFrameIndex(generateFrameIndex);
+    const handleStartFrameGeneration = async (data: { mode: 'generate' | 'edit', prompt: string, maintainContext?: boolean }, frameIdToUpdate?: string) => {
+        setIsAdvancedGenerateModalOpen(false);
+        
+        const insertIndex = advancedGenerateModalConfig.insertIndex ?? 0;
+        const frameToEdit = advancedGenerateModalConfig.frameToEdit;
+
+        if (frameIdToUpdate) {
+            updateFrames(prev => prev.map(f => f.id === frameIdToUpdate ? { ...f, isGenerating: true } : f));
+        } else {
+             setGeneratingNewFrameIndex(insertIndex);
         }
         
         try {
@@ -419,35 +446,48 @@ export default function App() {
 
             if (data.mode === 'generate') {
                 if (data.maintainContext) {
-                    const leftFrame = localFrames[generateFrameIndex - 1] || null;
-                    const rightFrame = localFrames[generateFrameIndex] || null;
+                    const leftFrame = localFrames[insertIndex - 1] || null;
+                    const rightFrame = localFrames[insertIndex] || null;
                     const result = await generateImageInContext(data.prompt, leftFrame, rightFrame);
                     imageUrl = result.imageUrl;
                     finalPrompt = result.prompt;
                 } else {
                     imageUrl = await generateImageFromPrompt(data.prompt);
                 }
-            } else if (data.mode === 'edit' && data.file && data.preview) {
-                imageUrl = await editImage(data.preview, data.file.type, data.prompt);
+            } else if (data.mode === 'edit' && frameToEdit) {
+                imageUrl = await editImage(frameToEdit, data.prompt);
             } else {
                  throw new Error("Invalid state for generation.");
             }
-
-            const file = dataUrlToFile(imageUrl, `generated-${Date.now()}.png`);
             
             if (frameIdToUpdate) {
-                updateFrames(prev => prev.map(f => f.id === frameIdToUpdate ? { ...f, imageUrl: imageUrl, file: file } : f));
+                const file = dataUrlToFile(imageUrl, `edited-${frameIdToUpdate}-${Date.now()}.png`);
+                updateFrames(prev => prev.map(f => {
+                    if (f.id === frameIdToUpdate) {
+                        const newImageUrls = [...f.imageUrls, imageUrl];
+                        return {
+                            ...f,
+                            imageUrls: newImageUrls,
+                            activeVersionIndex: newImageUrls.length - 1,
+                            file,
+                            isGenerating: false,
+                        };
+                    }
+                    return f;
+                }));
             } else {
+                const file = dataUrlToFile(imageUrl, `generated-${Date.now()}.png`);
                 const newFrame: Frame = {
                     id: crypto.randomUUID(),
-                    imageUrl: imageUrl,
+                    imageUrls: [imageUrl],
+                    activeVersionIndex: 0,
                     prompt: finalPrompt,
                     duration: 3.0,
                     file,
                 };
                 updateFrames(prev => {
                     const newFrames = [...prev];
-                    newFrames.splice(generateFrameIndex, 0, newFrame);
+                    newFrames.splice(insertIndex, 0, newFrame);
                     return newFrames;
                 });
             }
@@ -455,9 +495,11 @@ export default function App() {
         } catch (error) {
             console.error("Error during generation:", error);
             alert(`Не удалось выполнить операцию: ${error instanceof Error ? error.message : String(error)}`);
+            if (frameIdToUpdate) {
+                 updateFrames(prev => prev.map(f => f.id === frameIdToUpdate ? { ...f, isGenerating: false } : f));
+            }
         } finally {
             setGeneratingNewFrameIndex(null);
-            setEditingFrameForAdvancedModal(null);
         }
     };
 
@@ -628,7 +670,8 @@ export default function App() {
 
             const placeholderFrames: Frame[] = Array.from({ length: frameCount }, (_, i) => ({
                 id: `placeholder-${crypto.randomUUID()}`,
-                imageUrl: '',
+                imageUrls: [''],
+                activeVersionIndex: 0,
                 prompt: `Ожидание кадра ${i + 1}...`,
                 duration: 3.0,
                 isGenerating: true,
@@ -699,7 +742,13 @@ export default function App() {
             if (file) {
                 try {
                     const base64 = await fileToBase64(file);
-                    updateFrames(prev => prev.map(f => f.id === frameId ? { ...f, imageUrl: base64, file } : f));
+                    updateFrames(prev => prev.map(f => {
+                        if (f.id === frameId) {
+                            const newImageUrls = [base64];
+                            return { ...f, imageUrls: newImageUrls, activeVersionIndex: 0, file };
+                        }
+                        return f;
+                    }));
                 } catch (error) {
                     console.error("Error replacing file:", error);
                     alert("Could not load image file for replacement.");
@@ -708,10 +757,43 @@ export default function App() {
         };
         input.click();
     };
+    
+    const handleVersionChange = useCallback(async (frameId: string, direction: 'next' | 'prev') => {
+        const framesWithNewVersions = await Promise.all(
+            localFrames.map(async (frame) => {
+                if (frame.id === frameId) {
+                    let newIndex = frame.activeVersionIndex;
+                    if (direction === 'next' && newIndex < frame.imageUrls.length - 1) {
+                        newIndex++;
+                    } else if (direction === 'prev' && newIndex > 0) {
+                        newIndex--;
+                    }
+    
+                    if (newIndex !== frame.activeVersionIndex) {
+                        const activeImageUrl = frame.imageUrls[newIndex];
+                        const filename = `frame-${frame.id}-v${newIndex}.${activeImageUrl.split('.').pop()?.split('?')[0] || 'png'}`;
+                        let newFile: File;
+                        try {
+                            if (activeImageUrl.startsWith('data:')) {
+                                newFile = dataUrlToFile(activeImageUrl, filename);
+                            } else {
+                                const blob = await fetchCorsImage(activeImageUrl);
+                                newFile = new File([blob], filename, { type: blob.type });
+                            }
+                            return { ...frame, activeVersionIndex: newIndex, file: newFile };
+                        } catch (e) {
+                            console.error(`Could not create file for new version of frame ${frame.id}:`, e);
+                            newFile = new File([], `failed-${frame.id}.txt`, { type: 'text/plain' });
+                            return { ...frame, activeVersionIndex: newIndex, file: newFile };
+                        }
+                    }
+                }
+                return frame;
+            })
+        );
+        updateFrames(framesWithNewVersions);
+    }, [localFrames, updateFrames]);
 
-    const handleOpenAdvancedEdit = (frame: Frame) => {
-        setEditingFrameForAdvancedModal(frame);
-    };
 
     return (
         <div className="relative flex h-screen w-full flex-col group/design-root overflow-hidden">
@@ -768,6 +850,7 @@ export default function App() {
                     onOpenDetailView={setDetailedFrame}
                     onOpenAssetLibrary={() => setIsAssetLibraryOpen(true)}
                     onContextMenu={handleContextMenu}
+                    onVersionChange={handleVersionChange}
                 />
             </main>
 
@@ -782,17 +865,14 @@ export default function App() {
             </button>
             
             {generatedVideoUrl && <VideoModal videoUrl={generatedVideoUrl} onClose={() => setGeneratedVideoUrl(null)} />}
-            {isGenerateModalOpen || editingFrameForAdvancedModal ? (
+            {isAdvancedGenerateModalOpen && (
                 <AdvancedGenerateModal
+                    onClose={() => setIsAdvancedGenerateModalOpen(false)}
+                    onGenerate={(data) => handleStartFrameGeneration(data, advancedGenerateModalConfig.frameToEdit?.id)}
+                    config={advancedGenerateModalConfig}
                     frames={localFrames}
-                    frameToEdit={editingFrameForAdvancedModal}
-                    onClose={() => {
-                        setIsGenerateModalOpen(false);
-                        setEditingFrameForAdvancedModal(null);
-                    }}
-                    onGenerate={(data) => handleStartFrameGeneration(data, editingFrameForAdvancedModal?.id)}
                 />
-            ) : null}
+            )}
             {editingFrame && (
                 <EditPromptModal 
                     frame={editingFrame}
@@ -839,7 +919,10 @@ export default function App() {
                     onClose={handleCloseContextMenu}
                     actions={[
                         { label: 'Создать видео', icon: 'movie', onClick: () => handleGenerateVideo(contextMenu.frame) },
-                        { label: 'Редактировать кадр', icon: 'tune', onClick: () => handleOpenAdvancedEdit(contextMenu.frame) },
+                        { label: 'Редактировать кадр', icon: 'tune', onClick: () => {
+                            setAdvancedGenerateModalConfig({ mode: 'edit', frameToEdit: contextMenu.frame });
+                            setIsAdvancedGenerateModalOpen(true);
+                        }},
                         { label: 'Дублировать', icon: 'content_copy', onClick: () => handleDuplicateFrame(contextMenu.frame.id) },
                         { label: 'Заменить кадр', icon: 'swap_horiz', onClick: () => handleReplaceFrame(contextMenu.frame.id) },
                     ]}
