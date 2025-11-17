@@ -75,11 +75,9 @@ export default function App() {
     const [contextMenu, setContextMenu] = useState<{ x: number, y: number, frame: Frame } | null>(null);
     
     // Non-blocking loading states
-    const [generatingIntermediateIndex, setGeneratingIntermediateIndex] = useState<number | null>(null);
     const [generatingStory, setGeneratingStory] = useState(false);
     const [generatingPromptFrameId, setGeneratingPromptFrameId] = useState<string | null>(null);
     const [generatingVideoState, setGeneratingVideoState] = useState<GeneratingVideoState>(null);
-    const [generatingNewFrameIndex, setGeneratingNewFrameIndex] = useState<number | null>(null);
 
     // Derived state
     const currentProject = useMemo(() => projects.find(p => p.id === currentProjectId), [projects, currentProjectId]);
@@ -362,7 +360,7 @@ export default function App() {
         });
     }, [updateFrames]);
 
-    const handleAddFrame = useCallback(async (index: number, type: 'upload' | 'generate' | 'intermediate') => {
+    const handleAddFrame = useCallback(async (index: number, type: 'upload' | 'generate') => {
         if (type === 'upload') {
             const input = document.createElement('input');
             input.type = 'file';
@@ -395,81 +393,68 @@ export default function App() {
         } else if (type === 'generate') {
             setAdvancedGenerateModalConfig({ mode: 'generate', insertIndex: index });
             setIsAdvancedGenerateModalOpen(true);
-        } else if (type === 'intermediate') {
-            const leftFrame = localFrames[index - 1];
-            const rightFrame = localFrames[index];
-            if (!leftFrame || !rightFrame) {
-                alert("Не удалось найти соседние кадры для создания промежуточного.");
-                return;
-            }
-            setGeneratingIntermediateIndex(index);
-            try {
-                const { imageUrl, prompt } = await generateIntermediateFrame(leftFrame, rightFrame);
-                const file = dataUrlToFile(imageUrl, `intermediate-${leftFrame.id}-${rightFrame.id}.png`);
-                const newFrame: Frame = {
-                    id: crypto.randomUUID(),
-                    imageUrls: [imageUrl],
-                    activeVersionIndex: 0,
-                    prompt,
-                    duration: Number(((leftFrame.duration + rightFrame.duration) / 2).toFixed(2)),
-                    file,
-                };
-                updateFrames(prev => {
-                    const newFrames = [...prev];
-                    newFrames.splice(index, 0, newFrame);
-                    return newFrames;
-                });
-            } catch (error) {
-                console.error("Error generating intermediate frame:", error);
-                alert(`Не удалось сгенерировать промежуточный кадр: ${error instanceof Error ? error.message : String(error)}`);
-            } finally {
-                setGeneratingIntermediateIndex(null);
-            }
         }
-    }, [localFrames, updateFrames]);
+    }, [updateFrames]);
     
-    const handleStartFrameGeneration = async (data: { mode: 'generate', prompt: string, maintainContext?: boolean }) => {
+    const handleStartFrameGeneration = async (data: { prompt: string }) => {
         setIsAdvancedGenerateModalOpen(false);
-        
         const insertIndex = advancedGenerateModalConfig.insertIndex ?? 0;
-        
-        // This function now only handles 'generate' mode. 'edit' is handled by handleApplyEdit.
-        setGeneratingNewFrameIndex(insertIndex);
-        
-        try {
-            let imageUrl: string;
-            let finalPrompt = data.prompt;
 
-            if (data.maintainContext) {
-                const leftFrame = localFrames[insertIndex - 1] || null;
-                const rightFrame = localFrames[insertIndex] || null;
-                const result = await generateImageInContext(data.prompt, leftFrame, rightFrame);
-                imageUrl = result.imageUrl;
-                finalPrompt = result.prompt;
+        const framesBeforePlaceholder = localFrames;
+        const leftFrame = framesBeforePlaceholder[insertIndex - 1] || null;
+        const rightFrame = framesBeforePlaceholder[insertIndex] || null;
+
+        if (data.prompt === '__AUTO__' && (!leftFrame || !rightFrame)) {
+            alert("Не удалось найти соседние кадры для автоматической генерации. Операция отменена.");
+            return;
+        }
+
+        const placeholderId = crypto.randomUUID();
+        const placeholderFrame: Frame = {
+            id: placeholderId,
+            imageUrls: [''],
+            activeVersionIndex: 0,
+            prompt: 'Генерация кадра...',
+            duration: 3.0,
+            isGenerating: true,
+            file: new File([], 'placeholder.txt', { type: 'text/plain' })
+        };
+
+        updateFrames(prev => {
+            const newFrames = [...prev];
+            newFrames.splice(insertIndex, 0, placeholderFrame);
+            return newFrames;
+        });
+
+        try {
+            let result: { imageUrl: string, prompt: string };
+
+            if (data.prompt === '__AUTO__') {
+                // This check is now pre-emptive, but we re-check here to satisfy TypeScript
+                if (!leftFrame || !rightFrame) throw new Error("Соседние кадры не найдены.");
+                result = await generateIntermediateFrame(leftFrame, rightFrame);
             } else {
-                imageUrl = await generateImageFromPrompt(data.prompt);
+                result = await generateImageInContext(data.prompt, leftFrame, rightFrame);
             }
             
-            const file = dataUrlToFile(imageUrl, `generated-${Date.now()}.png`);
-            const newFrame: Frame = {
+            const file = dataUrlToFile(result.imageUrl, `generated-${Date.now()}.png`);
+            
+            const finalFrame: Frame = {
                 id: crypto.randomUUID(),
-                imageUrls: [imageUrl],
+                imageUrls: [result.imageUrl],
                 activeVersionIndex: 0,
-                prompt: finalPrompt,
-                duration: 3.0,
+                prompt: result.prompt,
+                duration: leftFrame && rightFrame ? Number(((leftFrame.duration + rightFrame.duration) / 2).toFixed(2)) : 3.0,
                 file,
+                isGenerating: false,
             };
-            updateFrames(prev => {
-                const newFrames = [...prev];
-                newFrames.splice(insertIndex, 0, newFrame);
-                return newFrames;
-            });
+
+            updateFrames(prev => prev.map(frame => frame.id === placeholderId ? finalFrame : frame));
 
         } catch (error) {
             console.error("Error during generation:", error);
             alert(`Не удалось выполнить операцию: ${error instanceof Error ? error.message : String(error)}`);
-        } finally {
-            setGeneratingNewFrameIndex(null);
+            updateFrames(prev => prev.filter(f => f.id !== placeholderId));
         }
     };
 
@@ -827,8 +812,6 @@ export default function App() {
                     totalDuration={totalDuration}
                     transform={transform}
                     setTransform={setTransform}
-                    generatingIntermediateIndex={generatingIntermediateIndex}
-                    generatingNewFrameIndex={generatingNewFrameIndex}
                     generatingStory={generatingStory}
                     generatingPromptFrameId={generatingPromptFrameId}
                     generatingVideoState={generatingVideoState}

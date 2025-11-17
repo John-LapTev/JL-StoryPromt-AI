@@ -2,7 +2,6 @@ import React, { useRef, useState, useEffect } from 'react';
 import type { Frame } from '../types';
 import { FrameCard } from './FrameCard';
 import { AddFrameButton } from './AddFrameButton';
-import { IntermediateLoadingCard } from './IntermediateLoadingCard';
 import { GeneratingVideoState } from '../App';
 
 interface Transform {
@@ -15,14 +14,12 @@ interface TimelineProps {
     totalDuration: number;
     transform: Transform;
     setTransform: React.Dispatch<React.SetStateAction<Transform>>;
-    generatingIntermediateIndex: number | null;
-    generatingNewFrameIndex: number | null;
     generatingStory: boolean;
     generatingPromptFrameId: string | null;
     generatingVideoState: GeneratingVideoState;
     onDurationChange: (id: string, newDuration: number) => void;
     onPromptChange: (id: string, newPrompt: string) => void;
-    onAddFrame: (index: number, type: 'upload' | 'generate' | 'intermediate') => void;
+    onAddFrame: (index: number, type: 'upload' | 'generate') => void;
     onDeleteFrame: (id: string) => void;
     onReorderFrame: (dragIndex: number, dropIndex: number) => void;
     onAnalyzeStory: () => void;
@@ -43,8 +40,6 @@ export const Timeline: React.FC<TimelineProps> = ({
     totalDuration,
     transform,
     setTransform,
-    generatingIntermediateIndex,
-    generatingNewFrameIndex,
     generatingStory,
     generatingPromptFrameId,
     generatingVideoState,
@@ -267,19 +262,14 @@ export const Timeline: React.FC<TimelineProps> = ({
                 >
                     <div className="flex items-start gap-4 h-full p-4">
                         <div className="frame-card-interactive">
-                             {generatingNewFrameIndex === 0 ? (
-                                <IntermediateLoadingCard />
-                             ) : (
-                                <AddFrameButton 
-                                    index={0} 
-                                    onAddFrame={onAddFrame} 
-                                    showIntermediateOption={false}
-                                    onDragOver={(e) => handleDragOver(e, 0)}
-                                    onDragLeave={handleDragLeave}
-                                    onDrop={handleDrop}
-                                    isDropTarget={dropTargetIndex === 0}
-                                />
-                             )}
+                             <AddFrameButton 
+                                index={0} 
+                                onAddFrame={onAddFrame} 
+                                onDragOver={(e) => handleDragOver(e, 0)}
+                                onDragLeave={handleDragLeave}
+                                onDrop={handleDrop}
+                                isDropTarget={dropTargetIndex === 0}
+                            />
                         </div>
                         {frames.map((frame, index) => (
                             <React.Fragment key={frame.id}>
@@ -305,20 +295,16 @@ export const Timeline: React.FC<TimelineProps> = ({
                                     />
                                 </div>
                                 <div className="frame-card-interactive">
-                                    {generatingIntermediateIndex === index + 1 || generatingNewFrameIndex === index + 1 ? (
-                                        <IntermediateLoadingCard />
-                                    ) : (
-                                        <AddFrameButton
-                                            index={index + 1}
-                                            onAddFrame={onAddFrame}
-                                            onGenerateTransition={onGenerateTransition}
-                                            showIntermediateOption={index < frames.length - 1}
-                                            onDragOver={(e) => handleDragOver(e, index + 1)}
-                                            onDragLeave={handleDragLeave}
-                                            onDrop={handleDrop}
-                                            isDropTarget={dropTargetIndex === index + 1}
-                                        />
-                                    )}
+                                    <AddFrameButton
+                                        index={index + 1}
+                                        onAddFrame={onAddFrame}
+                                        onGenerateTransition={onGenerateTransition}
+                                        showTransitionOption={index < frames.length -1}
+                                        onDragOver={(e) => handleDragOver(e, index + 1)}
+                                        onDragLeave={handleDragLeave}
+                                        onDrop={handleDrop}
+                                        isDropTarget={dropTargetIndex === index + 1}
+                                    />
                                 </div>
                             </React.Fragment>
                         ))}

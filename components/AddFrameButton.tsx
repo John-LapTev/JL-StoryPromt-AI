@@ -2,9 +2,9 @@ import React, { useState, useRef, useEffect } from 'react';
 
 interface AddFrameButtonProps {
     index: number;
-    onAddFrame: (index: number, type: 'upload' | 'generate' | 'intermediate') => void;
+    onAddFrame: (index: number, type: 'upload' | 'generate') => void;
     onGenerateTransition?: (index: number) => void;
-    showIntermediateOption?: boolean;
+    showTransitionOption?: boolean;
     // Drag and drop props
     onDragOver?: (e: React.DragEvent) => void;
     onDragLeave?: () => void;
@@ -16,7 +16,7 @@ export const AddFrameButton: React.FC<AddFrameButtonProps> = ({
     index, 
     onAddFrame, 
     onGenerateTransition, 
-    showIntermediateOption = false,
+    showTransitionOption = false,
     onDragOver,
     onDragLeave,
     onDrop,
@@ -63,13 +63,7 @@ export const AddFrameButton: React.FC<AddFrameButtonProps> = ({
                             <span className="material-symbols-outlined text-base">layers</span>
                             <span>Сгенерировать</span>
                         </button>
-                         {showIntermediateOption && (
-                            <button onClick={() => { onAddFrame(index, 'intermediate'); setIsOpen(false); }} className="flex min-w-[84px] max-w-[480px] cursor-pointer items-center justify-center overflow-hidden rounded-md h-8 px-2.5 bg-white/10 text-white text-xs font-bold leading-normal tracking-[0.015em] hover:bg-white/20 w-full gap-2">
-                                <span className="material-symbols-outlined text-base"> Splitscreen </span>
-                                <span>Сгенерировать промежуточный</span>
-                            </button>
-                        )}
-                        {showIntermediateOption && onGenerateTransition && (
+                        {showTransitionOption && onGenerateTransition && (
                             <button onClick={() => { onGenerateTransition(index); setIsOpen(false); }} className="flex min-w-[84px] max-w-[480px] cursor-pointer items-center justify-center overflow-hidden rounded-md h-8 px-2.5 bg-white/10 text-white text-xs font-bold leading-normal tracking-[0.015em] hover:bg-white/20 w-full gap-2">
                                 <span className="material-symbols-outlined text-base">sync_alt</span>
                                 <span>Сгенерировать переход</span>

@@ -607,3 +607,66 @@ export async function generateEditSuggestions(
         throw new Error("Could not parse suggestions from the AI.");
     }
 }
+
+export async function generatePromptSuggestions(
+    leftFrame: Frame | null,
+    rightFrame: Frame | null
+): Promise<string[]> {
+    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+    const parts: any[] = [];
+    
+    let promptText = `Ты — AI-ассистент для создания раскадровок. Твоя задача — предложить 4 креативных идеи для нового кадра, который должен логично и стилистически вписаться между двумя существующими кадрами.
+    
+Контекст:`;
+
+    if (leftFrame) {
+        const { mimeType, data } = await urlOrFileToBase64(leftFrame);
+        parts.push({text: 'ПРЕДЫДУЩИЙ КАДР (СЛЕВА):'});
+        parts.push({ inlineData: { mimeType, data } });
+        promptText += `\n- Кадр СЛЕВА предоставлен. Его промт: "${leftFrame.prompt || 'N/A'}"`;
+    } else {
+        promptText += `\n- Предыдущего кадра нет. Это начало истории.`;
+    }
+
+    if (rightFrame) {
+        const { mimeType, data } = await urlOrFileToBase64(rightFrame);
+        parts.push({text: 'СЛЕДУЮЩИЙ КАДР (СПРАВА):'});
+        parts.push({ inlineData: { mimeType, data } });
+        promptText += `\n- Кадр СПРАВА предоставлен. Его промт: "${rightFrame.prompt || 'N/A'}"`;
+    } else {
+        promptText += `\n- Следующего кадра нет. Это конец истории.`;
+    }
+
+    promptText += `
+
+Проанализируй предоставленные кадры (стиль, содержание, сюжет). Придумай 4 различных промта для генерации изображения нового, промежуточного кадра. Идеи должны быть краткими, действенными и на русском языке.
+
+Примеры идей: "Крупный план: рука персонажа тянется к загадочному артефакту", "Камера отъезжает, показывая, что за героями наблюдают", "Быстрая смена плана на реакцию второго персонажа", "Драматический взгляд на город с высоты птичьего полета".
+
+Верни ТОЛЬКО валидный JSON-массив из 4 строк. Не включай markdown, объяснения или любой другой текст.`;
+    
+    parts.unshift({ text: promptText });
+
+    const response = await ai.models.generateContent({
+        model: 'gemini-2.5-pro',
+        contents: { parts },
+        config: {
+            responseMimeType: "application/json",
+            responseSchema: {
+                type: Type.ARRAY,
+                items: { type: Type.STRING },
+            },
+        },
+    });
+
+    try {
+        const suggestions = JSON.parse(response.text.trim());
+        if (Array.isArray(suggestions) && suggestions.every(s => typeof s === 'string') && suggestions.length > 0) {
+            return suggestions;
+        }
+        throw new Error("AI response is not a valid JSON array of strings.");
+    } catch (e) {
+        console.error("Failed to parse prompt suggestions from AI:", response.text);
+        throw new Error("Could not parse prompt suggestions from the AI.");
+    }
+}
