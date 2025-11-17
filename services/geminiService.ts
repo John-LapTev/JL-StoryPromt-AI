@@ -1,4 +1,3 @@
-
 import { GoogleGenAI, Type, Modality } from "@google/genai";
 import type { Frame } from '../types';
 import { fileToBase64 } from '../utils/fileUtils';
@@ -336,4 +335,58 @@ export async function generateTransitionPrompt(leftFrame: Frame, rightFrame: Fra
     });
 
     return response.text.trim();
+}
+
+export async function generateImageInContext(
+    userPrompt: string,
+    leftFrame: Frame | null,
+    rightFrame: Frame | null
+): Promise<string> {
+    if (!process.env.API_KEY) {
+        throw new Error("API_KEY environment variable not set");
+    }
+    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+
+    const parts: any[] = [];
+    
+    let instructionText = `You are an expert storyboard artist creating a new frame based on a user's prompt. The goal is to make this new frame fit seamlessly between two existing frames in a story.
+
+User's prompt for the new frame: "${userPrompt}"
+
+Your task:
+1.  Analyze the provided context: the image and prompt from the frame before (LEFT) and the frame after (RIGHT). Pay close attention to the art style, color palette, characters, and overall mood.
+2.  Generate a new image that is a direct visual representation of the user's prompt.
+3.  Crucially, ensure the generated image's style is perfectly consistent with the context frames, making it look like part of the same sequence. The new scene must logically connect the left and right frames.
+`;
+
+    if (leftFrame) {
+        const { mimeType, data } = await urlOrFileToBase64(leftFrame);
+        parts.push({ inlineData: { mimeType, data } });
+        instructionText += `\nContext from LEFT frame: The prompt was "${leftFrame.prompt || 'no prompt'}". The image is provided.`;
+    }
+    if (rightFrame) {
+        const { mimeType, data } = await urlOrFileToBase64(rightFrame);
+        parts.push({ inlineData: { mimeType, data } });
+        instructionText += `\nContext from RIGHT frame: The prompt was "${rightFrame.prompt || 'no prompt'}". The image is provided.`;
+    }
+
+    // Add the main instruction text at the beginning
+    parts.unshift({ text: instructionText });
+
+    const response = await ai.models.generateContent({
+        model: 'gemini-2.5-flash-image',
+        contents: { parts },
+        config: {
+            responseModalities: [Modality.IMAGE],
+        },
+    });
+
+    for (const part of response.candidates[0].content.parts) {
+        if (part.inlineData) {
+            const base64ImageBytes: string = part.inlineData.data;
+            return `data:${part.inlineData.mimeType};base64,${base64ImageBytes}`;
+        }
+    }
+
+    throw new Error("AI failed to generate an image with context.");
 }

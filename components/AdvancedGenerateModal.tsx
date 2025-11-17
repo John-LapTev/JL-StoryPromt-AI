@@ -1,11 +1,10 @@
-
 import React, { useState } from 'react';
 import { fileToBase64 } from '../utils/fileUtils';
 import type { Frame } from '../types';
 
 interface AdvancedGenerateModalProps {
     onClose: () => void;
-    onGenerate: (data: { mode: 'generate' | 'edit', prompt: string, file?: File, preview?: string }) => void;
+    onGenerate: (data: { mode: 'generate' | 'edit', prompt: string, maintainContext?: boolean, file?: File, preview?: string }) => void;
     frames: Frame[];
 }
 
@@ -17,6 +16,7 @@ export const AdvancedGenerateModal: React.FC<AdvancedGenerateModalProps> = ({ on
     const [editImageFile, setEditImageFile] = useState<File | null>(null);
     const [editImagePreview, setEditImagePreview] = useState<string | null>(null);
     const [selectedFrameId, setSelectedFrameId] = useState<string | null>(null);
+    const [maintainContext, setMaintainContext] = useState(true);
 
     const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0];
@@ -64,6 +64,7 @@ export const AdvancedGenerateModal: React.FC<AdvancedGenerateModalProps> = ({ on
         onGenerate({
             mode,
             prompt,
+            maintainContext: mode === 'generate' ? maintainContext : undefined,
             file: editImageFile ?? undefined,
             preview: editImagePreview ?? undefined
         });
@@ -114,6 +115,28 @@ export const AdvancedGenerateModal: React.FC<AdvancedGenerateModalProps> = ({ on
                                 )}
                             </label>
                         </div>
+                    </div>
+                )}
+                 {mode === 'generate' && (
+                    <div className="flex items-center justify-between gap-4 p-3 bg-white/5 rounded-lg my-1">
+                        <div>
+                            <label htmlFor="maintain-context" className="text-sm text-white/80 cursor-pointer font-bold">
+                                Сохранять контекст сюжета
+                            </label>
+                             <p className="text-xs text-white/60">AI учтет соседние кадры для лучшего соответствия стилю и истории.</p>
+                        </div>
+                        <button 
+                            role="switch"
+                            aria-checked={maintainContext}
+                            id="maintain-context"
+                            onClick={() => setMaintainContext(!maintainContext)}
+                            className={`relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2 focus:ring-offset-[#191C2D] ${maintainContext ? 'bg-primary' : 'bg-gray-600'}`}
+                        >
+                            <span
+                                aria-hidden="true"
+                                className={`inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${maintainContext ? 'translate-x-5' : 'translate-x-0'}`}
+                            />
+                        </button>
                     </div>
                 )}
                 

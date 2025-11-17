@@ -9,7 +9,7 @@ import { Chatbot } from './components/Chatbot';
 import { EditPromptModal } from './components/EditPromptModal';
 import { ImageViewerModal } from './components/ImageViewerModal';
 import { FrameDetailModal } from './components/FrameDetailModal';
-import { analyzeStory, generateSinglePrompt, generateIntermediateFrame, generateTransitionPrompt, generateImageFromPrompt, editImage, generateVideoFromFrame } from './services/geminiService';
+import { analyzeStory, generateSinglePrompt, generateIntermediateFrame, generateTransitionPrompt, generateImageFromPrompt, editImage, generateVideoFromFrame, generateImageInContext } from './services/geminiService';
 import { fileToBase64 } from './utils/fileUtils';
 
 // Fix: Corrected the type definition for `window.aistudio` to use a named interface `AIStudio`.
@@ -160,14 +160,20 @@ export default function App() {
         }
     }, [frames]);
     
-    const handleStartFrameGeneration = async (data: { mode: 'generate' | 'edit', prompt: string, file?: File, preview?: string }) => {
+    const handleStartFrameGeneration = async (data: { mode: 'generate' | 'edit', prompt: string, maintainContext?: boolean, file?: File, preview?: string }) => {
         setIsGenerateModalOpen(false);
         setGeneratingNewFrameIndex(generateFrameIndex);
         
         try {
             let imageUrl: string;
             if (data.mode === 'generate') {
-                imageUrl = await generateImageFromPrompt(data.prompt);
+                if (data.maintainContext) {
+                    const leftFrame = frames[generateFrameIndex - 1] || null;
+                    const rightFrame = frames[generateFrameIndex] || null;
+                    imageUrl = await generateImageInContext(data.prompt, leftFrame, rightFrame);
+                } else {
+                    imageUrl = await generateImageFromPrompt(data.prompt);
+                }
             } else if (data.mode === 'edit' && data.file && data.preview) {
                 imageUrl = await editImage(data.preview, data.file.type, data.prompt);
             } else {
