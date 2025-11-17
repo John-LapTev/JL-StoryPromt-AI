@@ -98,21 +98,23 @@ export const Timeline: React.FC<TimelineProps> = ({
         if (!timelineEl) return;
 
         const handleMouseDown = (e: MouseEvent) => {
+            if (!timelineEl.contains(e.target as Node)) return;
+
             const isMiddleClick = e.button === 1;
             const isSpaceAndLeftClick = isSpaceDown && e.button === 0;
-            const isBackgroundLeftClick = !(e.target as HTMLElement).closest('.frame-card-interactive') && e.button === 0 && !isSpaceDown;
+            const isBackgroundLeftClick = !(e.target as HTMLElement).closest('.frame-card-interactive') && e.button === 0 && !isSpaceAndLeftClick;
 
             if (isMiddleClick || isSpaceAndLeftClick) {
                 e.preventDefault();
                 e.stopPropagation();
                 isPanning.current = true;
                 startPos.current = { x: e.clientX, y: e.clientY };
-                timelineEl.style.cursor = 'grabbing';
+                document.body.style.cursor = 'grabbing';
             } else if (isBackgroundLeftClick) {
                 e.preventDefault();
                 isPanning.current = true;
                 startPos.current = { x: e.clientX, y: e.clientY };
-                timelineEl.style.cursor = 'grabbing';
+                document.body.style.cursor = 'grabbing';
             }
         };
 
@@ -128,14 +130,20 @@ export const Timeline: React.FC<TimelineProps> = ({
         const handleMouseUp = () => {
             if (isPanning.current) {
                 isPanning.current = false;
-                timelineEl.style.cursor = 'grab';
+                document.body.style.cursor = 'default';
             }
         };
         
         const handleWheel = (e: WheelEvent) => {
+            if (!timelineEl.contains(e.target as Node)) return;
             e.preventDefault();
-            const scaleAmount = -e.deltaY * 0.001;
-            const newScale = Math.max(0.2, Math.min(8, transform.scale + scaleAmount));
+            
+            const scaleFactor = 1.1;
+            const newScale = e.deltaY < 0 
+                ? Math.min(8, transform.scale * scaleFactor)
+                : Math.max(0.2, transform.scale / scaleFactor);
+
+            if (Math.abs(newScale - transform.scale) < 0.001) return;
             
             const rect = timelineEl.getBoundingClientRect();
             const mouseX = e.clientX - rect.left;
@@ -147,16 +155,18 @@ export const Timeline: React.FC<TimelineProps> = ({
             setTransform({ scale: newScale, x: newX, y: newY });
         };
         
-        timelineEl.addEventListener('mousedown', handleMouseDown);
+        // Use capture phase for mousedown to intercept clicks on interactive elements
+        window.addEventListener('mousedown', handleMouseDown, true);
         window.addEventListener('mousemove', handleMouseMove);
         window.addEventListener('mouseup', handleMouseUp);
-        timelineEl.addEventListener('wheel', handleWheel);
+        timelineEl.addEventListener('wheel', handleWheel, { passive: false });
 
         return () => {
-            timelineEl.removeEventListener('mousedown', handleMouseDown);
+            window.removeEventListener('mousedown', handleMouseDown, true);
             window.removeEventListener('mousemove', handleMouseMove);
             window.removeEventListener('mouseup', handleMouseUp);
             timelineEl.removeEventListener('wheel', handleWheel);
+            document.body.style.cursor = 'default';
         };
     }, [isSpaceDown, transform.scale, transform.x, transform.y, setTransform]);
 
