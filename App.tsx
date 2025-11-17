@@ -631,6 +631,14 @@ export default function App() {
             return newSet;
         });
     }, [updateAssets]);
+    
+    const handleSelectAllAssets = useCallback(() => {
+        setSelectedAssetIds(new Set(localAssets.map(a => a.id)));
+    }, [localAssets]);
+
+    const handleDeselectAllAssets = useCallback(() => {
+        setSelectedAssetIds(new Set());
+    }, []);
 
     const handleCreateStoryFromAssets = async (frameCount: number) => {
         const assetsToUse = selectedAssetIds.size > 0
@@ -805,6 +813,8 @@ export default function App() {
                             return newSet;
                         });
                     }}
+                    onSelectAllAssets={handleSelectAllAssets}
+                    onDeselectAllAssets={handleDeselectAllAssets}
                     onGenerateStory={handleCreateStoryFromAssets}
                 />
                 <Timeline
