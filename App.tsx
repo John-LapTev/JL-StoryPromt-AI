@@ -16,8 +16,8 @@ import { AssetLibraryPanel } from './components/AssetLibraryPanel';
 import { ContextMenu } from './components/ContextMenu';
 import { StorySettingsModal } from './components/StorySettingsModal';
 import { AdaptationSettingsModal } from './components/AdaptationSettingsModal';
-import { analyzeStory, generateSinglePrompt, generateIntermediateFrame, generateTransitionPrompt, generateImageFromPrompt, editImage, generateVideoFromFrame, generateImageInContext, createStoryFromAssets, adaptImageToStory } from './services/geminiService';
-import { fileToBase64, dataUrlToFile, fetchCorsImage } from './utils/fileUtils';
+import { analyzeStory, generateSinglePrompt, generateIntermediateFrame, generateTransitionPrompt, generateImageFromPrompt, editImage, generateVideoFromFrame, generateImageInContext, createStoryFromAssets, adaptImageToStory, adaptImageAspectRatio } from './services/geminiService';
+import { fileToBase64, dataUrlToFile, fetchCorsImage, getImageDimensions } from './utils/fileUtils';
 
 declare global {
     interface AIStudio {
@@ -39,6 +39,7 @@ const hydrateFrame = async (frameData: Omit<Frame, 'file'>): Promise<Frame> => {
       ...frameData,
       imageUrls: frameData.imageUrls || [(frameData as any).imageUrl],
       activeVersionIndex: frameData.activeVersionIndex || 0,
+      aspectRatio: frameData.aspectRatio || '16:9',
     };
     const activeImageUrl = frameWithVersions.imageUrls[frameWithVersions.activeVersionIndex];
     const file = dataUrlToFile(activeImageUrl, `story-frame-${frameData.id}.png`);
@@ -62,6 +63,8 @@ export default function App() {
     const [selectedAssetIds, setSelectedAssetIds] = useState<Set<string>>(new Set());
     const [storySettings, setStorySettings] = useState<StorySettings>(initialStorySettings);
     const [frameCount, setFrameCount] = useState(10);
+    const [globalAspectRatio, setGlobalAspectRatio] = useState('16:9');
+    const [isAspectRatioLocked, setIsAspectRatioLocked] = useState(true);
 
 
     // Modal States
@@ -148,6 +151,7 @@ export default function App() {
                             ...(frameData as any), // Cast to any to handle old structure with imageUrl
                             imageUrls: frameData.imageUrls || [(frameData as any).imageUrl],
                             activeVersionIndex: frameData.activeVersionIndex ?? 0,
+                            aspectRatio: frameData.aspectRatio || '16:9',
                         };
                         const activeImageUrl = frameWithVersions.imageUrls[frameWithVersions.activeVersionIndex];
 
@@ -394,6 +398,7 @@ export default function App() {
                             prompt: '',
                             duration: 3.0,
                             file: file,
+                            aspectRatio: isAspectRatioLocked ? globalAspectRatio : '16:9',
                         };
                         updateFrames(prev => {
                             const newFrames = [...prev];
@@ -421,7 +426,7 @@ export default function App() {
             setAdvancedGenerateModalConfig({ mode: 'generate', insertIndex: index });
             setIsAdvancedGenerateModalOpen(true);
         }
-    }, [updateFrames]);
+    }, [updateFrames, isAspectRatioLocked, globalAspectRatio]);
     
     const handleAddFramesFromAssets = useCallback((assetIds: string[], index: number) => {
         const assetsToConvert = localAssets.filter(asset => assetIds.includes(asset.id));
@@ -439,6 +444,7 @@ export default function App() {
             prompt: '',
             duration: 3.0,
             file: asset.file,
+            aspectRatio: isAspectRatioLocked ? globalAspectRatio : '16:9',
         }));
     
         updateFrames(prev => {
@@ -460,7 +466,7 @@ export default function App() {
                 })
             }, 0);
         }
-    }, [localAssets, updateFrames]);
+    }, [localAssets, updateFrames, isAspectRatioLocked, globalAspectRatio]);
 
     const handleAddFramesFromFiles = useCallback(async (files: File[], index: number) => {
         const newFramesPromises = files.map(async (file) => {
@@ -472,6 +478,7 @@ export default function App() {
                 prompt: '',
                 duration: 3.0,
                 file: file,
+                aspectRatio: isAspectRatioLocked ? globalAspectRatio : '16:9',
             };
         });
     
@@ -495,7 +502,7 @@ export default function App() {
                 })
             }, 0);
         }
-    }, [updateFrames]);
+    }, [updateFrames, isAspectRatioLocked, globalAspectRatio]);
 
     const handleStartFrameGeneration = async (data: { prompt: string }) => {
         setIsAdvancedGenerateModalOpen(false);
@@ -519,6 +526,7 @@ export default function App() {
             duration: 3.0,
             isGenerating: true,
             generatingMessage: 'Генерация кадра...',
+            aspectRatio: isAspectRatioLocked ? globalAspectRatio : '16:9',
             file: new File([], 'placeholder.txt', { type: 'text/plain' })
         };
 
@@ -549,6 +557,7 @@ export default function App() {
                 duration: leftFrame && rightFrame ? Number(((leftFrame.duration + rightFrame.duration) / 2).toFixed(2)) : 3.0,
                 file,
                 isGenerating: false,
+                aspectRatio: placeholderFrame.aspectRatio,
             };
 
             updateFrames(prev => prev.map(frame => frame.id === placeholderId ? finalFrame : frame));
@@ -770,6 +779,7 @@ export default function App() {
                 prompt: `Ожидание кадра ${i + 1}...`,
                 duration: 3.0,
                 isGenerating: true,
+                aspectRatio: globalAspectRatio,
                 file: new File([], 'placeholder.txt', { type: 'text/plain' })
             }));
             updateFrames(placeholderFrames);
@@ -786,7 +796,7 @@ export default function App() {
                         });
                     }
                 } else if (update.type === 'frame') {
-                    const hydratedFrame = await hydrateFrame(update.frame);
+                    const hydratedFrame = await hydrateFrame({ ...update.frame, aspectRatio: globalAspectRatio });
                     updateFrames(prev => {
                         const newFrames = [...prev];
                         if (newFrames[update.index] && newFrames[update.index].isGenerating) {
@@ -848,6 +858,120 @@ export default function App() {
         }
 
     }, [localFrames, updateFrames]);
+    
+    // --- Aspect Ratio Handlers ---
+    const handleGlobalAspectRatioChange = (newRatio: string) => {
+        setGlobalAspectRatio(newRatio);
+        if (isAspectRatioLocked) {
+            updateFrames(prev => prev.map(f => ({ ...f, aspectRatio: newRatio })));
+        }
+    };
+    
+    const handleToggleAspectRatioLock = () => {
+        const newLockState = !isAspectRatioLocked;
+        setIsAspectRatioLocked(newLockState);
+        if (newLockState) {
+            // When locking, sync all frames to the global aspect ratio
+            updateFrames(prev => prev.map(f => ({...f, aspectRatio: globalAspectRatio })));
+        }
+    };
+
+    const handleFrameAspectRatioChange = useCallback((frameId: string, newRatio: string) => {
+        if (!isAspectRatioLocked) {
+            updateFrames(prev => prev.map(f => f.id === frameId ? { ...f, aspectRatio: newRatio } : f));
+        }
+    }, [isAspectRatioLocked, updateFrames]);
+
+    const handleAdaptFrameAspectRatio = useCallback(async (frameId: string, targetRatio?: string) => {
+        const frameToAdapt = localFrames.find(f => f.id === frameId);
+        const finalTargetRatio = targetRatio || frameToAdapt?.aspectRatio;
+
+        if (!frameToAdapt || !finalTargetRatio) {
+            console.error("Кадр или целевое соотношение сторон не найдены для адаптации:", frameId);
+            return;
+        }
+
+        updateFrames(prev => prev.map(f => f.id === frameId ? { ...f, isGenerating: true, generatingMessage: `Адаптация к ${finalTargetRatio}...` } : f));
+
+        try {
+            const { imageUrl, prompt } = await adaptImageAspectRatio(frameToAdapt, finalTargetRatio);
+            const file = dataUrlToFile(imageUrl, `adapted-ar-${frameId}.png`);
+
+            updateFrames(prev => prev.map(f => {
+                if (f.id === frameId) {
+                    const newImageUrls = [...f.imageUrls, imageUrl];
+                    return {
+                        ...f,
+                        imageUrls: newImageUrls,
+                        activeVersionIndex: newImageUrls.length - 1,
+                        file,
+                        prompt,
+                        isTransition: false,
+                        isGenerating: false,
+                        generatingMessage: undefined,
+                        aspectRatio: finalTargetRatio,
+                    };
+                }
+                return f;
+            }));
+        } catch (error) {
+            console.error("Error adapting frame aspect ratio:", error);
+            alert(`Не удалось адаптировать соотношение сторон: ${error instanceof Error ? error.message : String(error)}`);
+            updateFrames(prev => prev.map(f => f.id === frameId ? { ...f, isGenerating: false, generatingMessage: undefined } : f));
+        }
+    }, [localFrames, updateFrames]);
+
+    const handleAdaptAllFramesAspectRatio = async () => {
+        const [targetW, targetH] = globalAspectRatio.split(':').map(Number);
+        if (isNaN(targetW) || isNaN(targetH) || targetH === 0) {
+            alert("Неверный глобальный формат.");
+            return;
+        }
+        const targetRatioValue = targetW / targetH;
+        const tolerance = 0.01;
+    
+        let framesToAdaptIds: string[] = [];
+    
+        // Set initial loading state for all frames
+        updateFrames(prev => prev.map(f => ({ ...f, isGenerating: true, generatingMessage: 'Проверка формата...' })));
+    
+        try {
+            for (const frame of localFrames) {
+                const activeImageUrl = frame.imageUrls[frame.activeVersionIndex];
+                try {
+                    const { width, height } = await getImageDimensions(activeImageUrl);
+                    const currentRatioValue = width / height;
+    
+                    if (Math.abs(currentRatioValue - targetRatioValue) > tolerance) {
+                        framesToAdaptIds.push(frame.id);
+                    } else {
+                        // It's correct, remove loading state
+                        updateFrames(prev => prev.map(f => f.id === frame.id ? { ...f, isGenerating: false, generatingMessage: undefined } : f));
+                    }
+                } catch (e) {
+                    console.error(`Не удалось получить размеры для кадра ${frame.id}:`, e);
+                    updateFrames(prev => prev.map(f => f.id === frame.id ? { ...f, isGenerating: false, generatingMessage: undefined, prompt: `${f.prompt || ''} (Ошибка: не удалось прочитать изображение)` } : f));
+                }
+            }
+    
+            if (framesToAdaptIds.length === 0) {
+                alert("Все кадры уже имеют целевое соотношение сторон.");
+                return;
+            }
+    
+            const adaptationPromises = framesToAdaptIds.map(id => 
+                handleAdaptFrameAspectRatio(id, globalAspectRatio)
+            );
+    
+            await Promise.all(adaptationPromises);
+    
+        } catch (error) {
+            console.error("Произошла ошибка во время пакетной адаптации:", error);
+            alert(`Произошла ошибка: ${error instanceof Error ? error.message : String(error)}`);
+            updateFrames(prev => prev.map(f => ({ ...f, isGenerating: false, generatingMessage: undefined })));
+        }
+    };
+    
 
     // --- Context Menu Handlers ---
     const handleContextMenu = (e: React.MouseEvent, frame: Frame) => {
@@ -978,6 +1102,13 @@ export default function App() {
                     generatingStory={generatingStory}
                     generatingPromptFrameId={generatingPromptFrameId}
                     generatingVideoState={generatingVideoState}
+                    globalAspectRatio={globalAspectRatio}
+                    isAspectRatioLocked={isAspectRatioLocked}
+                    onGlobalAspectRatioChange={handleGlobalAspectRatioChange}
+                    onToggleAspectRatioLock={handleToggleAspectRatioLock}
+                    onFrameAspectRatioChange={handleFrameAspectRatioChange}
+                    onAdaptFrameAspectRatio={handleAdaptFrameAspectRatio}
+                    onAdaptAllFramesAspectRatio={handleAdaptAllFramesAspectRatio}
                     onDurationChange={handleDurationChange}
                     onPromptChange={handlePromptChange}
                     onAddFrame={handleAddFrame}

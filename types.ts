@@ -8,6 +8,7 @@ export interface Frame {
   isTransition?: boolean;
   isGenerating?: boolean;
   generatingMessage?: string;
+  aspectRatio?: string; // e.g., '16:9', '4:3'
 }
 
 export interface Asset {

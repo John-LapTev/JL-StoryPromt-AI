@@ -1,6 +1,6 @@
 import { GoogleGenAI, Type, Modality } from "@google/genai";
 import type { Frame, Asset, StorySettings } from '../types';
-import { fileToBase64, fetchCorsImage } from '../utils/fileUtils';
+import { fileToBase64, fetchCorsImage, createImageOnCanvas } from '../utils/fileUtils';
 
 async function urlOrFileToBase64(frame: Frame | Omit<Asset, 'file'> | Omit<Frame, 'file'>): Promise<{ mimeType: string; data: string }> {
     let base64Data: string;
@@ -641,6 +641,75 @@ export async function adaptImageToStory(
     if (!newPrompt) {
         console.warn("AI failed to generate a new prompt. A default will be used.");
         return { imageUrl: newImageUrl, prompt: manualInstruction || "Стилизованный кадр, интегрированный в сюжет." };
+    }
+
+    return { imageUrl: newImageUrl, prompt: newPrompt };
+}
+
+export async function adaptImageAspectRatio(
+    frame: Frame,
+    targetRatio: string
+): Promise<{ imageUrl: string; prompt: string }> {
+    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+    const originalImageUrl = frame.imageUrls[frame.activeVersionIndex];
+
+    // STEP 1: Create a new canvas with the original image centered and black bars.
+    const compositeImageUrl = await createImageOnCanvas(originalImageUrl, targetRatio);
+    
+    // Convert the new composite image to the format needed for the API.
+    const arr = compositeImageUrl.split(',');
+    const mimeMatch = arr[0].match(/:(.*?);/);
+    if (!mimeMatch) {
+      throw new Error("Invalid data URL format from canvas");
+    }
+    const mimeType = mimeMatch[1];
+    const data = arr[1];
+    const imagePart = { inlineData: { mimeType, data } };
+
+    // --- STEP 2: Generate the new image by filling in the blank areas (outpainting) ---
+    const imageGenInstruction = `Ты — эксперт по редактированию изображений, выполняющий задачу 'outpainting'.
+ЗАДАЧА: Предоставленное изображение содержит центральную картину, окруженную черными полями. Твоя задача — творчески и БЕСШОВНО заполнить черные области, расширяя оригинальное изображение.
+КЛЮЧЕВЫЕ ПРАВИЛА:
+1. Новые сгенерированные области должны ИДЕАЛЬНО СООТВЕТСТВОВАТЬ художественному стилю, освещению, цветовой палитре и контексту оригинального изображения.
+2. Переход между оригинальной и новыми частями должен быть невидимым.
+3. Финальный результат должен быть одним цельным изображением без каких-либо видимых черных полей.
+`;
+    
+    const imageGenResponse = await ai.models.generateContent({
+        model: 'gemini-2.5-flash-image',
+        contents: { parts: [{ text: imageGenInstruction }, imagePart] },
+        config: {
+            responseModalities: [Modality.IMAGE],
+        },
+    });
+
+    let newImageUrl: string | null = null;
+    let newImagePartForPromptGen: any = null;
+    if (imageGenResponse.candidates?.[0]?.content?.parts) {
+        for (const part of imageGenResponse.candidates[0].content.parts) {
+            if (part.inlineData) {
+                newImageUrl = `data:${part.inlineData.mimeType};base64,${part.inlineData.data}`;
+                newImagePartForPromptGen = { inlineData: { mimeType: part.inlineData.mimeType, data: part.inlineData.data } };
+                break;
+            }
+        }
+    }
+    if (!newImageUrl || !newImagePartForPromptGen) {
+        throw new Error("AI failed to generate an outpainted image.");
+    }
+    
+    // --- STEP 3: Generate a new prompt for the adapted image ---
+    const promptGenInstruction = `Опиши это новое, расширенное изображение. Оригинальный промт был: "${frame.prompt}". Сцена была расширена до нового формата. Создай новый, точный промт на русском языке, который описывает всю сцену целиком. Выведи только сам текст промта.`;
+
+    const promptGenResponse = await ai.models.generateContent({
+        model: 'gemini-2.5-flash',
+        contents: { parts: [{ text: promptGenInstruction }, newImagePartForPromptGen] },
+    });
+    
+    const newPrompt = promptGenResponse.text.trim();
+    if (!newPrompt) {
+        console.warn("AI failed to generate a new prompt. Using original.");
+        return { imageUrl: newImageUrl, prompt: frame.prompt };
     }
 
     return { imageUrl: newImageUrl, prompt: newPrompt };

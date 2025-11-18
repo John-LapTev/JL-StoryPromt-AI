@@ -1,4 +1,3 @@
-
 import React, { useRef, useState, useEffect } from 'react';
 import type { Frame } from '../types';
 import { FrameCard } from './FrameCard';
@@ -18,6 +17,13 @@ interface TimelineProps {
     generatingStory: boolean;
     generatingPromptFrameId: string | null;
     generatingVideoState: GeneratingVideoState;
+    globalAspectRatio: string;
+    isAspectRatioLocked: boolean;
+    onGlobalAspectRatioChange: (newRatio: string) => void;
+    onToggleAspectRatioLock: () => void;
+    onFrameAspectRatioChange: (frameId: string, newRatio: string) => void;
+    onAdaptFrameAspectRatio: (frameId: string) => void;
+    onAdaptAllFramesAspectRatio: () => void;
     onDurationChange: (id: string, newDuration: number) => void;
     onPromptChange: (id: string, newPrompt: string) => void;
     onAddFrame: (index: number, type: 'upload' | 'generate') => void;
@@ -37,6 +43,8 @@ interface TimelineProps {
     onVersionChange: (frameId: string, direction: 'next' | 'prev') => void;
 }
 
+const aspectRatios = ['16:9', '4:3', '1:1', '9:16'];
+
 
 export const Timeline: React.FC<TimelineProps> = ({
     frames,
@@ -46,6 +54,13 @@ export const Timeline: React.FC<TimelineProps> = ({
     generatingStory,
     generatingPromptFrameId,
     generatingVideoState,
+    globalAspectRatio,
+    isAspectRatioLocked,
+    onGlobalAspectRatioChange,
+    onToggleAspectRatioLock,
+    onFrameAspectRatioChange,
+    onAdaptFrameAspectRatio,
+    onAdaptAllFramesAspectRatio,
     onDurationChange,
     onPromptChange,
     onAddFrame,
@@ -75,7 +90,7 @@ export const Timeline: React.FC<TimelineProps> = ({
     useEffect(() => {
         const handleKeyDown = (e: KeyboardEvent) => {
             const target = e.target as HTMLElement;
-            if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable) {
+            if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable || target.tagName === 'SELECT') {
                 return;
             }
 
@@ -256,6 +271,21 @@ export const Timeline: React.FC<TimelineProps> = ({
         setDropTargetIndex(null);
     };
 
+    const StyledSelect: React.FC<{id: string, value: string, onChange: (e: React.ChangeEvent<HTMLSelectElement>) => void, children: React.ReactNode}> = ({ id, value, onChange, children }) => (
+        <div className="relative">
+            <select
+                id={id}
+                value={value}
+                onChange={onChange}
+                className="w-full appearance-none bg-white/5 px-3 py-1.5 rounded-lg text-xs font-bold text-white/90 focus:ring-2 focus:ring-primary border-none pr-8 h-8"
+            >
+                {children}
+            </select>
+            <span className="material-symbols-outlined pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-white/50">
+                expand_more
+            </span>
+        </div>
+    );
 
     return (
         <div className="flex flex-col flex-1">
@@ -272,6 +302,18 @@ export const Timeline: React.FC<TimelineProps> = ({
                         <span className="material-symbols-outlined text-base">photo_library</span>
                         <span className="truncate">Библиотека</span>
                     </button>
+                    <div className="flex items-center gap-2 p-1 bg-white/5 rounded-lg">
+                        <StyledSelect id="global-ar" value={globalAspectRatio} onChange={e => onGlobalAspectRatioChange(e.target.value)}>
+                             {aspectRatios.map(r => <option key={r} value={r} className="bg-[#191C2D] text-white">{r}</option>)}
+                        </StyledSelect>
+                        <button onClick={onToggleAspectRatioLock} className="flex h-8 w-8 items-center justify-center rounded-md bg-white/10 text-white hover:bg-white/20" title={isAspectRatioLocked ? 'Разблокировать соотношение сторон' : 'Заблокировать для всех кадров'}>
+                            <span className="material-symbols-outlined text-base">{isAspectRatioLocked ? 'lock' : 'lock_open'}</span>
+                        </button>
+                        <button onClick={onAdaptAllFramesAspectRatio} className="flex h-8 items-center justify-center rounded-md bg-white/10 text-white hover:bg-white/20 px-2 gap-1 text-xs font-bold" title="Адаптировать все кадры к выбранному соотношению сторон">
+                            <span className="material-symbols-outlined text-base">auto_fix</span>
+                            <span>Адаптировать все</span>
+                        </button>
+                    </div>
                      <button onClick={handleResetView} className="flex min-w-[84px] max-w-[480px] cursor-pointer items-center justify-center overflow-hidden rounded-lg h-10 px-4 bg-white/10 text-white text-sm font-bold leading-normal tracking-[-0.015em] gap-2 hover:bg-white/20">
                         <span className="material-symbols-outlined text-base">settings_backup_restore</span>
                         <span className="truncate">Сбросить вид</span>
@@ -318,6 +360,7 @@ export const Timeline: React.FC<TimelineProps> = ({
                                         isGeneratingPrompt={generatingPromptFrameId === frame.id}
                                         generatingVideoState={generatingVideoState?.frameId === frame.id ? generatingVideoState : null}
                                         isDragging={draggedIndex === index}
+                                        isAspectRatioLocked={isAspectRatioLocked}
                                         onDurationChange={onDurationChange}
                                         onPromptChange={onPromptChange}
                                         onDeleteFrame={onDeleteFrame}
@@ -330,6 +373,8 @@ export const Timeline: React.FC<TimelineProps> = ({
                                         onDragEnd={handleDragEnd}
                                         onContextMenu={onContextMenu}
                                         onVersionChange={onVersionChange}
+                                        onAspectRatioChange={onFrameAspectRatioChange}
+                                        onAdaptAspectRatio={onAdaptFrameAspectRatio}
                                     />
                                 </div>
                                 <div className="frame-card-interactive">

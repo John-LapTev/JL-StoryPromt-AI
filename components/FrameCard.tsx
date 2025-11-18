@@ -1,4 +1,3 @@
-
 import React from 'react';
 import type { Frame } from '../types';
 import { GeneratingVideoState } from '../App';
@@ -9,6 +8,7 @@ interface FrameCardProps {
     isGeneratingPrompt: boolean;
     generatingVideoState: GeneratingVideoState;
     isDragging: boolean;
+    isAspectRatioLocked: boolean;
     onDurationChange: (id: string, newDuration: number) => void;
     onPromptChange: (id: string, newPrompt: string) => void;
     onDeleteFrame: (id: string) => void;
@@ -21,7 +21,11 @@ interface FrameCardProps {
     onDragEnd: () => void;
     onContextMenu: (e: React.MouseEvent, frame: Frame) => void;
     onVersionChange: (frameId: string, direction: 'next' | 'prev') => void;
+    onAspectRatioChange: (frameId: string, newRatio: string) => void;
+    onAdaptAspectRatio: (frameId: string) => void;
 }
+
+const aspectRatios = ['16:9', '4:3', '1:1', '9:16'];
 
 export const FrameCard: React.FC<FrameCardProps> = ({ 
     frame, 
@@ -29,6 +33,7 @@ export const FrameCard: React.FC<FrameCardProps> = ({
     isGeneratingPrompt, 
     generatingVideoState,
     isDragging,
+    isAspectRatioLocked,
     onDurationChange, 
     onPromptChange, 
     onDeleteFrame, 
@@ -41,6 +46,8 @@ export const FrameCard: React.FC<FrameCardProps> = ({
     onDragEnd,
     onContextMenu,
     onVersionChange,
+    onAspectRatioChange,
+    onAdaptAspectRatio,
 }) => {
     const DURATION_STEP = 0.25;
 
@@ -49,13 +56,13 @@ export const FrameCard: React.FC<FrameCardProps> = ({
 
     if (frame.isGenerating) {
         return (
-            <div className="flex flex-col gap-2 shrink-0">
+            <div className="flex flex-col gap-2 shrink-0 w-48">
                 <div className="relative group">
-                    <div className="w-48 h-28 rounded-lg bg-primary/10 border-2 border-dashed border-primary/50 flex items-center justify-center">
+                    <div className="w-full h-28 rounded-lg bg-primary/10 border-2 border-dashed border-primary/50 flex items-center justify-center">
                         <div className="w-8 h-8 border-4 border-white/80 border-t-transparent rounded-full animate-spin"></div>
                     </div>
                 </div>
-                <div className="flex items-center justify-center gap-2 w-48 h-[76px] bg-black/20 p-2 rounded-lg text-xs text-center text-white/60 overflow-hidden">
+                <div className="flex items-center justify-center gap-2 w-full h-[76px] bg-black/20 p-2 rounded-lg text-xs text-center text-white/60 overflow-hidden">
                     <p className="leading-snug">{frame.generatingMessage || frame.prompt}</p>
                 </div>
             </div>
@@ -69,11 +76,29 @@ export const FrameCard: React.FC<FrameCardProps> = ({
     const handleIncrease = () => {
         onDurationChange(frame.id, frame.duration + DURATION_STEP);
     };
+    
+     const StyledSelect: React.FC<{id: string, value: string, onChange: (e: React.ChangeEvent<HTMLSelectElement>) => void, children: React.ReactNode, className?: string}> = ({ id, value, onChange, children, className }) => (
+        <div className={`relative ${className}`}>
+            <select
+                id={id}
+                value={value}
+                onChange={onChange}
+                onClick={(e) => e.stopPropagation()} // Prevent card interaction
+                onMouseDown={(e) => e.stopPropagation()}
+                className="w-full appearance-none bg-black/50 backdrop-blur-sm px-2 py-1 rounded-md text-xs font-bold text-white/90 focus:ring-2 focus:ring-primary border-none pr-6 h-7"
+            >
+                {children}
+            </select>
+            <span className="material-symbols-outlined pointer-events-none absolute right-1 top-1/2 -translate-y-1/2 text-white/50 text-base">
+                expand_more
+            </span>
+        </div>
+    );
 
     const PromptSection: React.FC = () => {
         if (isGeneratingPrompt) {
             return (
-                 <div className="flex items-center justify-center gap-2 w-48 h-[76px] bg-black/20 p-2 rounded-lg">
+                 <div className="flex items-center justify-center gap-2 w-full h-[76px] bg-black/20 p-2 rounded-lg">
                     <div className="w-5 h-5 border-2 border-primary border-t-transparent rounded-full animate-spin"></div>
                 </div>
             );
@@ -88,7 +113,7 @@ export const FrameCard: React.FC<FrameCardProps> = ({
                 <div 
                     onMouseDown={(e) => e.stopPropagation()}
                     onWheel={(e) => e.stopPropagation()}
-                    className={`relative group/prompt w-48 flex flex-col min-h-[76px] max-h-32 p-2.5 rounded-lg transition-all hover:bg-black/40 ${promptBgClass}`}
+                    className={`relative group/prompt w-full flex flex-col min-h-[76px] max-h-32 p-2.5 rounded-lg transition-all hover:bg-black/40 ${promptBgClass}`}
                 >
                     <div className="flex items-start gap-2 flex-1 min-h-0 overflow-y-auto pr-1">
                         <span 
@@ -122,7 +147,7 @@ export const FrameCard: React.FC<FrameCardProps> = ({
         }
 
         return (
-            <button onMouseDown={(e) => e.stopPropagation()} onClick={() => onGenerateSinglePrompt(frame.id)} className="flex min-w-[84px] w-48 max-w-[480px] cursor-pointer items-center justify-center overflow-hidden rounded-lg h-10 px-4 bg-white/10 text-white text-sm font-bold leading-normal tracking-[0.015em] gap-2 hover:bg-white/20">
+            <button onMouseDown={(e) => e.stopPropagation()} onClick={() => onGenerateSinglePrompt(frame.id)} className="flex min-w-[84px] w-full max-w-[480px] cursor-pointer items-center justify-center overflow-hidden rounded-lg h-10 px-4 bg-white/10 text-white text-sm font-bold leading-normal tracking-[0.015em] gap-2 hover:bg-white/20">
                 <span className="material-symbols-outlined">auto_awesome</span>
                 <span className="truncate">Сгенерировать промт</span>
             </button>
@@ -132,9 +157,24 @@ export const FrameCard: React.FC<FrameCardProps> = ({
 
     return (
         <div 
-            className="flex flex-col gap-2 shrink-0"
+            className="flex flex-col gap-2 shrink-0 w-48"
             onContextMenu={(e) => onContextMenu(e, frame)}
         >
+             {!isAspectRatioLocked && (
+                <div className="flex items-center gap-1.5 h-7" onMouseDown={e => e.stopPropagation()}>
+                    <StyledSelect 
+                        id={`ar-select-${frame.id}`} 
+                        value={frame.aspectRatio || '16:9'} 
+                        onChange={e => onAspectRatioChange(frame.id, e.target.value)}
+                        className="flex-1"
+                    >
+                        {aspectRatios.map(r => <option key={r} value={r} className="bg-[#191C2D] text-white">{r}</option>)}
+                    </StyledSelect>
+                    <button onClick={() => onAdaptAspectRatio(frame.id)} className="flex h-7 w-7 items-center justify-center rounded-md bg-black/50 text-white hover:bg-primary" title="Адаптировать кадр к выбранному соотношению сторон">
+                        <span className="material-symbols-outlined text-base">auto_fix</span>
+                    </button>
+                </div>
+            )}
             <div 
                 className={`relative group transition-opacity ${isDragging ? 'opacity-40' : 'opacity-100'}`}
                 onDoubleClick={() => onOpenDetailView(frame)}
@@ -144,7 +184,7 @@ export const FrameCard: React.FC<FrameCardProps> = ({
                 style={{ cursor: 'grab' }}
             >
                 <div 
-                    className="w-48 h-28 rounded-lg bg-black/20 border-2 border-primary cursor-zoom-in overflow-hidden" 
+                    className="w-full h-28 rounded-lg bg-black/20 border-2 border-primary cursor-zoom-in overflow-hidden flex items-center justify-center" 
                     onClick={() => onViewImage(index)}
                 >
                      <img src={activeImageUrl} alt={`Frame ${index + 1}`} className="w-full h-full object-contain transition-transform duration-300 group-hover:scale-105" />
@@ -190,7 +230,7 @@ export const FrameCard: React.FC<FrameCardProps> = ({
                     </div>
                 )}
             </div>
-             <div className="flex items-center justify-center">
+             <div className="flex items-center justify-center mt-auto">
                 <div className="flex h-6 items-center rounded-full bg-white/5 px-0.5">
                     <button onMouseDown={(e) => e.stopPropagation()} onClick={handleDecrease} className="flex size-5 items-center justify-center rounded-full text-white/80 transition-colors hover:bg-white/20 hover:text-white"><span className="material-symbols-outlined text-base font-bold">remove</span></button>
                     <div className="flex items-baseline whitespace-nowrap px-1.5 text-xs font-medium text-white">

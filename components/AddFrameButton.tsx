@@ -48,7 +48,7 @@ export const AddFrameButton: React.FC<AddFrameButtonProps> = ({
                 onDragOver={onDragOver}
                 onDragLeave={onDragLeave}
                 onDrop={onDrop}
-                className={`flex flex-col items-center justify-center rounded-lg border-2 border-dashed w-12 h-[152px] p-2 text-white/50 transition-all duration-200 ${dropTargetClasses}`}
+                className={`flex flex-col items-center justify-center rounded-lg border-2 border-dashed w-12 h-[196px] p-2 text-white/50 transition-all duration-200 ${dropTargetClasses}`}
             >
                 <span className="material-symbols-outlined text-3xl">add</span>
             </button>
@@ -66,7 +66,7 @@ export const AddFrameButton: React.FC<AddFrameButtonProps> = ({
                         {showTransitionOption && onGenerateTransition && (
                             <button onClick={() => { onGenerateTransition(index); setIsOpen(false); }} className="flex min-w-[84px] max-w-[480px] cursor-pointer items-center justify-center overflow-hidden rounded-md h-8 px-2.5 bg-white/10 text-white text-xs font-bold leading-normal tracking-[0.015em] hover:bg-white/20 w-full gap-2">
                                 <span className="material-symbols-outlined text-base">sync_alt</span>
-                                <span>Сгенерировать переход</span>
+                                <span>Промт для перехода</span>
                             </button>
                         )}
                     </div>

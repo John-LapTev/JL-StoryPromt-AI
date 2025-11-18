@@ -11,6 +11,7 @@ export const initialFrames: Omit<Frame, 'file'>[] = [
     activeVersionIndex: 0,
     prompt: 'Плавное приближение, камера слегка панорамирует вправо, следуя за летящей машиной.',
     duration: 5.0,
+    aspectRatio: '16:9',
   },
   {
     id: 'demo-frame-2',
@@ -18,6 +19,7 @@ export const initialFrames: Omit<Frame, 'file'>[] = [
     activeVersionIndex: 0,
     prompt: 'Быстрая смена кадра, ученый смотрит на экран.',
     duration: 3.5,
+    aspectRatio: '16:9',
   },
   {
     id: 'demo-frame-3',
@@ -25,6 +27,7 @@ export const initialFrames: Omit<Frame, 'file'>[] = [
     activeVersionIndex: 0,
     prompt: 'Камера фокусируется на аномалии на экране.',
     duration: 4.0,
+    aspectRatio: '16:9',
   },
   {
     id: 'demo-frame-4',
@@ -32,6 +35,7 @@ export const initialFrames: Omit<Frame, 'file'>[] = [
     activeVersionIndex: 0,
     prompt: '', // This frame has a "Generate prompt" button in the HTML.
     duration: 7.5,
+    aspectRatio: '16:9',
   },
 ];
 

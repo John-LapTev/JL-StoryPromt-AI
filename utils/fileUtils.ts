@@ -42,3 +42,92 @@ export async function fetchCorsImage(url: string): Promise<Blob> {
         return await proxyResponse.blob();
     }
 }
+
+export function getImageDimensions(fileOrDataUrl: File | string): Promise<{ width: number, height: number }> {
+    return new Promise((resolve, reject) => {
+        const image = new Image();
+        const objectUrl = typeof fileOrDataUrl !== 'string' ? URL.createObjectURL(fileOrDataUrl) : undefined;
+
+        image.onload = () => {
+            resolve({ width: image.width, height: image.height });
+            if (objectUrl) {
+                URL.revokeObjectURL(objectUrl);
+            }
+        };
+        image.onerror = (err) => {
+            reject(err);
+            if (objectUrl) {
+                URL.revokeObjectURL(objectUrl);
+            }
+        };
+        
+        image.src = objectUrl || (fileOrDataUrl as string);
+    });
+}
+
+export function createImageOnCanvas(imageUrl: string, targetRatioString: string): Promise<string> {
+    return new Promise(async (resolve, reject) => {
+        const image = new Image();
+        image.crossOrigin = "Anonymous"; // Attempt to load cross-origin images without tainting canvas
+
+        const processImage = () => {
+            const canvas = document.createElement('canvas');
+            const ctx = canvas.getContext('2d');
+            if (!ctx) return reject(new Error("Could not get canvas context"));
+
+            const [targetW, targetH] = targetRatioString.split(':').map(Number);
+            if (isNaN(targetW) || isNaN(targetH) || targetH === 0) return reject(new Error("Invalid target ratio string"));
+            const targetRatio = targetW / targetH;
+
+            const originalWidth = image.naturalWidth;
+            const originalHeight = image.naturalHeight;
+            
+            let canvasWidth: number, canvasHeight: number;
+            let dx = 0, dy = 0;
+
+            if (originalWidth / originalHeight > targetRatio) {
+                // Original is wider than target, so add space top/bottom (letterboxing)
+                canvasWidth = originalWidth;
+                canvasHeight = Math.round(originalWidth / targetRatio);
+                dy = Math.round((canvasHeight - originalHeight) / 2);
+            } else {
+                // Original is narrower than target, so add space left/right (pillarboxing)
+                canvasHeight = originalHeight;
+                canvasWidth = Math.round(originalHeight * targetRatio);
+                dx = Math.round((canvasWidth - originalWidth) / 2);
+            }
+
+            canvas.width = canvasWidth;
+            canvas.height = canvasHeight;
+            
+            // Fill with black to give the model a clear area to inpaint
+            ctx.fillStyle = 'black';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            ctx.drawImage(image, dx, dy, originalWidth, originalHeight);
+            resolve(canvas.toDataURL('image/png'));
+        };
+
+        let objectURL: string | undefined;
+        image.onload = () => {
+            processImage();
+            if (objectURL) URL.revokeObjectURL(objectURL);
+        };
+        image.onerror = (err) => {
+            if (objectURL) URL.revokeObjectURL(objectURL);
+            reject(new Error(`Image load failed: ${err}`));
+        };
+
+        try {
+            if (imageUrl.startsWith('http')) {
+                const blob = await fetchCorsImage(imageUrl);
+                objectURL = URL.createObjectURL(blob);
+                image.src = objectURL;
+            } else { // It's a data URL
+                image.src = imageUrl;
+            }
+        } catch (error) {
+            reject(error);
+        }
+    });
+}
