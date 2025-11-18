@@ -1097,7 +1097,8 @@ export async function generateStoryIdeasFromAssets(
 export async function integrateAssetIntoFrame(
     sourceAsset: Asset | { imageUrl: string, file: File, name: string },
     targetFrame: Frame,
-    instruction: string
+    instruction: string,
+    mode: 'object' | 'style' | 'background'
 ): Promise<{ imageUrl: string; prompt: string }> {
     try {
         const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
@@ -1108,15 +1109,45 @@ export async function integrateAssetIntoFrame(
 
         const sourcePart = { inlineData: { mimeType: sourceMime, data: sourceData } };
         const targetPart = { inlineData: { mimeType: targetMime, data: targetData } };
+        
+        let imageGenInstruction = '';
+        let imageGenParts: any[] = [];
+        let promptGenInstruction = '';
+        
+        switch (mode) {
+            case 'style':
+                imageGenInstruction = `Ты — эксперт по переносу стиля. Тебе даны два изображения: "STYLE_REFERENCE" (ассет) и "CONTENT_IMAGE" (целевая сцена).
+                Твоя задача — полностью перерисовать "CONTENT_IMAGE" в художественном стиле "STYLE_REFERENCE". Сохрани композицию, объекты и персонажей из "CONTENT_IMAGE", но измени их исполнение (цветовую палитру, линии, текстуры, освещение), чтобы оно идеально соответствовало стилю.
+                
+                Инструкция от пользователя: "${instruction}"`;
+                imageGenParts = [{ text: imageGenInstruction }, {text: "STYLE_REFERENCE:"}, sourcePart, {text: "CONTENT_IMAGE:"}, targetPart];
+                promptGenInstruction = `Проанализируй это новое изображение, которое является результатом переноса стиля. Оригинальный промт целевой сцены был: "${targetFrame.prompt}". Инструкция по стилизации была: "${instruction}". Создай новый, краткий и точный промт на русском языке, который описывает финальное, стилизованное изображение.`;
+                break;
+            
+            case 'background':
+                 imageGenInstruction = `Ты — эксперт по композитингу. Тебе даны два изображения: "NEW_BACKGROUND" (ассет) и "SCENE_WITH_SUBJECT" (целевая сцена).
+                Твоя задача — аккуратно выделить главный объект/персонажа из "SCENE_WITH_SUBJECT", отделить его от старого фона и бесшовно поместить на "NEW_BACKGROUND". Удели особое внимание коррекции освещения, теней и перспективы, чтобы финальная сцена выглядела абсолютно реалистично.
 
-        const imageGenInstruction = `Ты — эксперт по композиции и цифровому искусству. Тебе даны два изображения: ИЗОБРАЖЕНИЕ 1 (ассет для интеграции) и ИЗОБРАЖЕНИЕ 2 (целевая сцена).
-    Твоя задача — бесшовно и реалистично интегрировать ИЗОБРАЖЕНИЕ 1 в ИЗОБРАЖЕНИЕ 2, следуя инструкции. Обрати особое внимание на соответствие стиля, освещения, теней, масштаба и перспективы. Финальное изображение должно выглядеть как единая, цельная сцена.
+                Инструкция от пользователя: "${instruction}"`;
+                imageGenParts = [{ text: imageGenInstruction }, {text: "NEW_BACKGROUND:"}, sourcePart, {text: "SCENE_WITH_SUBJECT:"}, targetPart];
+                promptGenInstruction = `Проанализируй это новое изображение, которое является результатом замены фона. Оригинальный промт целевой сцены был: "${targetFrame.prompt}". Инструкция по замене фона была: "${instruction}". Создай новый, краткий и точный промт на русском языке, который описывает финальную сцену с новым фоном.`;
+                break;
+            
+            case 'object':
+            default:
+                imageGenInstruction = `Ты — эксперт по композиции и цифровому искусству. Тебе даны два изображения: "ASSET" (объект для интеграции) и "TARGET_SCENE" (целевая сцена).
+                Твоя задача — бесшовно и реалистично интегрировать "ASSET" в "TARGET_SCENE", следуя инструкции. Обрати особое внимание на соответствие стиля, освещения, теней, масштаба и перспективы. Финальное изображение должно выглядеть как единая, цельная сцена.
 
-    Инструкция: "${instruction}"`;
+                Инструкция от пользователя: "${instruction}"`;
+                imageGenParts = [{ text: imageGenInstruction }, {text: "ASSET:"}, sourcePart, {text: "TARGET_SCENE:"}, targetPart];
+                promptGenInstruction = `Проанализируй это новое изображение, которое является результатом интеграции объекта в сцену. Оригинальный промт целевой сцены был: "${targetFrame.prompt}". Инструкция по интеграции была: "${instruction}". Создай новый, краткий и точный промт на русском языке, который описывает финальное, объединенное изображение.`;
+                break;
+        }
+
 
         const imageGenResponse = await ai.models.generateContent({
             model: 'gemini-2.5-flash-image',
-            contents: { parts: [{ text: imageGenInstruction }, sourcePart, targetPart] },
+            contents: { parts: imageGenParts },
             config: {
                 responseModalities: [Modality.IMAGE],
             },
@@ -1138,10 +1169,7 @@ export async function integrateAssetIntoFrame(
         }
         
         // Step 2: Generate a new prompt for the integrated image
-        const promptGenInstruction = `Проанализируй это новое изображение, которое является результатом интеграции одного объекта в другую сцену.
-    Оригинальный промт целевой сцены был: "${targetFrame.prompt}".
-    Инструкция по интеграции была: "${instruction}".
-    Создай новый, краткий и точный промт на русском языке, который описывает финальное, объединенное изображение. Выведи только сам текст промта.`;
+        promptGenInstruction += ` Выведи только сам текст промта.`
 
         const promptGenResponse = await ai.models.generateContent({
             model: 'gemini-2.5-flash',
@@ -1164,7 +1192,8 @@ export async function integrateAssetIntoFrame(
 
 export async function generateIntegrationSuggestions(
     sourceAsset: Asset | { imageUrl: string, file: File, name: string },
-    targetFrame: Frame
+    targetFrame: Frame,
+    mode: 'object' | 'style' | 'background'
 ): Promise<string[]> {
     try {
         const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
@@ -1174,17 +1203,30 @@ export async function generateIntegrationSuggestions(
 
         const sourcePart = { inlineData: { mimeType: sourceMime, data: sourceData } };
         const targetPart = { inlineData: { mimeType: targetMime, data: targetData } };
+        
+        let promptText = 'Ты — креативный AI-ассистент. Проанализируй "Ассет" и "Целевую сцену". ';
+        
+        switch(mode) {
+            case 'style':
+                promptText += `Твоя задача — предложить 4 креативных способа ПРИМЕНИТЬ СТИЛЬ "Ассета" к "Целевой сцене".
+                Примеры: "Применить только неоновую цветовую палитру", "Перерисовать сцену с такими же грубыми мазками кисти", "Адаптировать мультяшный стиль ассета к сцене".`;
+                break;
+            case 'background':
+                 promptText += `Твоя задача — предложить 4 креативных способа ИСПОЛЬЗОВАТЬ "Ассет" как новый ФОН для "Целевой сцены".
+                 Примеры: "Поместить персонажа на передний план перед замком", "Подогнать освещение персонажа под закат на новом фоне", "Добавить легкий туман для лучшего смешивания".`;
+                break;
+            case 'object':
+            default:
+                promptText += `Твоя задача — предложить 4 креативные идеи о том, как можно ИНТЕГРИРОВАТЬ "Ассет" в "Целевую сцену".
+                Примеры: "Поместить ассет на передний план", "Дать предмет в руки персонажу на сцене", "Сделать ассет частью фона", "Изменить стиль ассета, чтобы он соответствовал сцене".`;
+                break;
+        }
 
-        const promptText = `Ты — креативный AI-ассистент. Проанализируй два изображения: "Ассет" (объект или персонаж для интеграции) и "Целевая сцена".
-    Твоя задача — предложить 4 креативные идеи о том, как можно интегрировать Ассет в Целевую сцену. Идеи должны быть краткими, действенными инструкциями на русском языке, подходящими для AI-редактора изображений.
-
-    Примеры: "Поместить ассет на передний план", "Дать предмет в руки персонажу на сцене", "Сделать ассет частью фона", "Изменить стиль ассета, чтобы он соответствовал сцене".
-
-    Верни ТОЛЬКО валидный JSON-массив из 4 строк. Не включай markdown, объяснения или любой другой текст.`;
+        promptText += "\n\nИдеи должны быть краткими, действенными инструкциями на русском языке. Верни ТОЛЬКО валидный JSON-массив из 4 строк. Не включай markdown, объяснения или любой другой текст.";
         
         const response = await ai.models.generateContent({
             model: 'gemini-2.5-pro',
-            contents: { parts: [{ text: promptText }, sourcePart, targetPart] },
+            contents: { parts: [{ text: promptText }, {text: 'Ассет:'}, sourcePart, {text: 'Целевая сцена:'}, targetPart] },
             config: {
                 responseMimeType: "application/json",
                 responseSchema: {
