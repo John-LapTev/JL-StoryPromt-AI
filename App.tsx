@@ -234,6 +234,7 @@ export default function App() {
     const [addFrameMenu, setAddFrameMenu] = useState<{ index: number; rect: DOMRect } | null>(null);
     const [draggingSketchInfo, setDraggingSketchInfo] = useState<DraggingSketchInfo>(null);
     const [sketchDropTargetIndex, setSketchDropTargetIndex] = useState<number | null>(null);
+    const [isAssetLibraryDropTarget, setIsAssetLibraryDropTarget] = useState(false);
     
     // Non-blocking loading states
     const [generatingStory, setGeneratingStory] = useState(false);
@@ -243,6 +244,7 @@ export default function App() {
     // Refs
     const boardRef = useRef<HTMLDivElement>(null);
     const timelineDropZoneRefs = useRef(new Map<number, HTMLElement>());
+    const assetLibraryRef = useRef<HTMLDivElement>(null);
 
     // Derived state
     const currentProject = useMemo(() => projects.find(p => p.id === currentProjectId), [projects, currentProjectId]);
@@ -653,24 +655,31 @@ export default function App() {
         }
         
         if (draggingSketchInfo) {
-             const dx = e.clientX - draggingSketchInfo.initialMousePos.x;
+            const dx = e.clientX - draggingSketchInfo.initialMousePos.x;
             const dy = e.clientY - draggingSketchInfo.initialMousePos.y;
             const newX = draggingSketchInfo.initialSketchPos.x + (dx / transform.scale);
             const newY = draggingSketchInfo.initialSketchPos.y + (dy / transform.scale);
             updateSketches(prev => prev.map(s => s.id === draggingSketchInfo.id ? { ...s, position: { x: newX, y: newY } } : s));
 
-            let foundIndex: number | null = null;
+            let timelineTargetIndex: number | null = null;
             for (const [index, element] of timelineDropZoneRefs.current.entries()) {
                 const rect = element.getBoundingClientRect();
-                if (
-                    e.clientX >= rect.left && e.clientX <= rect.right &&
-                    e.clientY >= rect.top && e.clientY <= rect.bottom
-                ) {
-                    foundIndex = index;
+                if (e.clientX >= rect.left && e.clientX <= rect.right && e.clientY >= rect.top && e.clientY <= rect.bottom) {
+                    timelineTargetIndex = index;
                     break;
                 }
             }
-            setSketchDropTargetIndex(foundIndex);
+            setSketchDropTargetIndex(timelineTargetIndex);
+
+            if (assetLibraryRef.current && isAssetLibraryOpen) {
+                const rect = assetLibraryRef.current.getBoundingClientRect();
+                const isOver = e.clientX >= rect.left && e.clientX <= rect.right && e.clientY >= rect.top && e.clientY <= rect.bottom;
+                setIsAssetLibraryDropTarget(isOver);
+                // If over asset library, don't show timeline target
+                if (isOver) setSketchDropTargetIndex(null);
+            } else {
+                setIsAssetLibraryDropTarget(false);
+            }
         }
     };
 
@@ -680,11 +689,24 @@ export default function App() {
             (e.currentTarget as HTMLElement).style.cursor = 'grab';
         }
         if (draggingSketchInfo) {
-            if (sketchDropTargetIndex !== null) {
+            if (isAssetLibraryDropTarget) {
+                const sketch = localSketches.find(s => s.id === draggingSketchInfo!.id);
+                if (sketch && sketch.file) {
+                    const newAsset: Asset = {
+                        id: crypto.randomUUID(),
+                        imageUrl: sketch.imageUrl,
+                        file: sketch.file,
+                        name: sketch.prompt || `Sketch ${sketch.id.substring(0, 4)}`,
+                    };
+                    updateAssets(prev => [...prev, newAsset]);
+                    updateSketches(prev => prev.filter(s => s.id !== sketch.id));
+                }
+            } else if (sketchDropTargetIndex !== null) {
                 handleAddFrameFromSketch(draggingSketchInfo.id, sketchDropTargetIndex);
             }
             setDraggingSketchInfo(null);
             setSketchDropTargetIndex(null);
+            setIsAssetLibraryDropTarget(false);
         }
     };
 
@@ -726,14 +748,18 @@ export default function App() {
     const handleBoardDragOver = (e: React.DragEvent) => {
         e.preventDefault();
         const isFrame = e.dataTransfer.types.includes('application/json;type=frame-id');
+        const isAsset = e.dataTransfer.types.includes('application/json;type=asset-ids');
         if (isFrame) {
             e.dataTransfer.dropEffect = 'move';
+        } else if (isAsset) {
+            e.dataTransfer.dropEffect = 'copy';
         }
     };
     
     const handleBoardDrop = (e: React.DragEvent) => {
         e.preventDefault();
         const frameId = e.dataTransfer.getData('application/json;type=frame-id');
+        const assetIdsJson = e.dataTransfer.getData('application/json;type=asset-ids');
 
         if (frameId) {
             const frame = localFrames.find(f => f.id === frameId);
@@ -759,6 +785,40 @@ export default function App() {
             
             updateSketches(prev => [...prev, newSketch]);
             updateFrames(prev => prev.filter(f => f.id !== frameId));
+        } else if (assetIdsJson) {
+            try {
+                const assetIds = JSON.parse(assetIdsJson);
+                if (!Array.isArray(assetIds) || !boardRef.current) return;
+
+                const boardRect = boardRef.current.getBoundingClientRect();
+                const startX = (e.clientX - boardRect.left - transform.x) / transform.scale;
+                const startY = (e.clientY - boardRect.top - transform.y) / transform.scale;
+
+                const newSketches: Sketch[] = [];
+                assetIds.forEach((assetId, index) => {
+                    const asset = localAssets.find(a => a.id === assetId);
+                    if (!asset) return;
+                    
+                    const aspectRatio = '16:9'; 
+                    const [w, h] = aspectRatio.split(':').map(Number);
+                    const size = { width: 320, height: (320 * h) / w };
+
+                    const newSketch: Sketch = {
+                        id: crypto.randomUUID(),
+                        imageUrl: asset.imageUrl,
+                        prompt: asset.name,
+                        file: asset.file,
+                        position: { x: startX + index * 20, y: startY + index * 20 },
+                        size: size,
+                        aspectRatio: aspectRatio,
+                    };
+                    newSketches.push(newSketch);
+                });
+                
+                updateSketches(prev => [...prev, ...newSketches]);
+            } catch (err) {
+                 console.error("Failed to parse dropped asset data on board", err);
+            }
         }
     };
 
@@ -915,12 +975,14 @@ export default function App() {
                 </div>
                 
                  <AssetLibraryPanel 
+                    ref={assetLibraryRef}
                     isOpen={isAssetLibraryOpen}
                     onClose={() => setIsAssetLibraryOpen(false)}
                     assets={localAssets}
                     selectedAssetIds={selectedAssetIds}
                     storySettings={storySettings}
                     frameCount={frameCount}
+                    isDropTarget={isAssetLibraryDropTarget}
                     onAddAssets={handleAddAssets}
                     onDeleteAsset={handleDeleteAsset}
                     onToggleSelectAsset={(id) => {

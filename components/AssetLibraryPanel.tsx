@@ -1,4 +1,5 @@
-import React, { useState, useRef } from 'react';
+
+import React, { useState, useRef, forwardRef } from 'react';
 import type { Asset, StorySettings } from '../types';
 import { AssetViewerModal } from './AssetViewerModal';
 
@@ -9,6 +10,7 @@ interface AssetLibraryPanelProps {
     selectedAssetIds: Set<string>;
     storySettings: StorySettings;
     frameCount: number;
+    isDropTarget?: boolean;
     onAddAssets: (files: File[]) => void;
     onDeleteAsset: (id: string) => void;
     onToggleSelectAsset: (id: string) => void;
@@ -19,13 +21,14 @@ interface AssetLibraryPanelProps {
     onFrameCountChange: (count: number) => void;
 }
 
-export const AssetLibraryPanel: React.FC<AssetLibraryPanelProps> = ({ 
+export const AssetLibraryPanel = forwardRef<HTMLDivElement, AssetLibraryPanelProps>(({ 
     isOpen, 
     onClose, 
     assets, 
     selectedAssetIds, 
     storySettings,
     frameCount,
+    isDropTarget,
     onAddAssets, 
     onDeleteAsset, 
     onToggleSelectAsset, 
@@ -34,7 +37,7 @@ export const AssetLibraryPanel: React.FC<AssetLibraryPanelProps> = ({
     onGenerateStory,
     onOpenStorySettings,
     onFrameCountChange,
-}) => {
+}, ref) => {
     const fileInputRef = useRef<HTMLInputElement>(null);
     const [isSelectionMode, setIsSelectionMode] = useState(false);
     const [viewingAssetIndex, setViewingAssetIndex] = useState<number | null>(null);
@@ -155,11 +158,13 @@ export const AssetLibraryPanel: React.FC<AssetLibraryPanelProps> = ({
         createStoryButtonText = `Создать сюжет из ${selectedAssetIds.size} ассетов (${modeText})`;
     }
 
+    const isDropActive = isDraggingOver || isDropTarget;
 
     return (
         <>
             <div 
-                className={`absolute top-0 right-0 h-full bg-[#101322]/80 backdrop-blur-lg border-l border-white/10 shadow-2xl z-30 transition-transform duration-300 ease-in-out ${isOpen ? 'translate-x-0' : 'translate-x-full'} w-full max-w-sm flex flex-col`}
+                ref={ref}
+                className={`absolute top-0 right-0 h-full bg-[#101322]/80 backdrop-blur-lg border-l border-white/10 shadow-2xl z-30 transition-transform duration-300 ease-in-out ${isOpen ? 'translate-x-0' : 'translate-x-full'} w-full max-w-sm flex flex-col ${isDropActive ? 'ring-2 ring-primary ring-inset' : ''}`}
             >
                 <div className="flex items-center justify-between p-4 border-b border-white/10 shrink-0">
                     <h3 className="text-lg font-bold text-white flex items-center gap-2">
@@ -204,7 +209,7 @@ export const AssetLibraryPanel: React.FC<AssetLibraryPanelProps> = ({
                     onDragOver={handlePanelDragOver}
                     onDragLeave={handlePanelDragLeave}
                     onDrop={handlePanelDrop}
-                    className={`flex-1 p-4 overflow-y-auto space-y-4 transition-colors rounded-lg m-2 -mt-0 ${isDraggingOver ? 'bg-primary/20 ring-2 ring-primary' : ''}`}
+                    className={`flex-1 p-4 overflow-y-auto space-y-4 transition-colors rounded-lg m-2 -mt-0 ${isDraggingOver ? 'bg-primary/20' : ''}`}
                 >
                     <div className="grid grid-cols-3 gap-3">
                         {assets.map((asset, index) => (
@@ -290,4 +295,4 @@ export const AssetLibraryPanel: React.FC<AssetLibraryPanelProps> = ({
             )}
         </>
     );
-};
+});
