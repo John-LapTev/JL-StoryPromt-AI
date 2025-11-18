@@ -1298,6 +1298,10 @@ export default function App() {
         }
     };
     
+    const handleBoardDragLeave = (e: React.DragEvent) => {
+        e.preventDefault();
+    };
+
     const handleBoardDrop = (e: React.DragEvent) => {
         e.preventDefault();
         const frameId = e.dataTransfer.getData('application/json;type=frame-id');
@@ -1483,6 +1487,7 @@ export default function App() {
                 onMouseLeave={handleBoardMouseUp}
                 onWheel={handleWheel}
                 onDragOver={handleBoardDragOver}
+                onDragLeave={handleBoardDragLeave}
                 onDrop={handleBoardDrop}
             >
                 <div 

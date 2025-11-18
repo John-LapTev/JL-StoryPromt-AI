@@ -232,6 +232,7 @@ export const FrameCard: React.FC<FrameCardProps> = ({
                 className={`relative group transition-opacity ${isDragging ? 'opacity-40' : 'opacity-100'}`}
                 onDoubleClick={() => onOpenDetailView(frame)}
                 draggable
+                onMouseDown={(e) => e.stopPropagation()}
                 onDragStart={onDragStart}
                 onDragEnd={onDragEnd}
                 style={{ cursor: 'grab' }}

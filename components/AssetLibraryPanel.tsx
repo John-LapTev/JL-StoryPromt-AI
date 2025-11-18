@@ -1,4 +1,3 @@
-
 import React, { useState, useRef, forwardRef } from 'react';
 import type { Asset, StorySettings } from '../types';
 import { AssetViewerModal } from './AssetViewerModal';
@@ -216,6 +215,7 @@ export const AssetLibraryPanel = forwardRef<HTMLDivElement, AssetLibraryPanelPro
                             <div 
                                 key={asset.id} 
                                 className="relative group/asset cursor-pointer" 
+                                onMouseDown={(e) => e.stopPropagation()}
                                 onClick={() => handleAssetClick(asset.id, index)}
                                 draggable={true}
                                 onDragStart={(e) => handleDragStart(e, asset.id)}
