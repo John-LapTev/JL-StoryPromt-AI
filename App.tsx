@@ -1,7 +1,3 @@
-
-
-
-
 import React, { useState, useEffect, useCallback, useMemo, useRef, useLayoutEffect } from 'react';
 import type { Frame, Project, Asset, StorySettings, IntegrationConfig, Sketch, Note, Position, Size, AppSettings } from './types';
 import { initialFrames, initialAssets } from './constants';
@@ -26,7 +22,7 @@ import { LoadingModal } from './components/LoadingModal';
 import { ConfirmationModal } from './components/ConfirmationModal';
 import { SettingsModal } from './components/SettingsModal';
 import { SimpleImageViewerModal } from './components/SimpleImageViewerModal';
-import { generateImageFromPrompt, adaptImageToStory, adaptImageAspectRatio, createStoryFromAssets, analyzeStory, generateSinglePrompt } from './services/geminiService';
+import { generateImageFromPrompt, adaptImageToStory, adaptImageAspectRatio, createStoryFromAssets, analyzeStory, generateSinglePrompt, generateImageInContext, editImage } from './services/geminiService';
 import { fileToBase64, dataUrlToFile, fetchCorsImage, getImageDimensions } from './utils/fileUtils';
 import { StoryGenerationUpdate } from './services/geminiService';
 
@@ -642,7 +638,93 @@ export default function App() {
     const handleAddFrame = useCallback(async (index: number, type: 'upload' | 'generate') => { if (type === 'upload') { const i = document.createElement('input'); i.type = 'file'; i.accept = 'image/*'; i.onchange = async (e) => { const f = (e.target as HTMLInputElement).files?.[0]; if (f) { try { const b = await fileToBase64(f); const n: Frame = { id: crypto.randomUUID(), imageUrls: [b], activeVersionIndex: 0, prompt: '', duration: 3.0, file: f, aspectRatio: isAspectRatioLocked ? globalAspectRatio : '16:9' }; updateFrames(p => { const nc = [...p]; nc.splice(index, 0, n); return nc; }); setTimeout(() => { setLocalFrames(c => { const ni = c.findIndex(fr => fr.id === n.id); if (ni > -1 && (ni > 0 || ni < c.length - 1)) { setAdaptingFrame(c[ni]); } return c; }); }, 0); } catch (err) { console.error("Error reading file:", err); alert("Could not load image file."); } } }; i.click(); } else if (type === 'generate') { setAdvancedGenerateModalConfig({ mode: 'generate', insertIndex: index }); setIsAdvancedGenerateModalOpen(true); } }, [updateFrames, isAspectRatioLocked, globalAspectRatio]);
     const handleAddFramesFromAssets = useCallback((assetIds: string[], index: number) => { const a = localAssets.filter(as => assetIds.includes(as.id)); if (a.length === 0) return; const o = assetIds.map(id => a.find(as => as.id === id)).filter((as): as is Asset => !!as); const n: Frame[] = o.map(as => ({ id: crypto.randomUUID(), imageUrls: [as.imageUrl], activeVersionIndex: 0, prompt: '', duration: 3.0, file: as.file, aspectRatio: isAspectRatioLocked ? globalAspectRatio : '16:9' })); updateFrames(p => { const c = [...p]; c.splice(index, 0, ...n); return c; }); const f = n[0]; if (f) { setTimeout(() => { setLocalFrames(c => { const ni = c.findIndex(fr => fr.id === f.id); if (ni > -1 && (ni > 0 || ni < c.length - n.length)) { setAdaptingFrame(c[ni]); } return c; }); }, 0); } }, [localAssets, updateFrames, isAspectRatioLocked, globalAspectRatio]);
     const handleAddFramesFromFiles = useCallback(async (files: File[], index: number) => { const n = await Promise.all(files.map(async f => ({ id: crypto.randomUUID(), imageUrls: [await fileToBase64(f)], activeVersionIndex: 0, prompt: '', duration: 3.0, file: f, aspectRatio: isAspectRatioLocked ? globalAspectRatio : '16:9' }))); updateFrames(p => { const c = [...p]; c.splice(index, 0, ...n); return c; }); const fi = n[0]; if (fi) { setTimeout(() => { setLocalFrames(c => { const ni = c.findIndex(fr => fr.id === fi.id); if (ni > -1 && (ni > 0 || ni < c.length - n.length)) { setAdaptingFrame(c[ni]); } return c; }); }, 0); } }, [updateFrames, isAspectRatioLocked, globalAspectRatio]);
-    const handleGenerateFrame = async (prompt: string, insertIndex: number) => { alert("Not implemented yet for timeline."); /* Placeholder for timeline-specific generation */ };
+    
+    const handleGenerateFrame = async (prompt: string, insertIndex: number) => {
+        setIsAdvancedGenerateModalOpen(false);
+    
+        const placeholderId = crypto.randomUUID();
+        const placeholderFrame: Frame = {
+            id: placeholderId,
+            imageUrls: [],
+            activeVersionIndex: 0,
+            prompt: prompt,
+            duration: 3.0,
+            isGenerating: true,
+            generatingMessage: 'Генерация кадра...',
+            aspectRatio: isAspectRatioLocked ? globalAspectRatio : '16:9',
+        };
+    
+        updateFrames(prev => {
+            const framesCopy = [...prev];
+            framesCopy.splice(insertIndex, 0, placeholderFrame);
+            return framesCopy;
+        });
+    
+        try {
+            const leftContextFrame = insertIndex > 0 ? localFrames[insertIndex - 1] : null;
+            const rightContextFrame = localFrames[insertIndex] || null;
+    
+            const { imageUrl, prompt: newPrompt } = await generateImageInContext(
+                prompt,
+                leftContextFrame,
+                rightContextFrame
+            );
+            
+            const newFile = dataUrlToFile(imageUrl, `generated-frame-${Date.now()}.png`);
+            
+            updateFrames(prev => prev.map(f => {
+                if (f.id === placeholderId) {
+                    return {
+                        ...f,
+                        imageUrls: [imageUrl],
+                        activeVersionIndex: 0,
+                        prompt: newPrompt,
+                        file: newFile,
+                        isGenerating: false,
+                        generatingMessage: undefined,
+                    };
+                }
+                return f;
+            }));
+    
+        } catch (error) {
+            console.error("Error generating frame:", error);
+            alert(`Не удалось создать кадр: ${error instanceof Error ? error.message : String(error)}`);
+            updateFrames(prev => prev.map(f => {
+                if (f.id === placeholderId) {
+                    return { ...f, isGenerating: false, generatingMessage: 'Ошибка генерации' };
+                }
+                return f;
+            }));
+        }
+    };
+
+    const handleApplyEdit = useCallback(async (frameId: string, newImageUrl: string, newPrompt: string) => {
+        try {
+            const newFile = dataUrlToFile(newImageUrl, `edited-${frameId}-${Date.now()}.png`);
+            
+            updateFrames(prev => prev.map(f => {
+                if (f.id === frameId) {
+                    const newImageUrls = [...f.imageUrls, newImageUrl];
+                    return {
+                        ...f,
+                        imageUrls: newImageUrls,
+                        activeVersionIndex: newImageUrls.length - 1,
+                        file: newFile,
+                        prompt: newPrompt,
+                        isTransition: false,
+                    };
+                }
+                return f;
+            }));
+            
+            setIsAdvancedGenerateModalOpen(false);
+        } catch (error) {
+            console.error("Error applying edit:", error);
+            alert(`Не удалось применить изменения: ${error instanceof Error ? error.message : String(error)}`);
+        }
+    }, [updateFrames]);
+    
     const handleGenerateTransition = useCallback((index: number) => { alert('Generate Transition not implemented in this view.'); }, []);
     
     // --- AI-powered Prompt Generation ---
@@ -1532,7 +1614,7 @@ export default function App() {
                 <AdvancedGenerateModal
                     onClose={() => setIsAdvancedGenerateModalOpen(false)}
                     onGenerate={advancedGenerateModalConfig.mode === 'generate-sketch' ? handleGenerateSketch : (data) => handleGenerateFrame(data.prompt, advancedGenerateModalConfig.insertIndex ?? localFrames.length)}
-                    onApplyEdit={(id, url, p) => { /* Placeholder */ }}
+                    onApplyEdit={handleApplyEdit}
                     config={advancedGenerateModalConfig}
                     frames={localFrames}
                 />
