@@ -61,6 +61,8 @@ export default function App() {
     const [localAssets, setLocalAssets] = useState<Asset[]>([]);
     const [selectedAssetIds, setSelectedAssetIds] = useState<Set<string>>(new Set());
     const [storySettings, setStorySettings] = useState<StorySettings>(initialStorySettings);
+    const [frameCount, setFrameCount] = useState(10);
+
 
     // Modal States
     const [isSaveModalOpen, setIsSaveModalOpen] = useState(false);
@@ -740,7 +742,7 @@ export default function App() {
         setSelectedAssetIds(new Set());
     }, []);
 
-    const handleCreateStoryFromAssets = async (frameCount: number) => {
+    const handleCreateStoryFromAssets = async () => {
         const assetsToUse = selectedAssetIds.size > 0
             ? localAssets.filter(a => selectedAssetIds.has(a.id))
             : localAssets;
@@ -948,6 +950,7 @@ export default function App() {
                     assets={localAssets}
                     selectedAssetIds={selectedAssetIds}
                     storySettings={storySettings}
+                    frameCount={frameCount}
                     onAddAssets={handleAddAssets}
                     onDeleteAsset={handleDeleteAsset}
                     onToggleSelectAsset={(id) => {
@@ -963,8 +966,9 @@ export default function App() {
                     }}
                     onSelectAllAssets={handleSelectAllAssets}
                     onDeselectAllAssets={handleDeselectAllAssets}
-                    onGenerateStory={handleCreateStoryFromAssets}
+                    onGenerateStory={() => handleCreateStoryFromAssets()}
                     onOpenStorySettings={() => setIsStorySettingsModalOpen(true)}
+                    onFrameCountChange={setFrameCount}
                 />
                 <Timeline
                     frames={localFrames}
@@ -1020,6 +1024,9 @@ export default function App() {
                     onClose={() => setIsStorySettingsModalOpen(false)}
                     settings={storySettings}
                     onSave={handleSaveStorySettings}
+                    assets={localAssets}
+                    frameCount={frameCount}
+                    onFrameCountChange={setFrameCount}
                 />
             )}
              {adaptingFrame && (

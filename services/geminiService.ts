@@ -851,3 +851,67 @@ export async function generatePromptSuggestions(
         throw new Error("Could not parse prompt suggestions from the AI.");
     }
 }
+
+
+export async function generateStoryIdeasFromAssets(
+    assets: Asset[],
+    settings: StorySettings
+): Promise<{ title: string; synopsis: string }[]> {
+    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+    if (assets.length === 0) {
+        throw new Error("Cannot generate ideas without assets.");
+    }
+
+    const assetImageParts = await Promise.all(
+        assets.map(async (asset) => {
+            const { mimeType, data } = await urlOrFileToBase64(asset);
+            return { inlineData: { mimeType, data } };
+        })
+    );
+    
+    const assetNames = assets.map(a => a.name).join(', ');
+    let prompt = `Ты — AI-сценарист и режиссер-постановщик. Проанализируй предоставленные изображения-ассеты (представляющие персонажей, предметы или локации с именами: ${assetNames}).
+Твоя задача — придумать 4 захватывающие концепции для короткой истории, используя эти ассеты. Для каждой концепции предоставь 'title' (это может быть жанр или броское название) и краткий 'synopsis' (1-2 предложения).
+`;
+
+    const hasConstraints = settings.genre || settings.ending;
+    if (hasConstraints) {
+        prompt += "\nВАЖНО: Пользователь предоставил следующие ограничения для сюжета. Все твои идеи должны им соответствовать:\n";
+        if (settings.genre) prompt += `- Жанр/Тональность: "${settings.genre}"\n`;
+        if (settings.ending) prompt += `- Тип концовки: "${settings.ending}"\n`;
+    } else {
+        prompt += "\nПользователь не задал ограничений, поэтому прояви креативность: предложи идеи в РАЗНЫХ жанрах и с РАЗНЫМИ типами концовок (счастливая, трагическая, открытая и т.д.).\n";
+    }
+
+    prompt += "\nВерни свой ответ ТОЛЬКО в виде валидного JSON-массива объектов. Каждый объект должен иметь ключи 'title' и 'synopsis'. Массив должен содержать ровно 4 элемента. Не добавляй никаких объяснений или markdown.";
+
+    const response = await ai.models.generateContent({
+        model: 'gemini-2.5-pro',
+        contents: { parts: [{ text: prompt }, ...assetImageParts] },
+        config: {
+            responseMimeType: "application/json",
+            responseSchema: {
+                type: Type.ARRAY,
+                items: {
+                    type: Type.OBJECT,
+                    properties: {
+                        title: { type: Type.STRING },
+                        synopsis: { type: Type.STRING },
+                    },
+                    required: ["title", "synopsis"],
+                },
+            },
+        },
+    });
+
+    try {
+        const ideas = JSON.parse(response.text.trim());
+        if (Array.isArray(ideas) && ideas.length > 0) {
+            return ideas;
+        }
+        throw new Error("AI response is not a valid array of story ideas.");
+    } catch (e) {
+        console.error("Failed to parse story ideas from AI:", response.text);
+        throw new Error("Could not parse story ideas from the AI.");
+    }
+}

@@ -1,21 +1,43 @@
 import React, { useState, useEffect } from 'react';
-import type { StorySettings } from '../types';
+import type { Asset, StorySettings } from '../types';
+import { generateStoryIdeasFromAssets } from '../services/geminiService';
 
 interface StorySettingsModalProps {
     isOpen: boolean;
     onClose: () => void;
     settings: StorySettings;
-    onSave: (settings: Omit<StorySettings, 'frameCount'>) => void;
+    onSave: (settings: StorySettings) => void;
+    assets: Asset[];
+    frameCount: number;
+    onFrameCountChange: (count: number) => void;
 }
+
+type StoryIdea = {
+    title: string;
+    synopsis: string;
+};
 
 const genres = ["Научная фантастика", "Драма", "Комедия", "Триллер", "Фэнтези", "Хоррор"];
 const endings = ["Счастливая", "Трагическая", "Открытый финал"];
 
-export const StorySettingsModal: React.FC<StorySettingsModalProps> = ({ isOpen, onClose, settings, onSave }) => {
+export const StorySettingsModal: React.FC<StorySettingsModalProps> = ({ 
+    isOpen, 
+    onClose, 
+    settings, 
+    onSave, 
+    assets,
+    frameCount,
+    onFrameCountChange,
+}) => {
     const [localSettings, setLocalSettings] = useState(settings);
+    const [storyIdeas, setStoryIdeas] = useState<StoryIdea[]>([]);
+    const [isLoadingIdeas, setIsLoadingIdeas] = useState(false);
+
 
     useEffect(() => {
         setLocalSettings(settings);
+        // Reset ideas when modal is opened
+        setStoryIdeas([]);
     }, [settings, isOpen]);
 
     const handleSave = () => {
@@ -26,8 +48,26 @@ export const StorySettingsModal: React.FC<StorySettingsModalProps> = ({ isOpen, 
         setLocalSettings(prev => ({ ...prev, mode }));
     };
 
-    const handleFieldChange = (field: keyof Omit<StorySettings, 'frameCount'>, value: any) => {
+    const handleFieldChange = (field: keyof StorySettings, value: any) => {
         setLocalSettings(prev => ({ ...prev, [field]: value }));
+    };
+
+    const handleGenerateIdeas = async () => {
+        if (assets.length === 0) {
+            alert("Пожалуйста, добавьте ассеты в библиотеку, чтобы сгенерировать идеи.");
+            return;
+        }
+        setIsLoadingIdeas(true);
+        setStoryIdeas([]);
+        try {
+            const ideas = await generateStoryIdeasFromAssets(assets, localSettings);
+            setStoryIdeas(ideas);
+        } catch (error) {
+            console.error("Failed to generate story ideas:", error);
+            alert(`Не удалось сгенерировать идеи: ${error instanceof Error ? error.message : String(error)}`);
+        } finally {
+            setIsLoadingIdeas(false);
+        }
     };
     
     const StyledSelect: React.FC<{id: string, value: string, onChange: (e: React.ChangeEvent<HTMLSelectElement>) => void, children: React.ReactNode}> = ({ id, value, onChange, children }) => (
@@ -107,7 +147,51 @@ export const StorySettingsModal: React.FC<StorySettingsModalProps> = ({ isOpen, 
                                 </StyledSelect>
                             </div>
                         </div>
+
+                        <div className="border-t border-white/10 pt-4 space-y-3">
+                             <button onClick={handleGenerateIdeas} disabled={isLoadingIdeas} className="flex min-w-[84px] cursor-pointer items-center justify-center overflow-hidden rounded-lg h-10 px-4 bg-white/10 text-white text-sm font-bold leading-normal tracking-[-0.015em] gap-2 hover:bg-white/20 disabled:opacity-50 disabled:cursor-wait">
+                                {isLoadingIdeas ? (
+                                    <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                                ) : (
+                                    <span className="material-symbols-outlined text-base">lightbulb</span>
+                                )}
+                                <span className="truncate">{isLoadingIdeas ? 'Думаем...' : 'Сгенерировать идеи на основе ассетов'}</span>
+                            </button>
+
+                             {isLoadingIdeas ? (
+                                <div className="grid grid-cols-2 gap-3">
+                                    {Array.from({ length: 4 }).map((_, i) => (
+                                        <div key={i} className="h-24 bg-white/5 rounded-lg animate-pulse"></div>
+                                    ))}
+                                </div>
+                            ) : storyIdeas.length > 0 && (
+                                <div className="grid grid-cols-2 gap-3">
+                                    {storyIdeas.map((idea, i) => (
+                                        <button key={i} onClick={() => handleFieldChange('prompt', idea.synopsis)} className="p-3 bg-white/5 rounded-lg text-left text-white/80 hover:bg-white/10 hover:text-white transition-colors flex flex-col gap-1">
+                                            <p className="font-bold text-xs text-primary">{idea.title}</p>
+                                            <p className="text-xs">{idea.synopsis}</p>
+                                        </button>
+                                    ))}
+                                </div>
+                            )}
+
+                        </div>
                     </fieldset>
+                    
+                     <div className="pt-4 border-t border-white/10">
+                         <label htmlFor="frame-count-modal" className="text-sm font-bold text-white/70 mb-1 block">
+                            Количество кадров
+                        </label>
+                         <input
+                            type="number"
+                            id="frame-count-modal"
+                            value={frameCount}
+                            onChange={(e) => onFrameCountChange(Math.max(2, Math.min(20, parseInt(e.target.value, 10) || 2)))}
+                            min="2"
+                            max="20"
+                            className="w-full bg-white/5 p-2 rounded-lg text-sm text-white/90 focus:ring-2 focus:ring-primary border-none"
+                         />
+                    </div>
                 </div>
 
                 <div className="flex justify-end gap-3 mt-4 pt-4 border-t border-white/10">

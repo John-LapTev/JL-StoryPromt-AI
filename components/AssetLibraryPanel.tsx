@@ -1,4 +1,3 @@
-
 import React, { useState, useRef } from 'react';
 import type { Asset, StorySettings } from '../types';
 import { AssetViewerModal } from './AssetViewerModal';
@@ -9,13 +8,15 @@ interface AssetLibraryPanelProps {
     assets: Asset[];
     selectedAssetIds: Set<string>;
     storySettings: StorySettings;
+    frameCount: number;
     onAddAssets: (files: File[]) => void;
     onDeleteAsset: (id: string) => void;
     onToggleSelectAsset: (id: string) => void;
     onSelectAllAssets: () => void;
     onDeselectAllAssets: () => void;
-    onGenerateStory: (frameCount: number) => void;
+    onGenerateStory: () => void;
     onOpenStorySettings: () => void;
+    onFrameCountChange: (count: number) => void;
 }
 
 export const AssetLibraryPanel: React.FC<AssetLibraryPanelProps> = ({ 
@@ -24,6 +25,7 @@ export const AssetLibraryPanel: React.FC<AssetLibraryPanelProps> = ({
     assets, 
     selectedAssetIds, 
     storySettings,
+    frameCount,
     onAddAssets, 
     onDeleteAsset, 
     onToggleSelectAsset, 
@@ -31,14 +33,13 @@ export const AssetLibraryPanel: React.FC<AssetLibraryPanelProps> = ({
     onDeselectAllAssets,
     onGenerateStory,
     onOpenStorySettings,
+    onFrameCountChange,
 }) => {
     const fileInputRef = useRef<HTMLInputElement>(null);
     const [isSelectionMode, setIsSelectionMode] = useState(false);
     const [viewingAssetIndex, setViewingAssetIndex] = useState<number | null>(null);
     const [isDraggingOver, setIsDraggingOver] = useState(false);
-    const [frameCount, setFrameCount] = useState(10);
-
-
+    
     const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
         if (event.target.files) {
             onAddAssets(Array.from(event.target.files));
@@ -256,7 +257,7 @@ export const AssetLibraryPanel: React.FC<AssetLibraryPanelProps> = ({
                                 type="number"
                                 id="frame-count"
                                 value={frameCount}
-                                onChange={(e) => setFrameCount(Math.max(2, Math.min(20, parseInt(e.target.value, 10) || 2)))}
+                                onChange={(e) => onFrameCountChange(Math.max(2, Math.min(20, parseInt(e.target.value, 10) || 2)))}
                                 min="2"
                                 max="20"
                                 className="w-full bg-white/5 p-2 rounded-lg text-sm text-white/90 focus:ring-2 focus:ring-primary border-none"
@@ -271,7 +272,7 @@ export const AssetLibraryPanel: React.FC<AssetLibraryPanelProps> = ({
                         </button>
                     </div>
                      <button 
-                        onClick={() => onGenerateStory(frameCount)}
+                        onClick={onGenerateStory}
                         disabled={assets.length === 0}
                         className="w-full flex items-center justify-center gap-2 rounded-lg h-12 px-4 bg-primary text-white text-base font-bold hover:bg-primary/90 disabled:bg-primary/50 disabled:cursor-not-allowed"
                     >
