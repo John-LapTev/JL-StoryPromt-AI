@@ -1,3 +1,4 @@
+
 import React from 'react';
 import type { Frame } from '../types';
 import { GeneratingVideoState } from '../App';
@@ -54,7 +55,7 @@ export const FrameCard: React.FC<FrameCardProps> = ({
                         <div className="w-8 h-8 border-4 border-white/80 border-t-transparent rounded-full animate-spin"></div>
                     </div>
                 </div>
-                <div className="flex items-center justify-center gap-2 w-48 h-[76px] bg-white/5 p-2 rounded-lg text-xs text-center text-white/60 overflow-hidden">
+                <div className="flex items-center justify-center gap-2 w-48 h-[76px] bg-black/20 p-2 rounded-lg text-xs text-center text-white/60 overflow-hidden">
                     <p className="leading-snug">{frame.generatingMessage || frame.prompt}</p>
                 </div>
             </div>
@@ -72,7 +73,7 @@ export const FrameCard: React.FC<FrameCardProps> = ({
     const PromptSection: React.FC = () => {
         if (isGeneratingPrompt) {
             return (
-                 <div className="flex items-center justify-center gap-2 w-48 h-[76px] bg-white/5 p-2 rounded-lg">
+                 <div className="flex items-center justify-center gap-2 w-48 h-[76px] bg-black/20 p-2 rounded-lg">
                     <div className="w-5 h-5 border-2 border-primary border-t-transparent rounded-full animate-spin"></div>
                 </div>
             );
@@ -80,31 +81,36 @@ export const FrameCard: React.FC<FrameCardProps> = ({
 
         if (frame.prompt) {
              const promptBgClass = frame.isTransition
-                ? 'bg-gradient-to-r from-primary/20 to-white/5'
-                : 'bg-white/5';
+                ? 'bg-gradient-to-r from-primary/20 to-black/20'
+                : 'bg-black/20';
                 
             return (
-                <div className={`flex items-start gap-2 w-48 h-[76px] p-2 rounded-lg relative group/prompt ${promptBgClass}`}>
-                    <span 
-                        className="material-symbols-outlined text-base text-primary pt-0.5"
-                        title={frame.isTransition ? "Промт для перехода" : "Промт для анимации"}
-                    >
-                        {frame.isTransition ? 'sync_alt' : 'auto_awesome'}
-                    </span>
-                     <p className="text-xs text-white/80 leading-snug w-full h-full overflow-hidden flex-1">
-                        {frame.prompt}
-                    </p>
-                    <div className="flex flex-col gap-1 pl-1 opacity-0 group-hover/prompt:opacity-100 focus-within:opacity-100">
+                <div 
+                    onMouseDown={(e) => e.stopPropagation()}
+                    className={`relative group/prompt w-48 flex flex-col min-h-[76px] max-h-32 p-2.5 rounded-lg transition-all hover:bg-black/30 hover:ring-1 hover:ring-white/20 ${promptBgClass}`}
+                >
+                    <div className="flex items-start gap-2 flex-1 min-h-0">
+                        <span 
+                            className="material-symbols-outlined text-base text-primary pt-0.5"
+                            title={frame.isTransition ? "Промт для перехода" : "Промт для анимации"}
+                        >
+                            {frame.isTransition ? 'sync_alt' : 'auto_awesome'}
+                        </span>
+                        <p className="text-xs text-white/80 leading-snug w-full h-full overflow-y-auto flex-1 pr-1">
+                            {frame.prompt}
+                        </p>
+                    </div>
+                    <div className="absolute bottom-2 right-2 flex gap-1.5 opacity-0 group-hover/prompt:opacity-100 transition-opacity duration-200">
                         <button 
                             onClick={() => onGenerateSinglePrompt(frame.id)}
-                            className="p-0.5 bg-white/10 rounded-sm text-white hover:bg-white/20"
+                            className="flex size-7 items-center justify-center rounded-full bg-primary/80 text-white backdrop-blur-sm transition-all hover:bg-primary hover:scale-110"
                             title="Перегенерировать промт"
                         >
                             <span className="material-symbols-outlined text-sm">autorenew</span>
                         </button>
                         <button 
                             onClick={() => onEditPrompt(frame)} 
-                            className="p-0.5 bg-white/10 rounded-sm text-white hover:bg-white/20"
+                            className="flex size-7 items-center justify-center rounded-full bg-primary/80 text-white backdrop-blur-sm transition-all hover:bg-primary hover:scale-110"
                             title="Редактировать промт"
                         >
                             <span className="material-symbols-outlined text-sm">edit</span>
@@ -115,7 +121,7 @@ export const FrameCard: React.FC<FrameCardProps> = ({
         }
 
         return (
-            <button onClick={() => onGenerateSinglePrompt(frame.id)} className="flex min-w-[84px] w-48 max-w-[480px] cursor-pointer items-center justify-center overflow-hidden rounded-lg h-10 px-4 bg-white/10 text-white text-sm font-bold leading-normal tracking-[0.015em] gap-2 hover:bg-white/20">
+            <button onMouseDown={(e) => e.stopPropagation()} onClick={() => onGenerateSinglePrompt(frame.id)} className="flex min-w-[84px] w-48 max-w-[480px] cursor-pointer items-center justify-center overflow-hidden rounded-lg h-10 px-4 bg-white/10 text-white text-sm font-bold leading-normal tracking-[0.015em] gap-2 hover:bg-white/20">
                 <span className="material-symbols-outlined">auto_awesome</span>
                 <span className="truncate">Сгенерировать промт</span>
             </button>
@@ -125,15 +131,16 @@ export const FrameCard: React.FC<FrameCardProps> = ({
 
     return (
         <div 
-            className={`flex flex-col gap-2 shrink-0 transition-opacity ${isDragging ? 'opacity-40' : 'opacity-100'}`}
-            draggable
-            onDragStart={onDragStart}
-            onDragEnd={onDragEnd}
+            className="flex flex-col gap-2 shrink-0"
             onContextMenu={(e) => onContextMenu(e, frame)}
         >
             <div 
-                className="relative group"
+                className={`relative group transition-opacity ${isDragging ? 'opacity-40' : 'opacity-100'}`}
                 onDoubleClick={() => onOpenDetailView(frame)}
+                draggable
+                onDragStart={onDragStart}
+                onDragEnd={onDragEnd}
+                style={{ cursor: 'grab' }}
             >
                 <div 
                     className="w-48 h-28 rounded-lg bg-black/20 border-2 border-primary cursor-zoom-in overflow-hidden" 
@@ -184,11 +191,11 @@ export const FrameCard: React.FC<FrameCardProps> = ({
             </div>
              <div className="flex items-center justify-center">
                 <div className="flex h-6 items-center rounded-full bg-white/5 px-0.5">
-                    <button onClick={handleDecrease} className="flex size-5 items-center justify-center rounded-full text-white/80 transition-colors hover:bg-white/20 hover:text-white"><span className="material-symbols-outlined text-base font-bold">remove</span></button>
+                    <button onMouseDown={(e) => e.stopPropagation()} onClick={handleDecrease} className="flex size-5 items-center justify-center rounded-full text-white/80 transition-colors hover:bg-white/20 hover:text-white"><span className="material-symbols-outlined text-base font-bold">remove</span></button>
                     <div className="flex items-baseline whitespace-nowrap px-1.5 text-xs font-medium text-white">
                         <span>({frame.duration.toFixed(2)})</span><span className="text-[0.625rem] ml-0.5">s</span>
                     </div>
-                    <button onClick={handleIncrease} className="flex size-5 items-center justify-center rounded-full text-white/80 transition-colors hover:bg-white/20 hover:text-white"><span className="material-symbols-outlined text-base font-bold">add</span></button>
+                    <button onMouseDown={(e) => e.stopPropagation()} onClick={handleIncrease} className="flex size-5 items-center justify-center rounded-full text-white/80 transition-colors hover:bg-white/20 hover:text-white"><span className="material-symbols-outlined text-base font-bold">add</span></button>
                 </div>
             </div>
             <PromptSection />
