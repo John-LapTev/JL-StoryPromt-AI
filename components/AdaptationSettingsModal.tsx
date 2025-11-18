@@ -40,7 +40,8 @@ export const AdaptationSettingsModal: React.FC<AdaptationSettingsModalProps> = (
         try {
             const newSuggestions = await generateAdaptationSuggestions(frame, leftFrame, rightFrame);
             setSuggestions(newSuggestions);
-        } catch (error) {
+        } catch (error)
+ {
             console.error("Failed to get adaptation suggestions:", error);
         } finally {
             setIsLoadingSuggestions(false);
@@ -72,7 +73,7 @@ export const AdaptationSettingsModal: React.FC<AdaptationSettingsModalProps> = (
                 
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 flex-1 min-h-0">
                     {/* Left Column - Visual Context */}
-                    <div className="flex flex-col gap-4">
+                    <div className="flex flex-col gap-4 min-h-0 overflow-y-auto pr-2 -mr-2">
                         <ContextFrame frame={leftFrame} label="Кадр до" />
                         <div className="flex flex-col gap-2 text-center">
                             <h4 className="text-xs font-bold text-primary uppercase tracking-wider">Ваш кадр для адаптации</h4>
@@ -84,8 +85,8 @@ export const AdaptationSettingsModal: React.FC<AdaptationSettingsModalProps> = (
                     </div>
 
                     {/* Right Column - Controls */}
-                    <div className="flex flex-col gap-4">
-                         <div className="flex w-full p-1 bg-black/20 rounded-lg">
+                    <div className="flex flex-col gap-4 min-h-0">
+                         <div className="flex w-full p-1 bg-black/20 rounded-lg shrink-0">
                             <button
                                 onClick={() => setMode('auto')}
                                 className={`w-1/2 p-2 rounded-md text-sm font-bold transition-colors ${mode === 'auto' ? 'bg-primary text-white shadow-md' : 'text-white/60 hover:bg-white/10'}`}
@@ -100,8 +101,8 @@ export const AdaptationSettingsModal: React.FC<AdaptationSettingsModalProps> = (
                             </button>
                         </div>
                         
-                        <div className={`transition-opacity duration-300 ${mode === 'auto' ? 'opacity-50' : 'opacity-100'}`}>
-                             <fieldset disabled={mode === 'auto'} className="space-y-4">
+                        <div className="flex-1 min-h-0 overflow-y-auto">
+                             <fieldset disabled={mode === 'auto'} className={`space-y-4 pr-2 transition-opacity duration-300 ${mode === 'auto' ? 'opacity-50' : 'opacity-100'}`}>
                                 <div className="flex flex-col gap-2">
                                     <label className="text-sm font-bold text-white/80" htmlFor="manual-prompt-textarea">Ваша инструкция:</label>
                                     <textarea
