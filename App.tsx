@@ -613,7 +613,52 @@ export default function App() {
     const handleSaveStorySettings = (newSettings: StorySettings) => { setStorySettings(newSettings); setIsStorySettingsModalOpen(false); };
     
     // --- Adaptation & Aspect Ratio Handlers ---
-    const handleAdaptFrameToStory = useCallback(async (frameId: string, instruction?: string) => { /* Placeholder */ }, [localFrames, updateFrames]);
+    const handleAdaptFrameToStory = useCallback(async (frameId: string, instruction?: string) => {
+        const frameToAdapt = localFrames.find(f => f.id === frameId);
+        if (!frameToAdapt) {
+            alert("Не удалось найти кадр для адаптации.");
+            return;
+        }
+
+        updateFrames(prev => prev.map(f => f.id === frameId ? { ...f, isGenerating: true, generatingMessage: 'Адаптация к сюжету...' } : f));
+
+        try {
+            const currentIndex = localFrames.findIndex(f => f.id === frameId);
+            const leftFrame = currentIndex > 0 ? localFrames[currentIndex - 1] : null;
+            const rightFrame = currentIndex < localFrames.length - 1 ? localFrames[currentIndex + 1] : null;
+
+            const { imageUrl: newImageUrl, prompt: newPrompt } = await adaptImageToStory(
+                frameToAdapt,
+                leftFrame,
+                rightFrame,
+                instruction
+            );
+
+            const newFile = dataUrlToFile(newImageUrl, `adapted-${frameId}-${Date.now()}.png`);
+
+            updateFrames(prev => prev.map(f => {
+                if (f.id === frameId) {
+                    const newImageUrls = [...f.imageUrls, newImageUrl];
+                    return {
+                        ...f,
+                        imageUrls: newImageUrls,
+                        activeVersionIndex: newImageUrls.length - 1,
+                        prompt: newPrompt,
+                        file: newFile,
+                        isGenerating: false,
+                        generatingMessage: undefined,
+                    };
+                }
+                return f;
+            }));
+
+        } catch (error) {
+            console.error("Failed to adapt frame to story:", error);
+            alert(`Ошибка при адаптации кадра: ${error instanceof Error ? error.message : String(error)}`);
+            updateFrames(prev => prev.map(f => f.id === frameId ? { ...f, isGenerating: false, generatingMessage: undefined } : f));
+        }
+    }, [localFrames, updateFrames]);
+
     const handleGlobalAspectRatioChange = (newRatio: string) => { setGlobalAspectRatio(newRatio); if (isAspectRatioLocked) { updateFrames(prev => prev.map(f => ({ ...f, aspectRatio: newRatio }))); } };
     const handleToggleAspectRatioLock = () => { const n = !isAspectRatioLocked; setIsAspectRatioLocked(n); if (n) { updateFrames(prev => prev.map(f => ({...f, aspectRatio: globalAspectRatio }))); } };
     const handleFrameAspectRatioChange = useCallback((frameId: string, newRatio: string) => { if (!isAspectRatioLocked) { updateFrames(prev => prev.map(f => f.id === frameId ? { ...f, aspectRatio: newRatio } : f)); } }, [isAspectRatioLocked, updateFrames]);
