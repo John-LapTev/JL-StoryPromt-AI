@@ -669,55 +669,51 @@ export default function App() {
     }, [localFrames, updateFrames]);
 
     const handleGenerateVideo = async (frame: Frame) => {
-        let retriesLeft = 1;
-        let keyIsValid = isVeoKeySelected;
-
-        while (true) {
-            if (!keyIsValid) {
-                if (window.aistudio) {
-                    try {
-                        await window.aistudio.openSelectKey();
-                        keyIsValid = true;
-                        setIsVeoKeySelected(true);
-                    } catch (e) {
-                        console.error("API Key selection failed or was cancelled.", e);
-                        alert("You must select an API key to generate a video.");
-                        return;
-                    }
-                } else {
-                    alert("AI Studio environment not found.");
+        if (!isVeoKeySelected && window.aistudio) {
+            const confirmChange = window.confirm("Для генерации видео требуется API-ключ с доступом к Veo. Хотите выбрать ключ сейчас? Это можно также сделать в меню пользователя (иконка в правом верхнем углу).");
+            if (confirmChange) {
+                try {
+                    await window.aistudio.openSelectKey();
+                    setIsVeoKeySelected(true); // Assume success to allow immediate retry
+                } catch (e) {
+                    alert("Выбор ключа отменен. Генерация видео невозможна.");
                     return;
                 }
+            } else {
+                return;
             }
+        }
 
+        try {
+            const updateMessage = (message: string) => setGeneratingVideoState({ frameId: frame.id, message });
+            const videoUrl = await generateVideoFromFrame(frame, updateMessage);
+            setGeneratedVideoUrl(videoUrl);
+        } catch (error) {
+            console.error("Video generation failed:", error);
+            const errorMessage = error instanceof Error ? error.message : String(error);
+            if (errorMessage.includes("API key") || errorMessage.includes("квота")) {
+                setIsVeoKeySelected(false);
+            }
+            alert(`Ошибка при генерации видео: ${errorMessage}`);
+        } finally {
+            setGeneratingVideoState(null);
+        }
+    };
+    
+    const handleManageApiKey = async () => {
+        if (window.aistudio) {
             try {
-                const updateMessage = (message: string) => setGeneratingVideoState({ frameId: frame.id, message });
-                const videoUrl = await generateVideoFromFrame(frame, updateMessage);
-                setGeneratedVideoUrl(videoUrl);
-                setGeneratingVideoState(null);
-                break;
+                await window.aistudio.openSelectKey();
+                // Re-check status after selection, or just assume it's okay.
+                const hasKey = await window.aistudio.hasSelectedApiKey();
+                setIsVeoKeySelected(hasKey);
+                alert(hasKey ? "API-ключ успешно выбран." : "Выбор ключа был отменен или не удался.");
             } catch (error) {
-                console.error("Video generation failed:", error);
-                const errorMessage = error instanceof Error ? error.message : String(error);
-
-                setGeneratingVideoState(null);
-
-                if (errorMessage.includes("Requested entity was not found.")) {
-                    keyIsValid = false;
-                    setIsVeoKeySelected(false);
-
-                    if (retriesLeft > 0) {
-                        retriesLeft--;
-                        alert("Your API key is invalid or not found. Please select a valid key to retry.");
-                    } else {
-                        alert("The API key is still invalid after retry. Please check your key and try again later.");
-                        break;
-                    }
-                } else {
-                    alert(`An error occurred during video generation: ${errorMessage}`);
-                    break;
-                }
+                console.error("Error opening API key selection:", error);
+                alert("Не удалось открыть диалог выбора API-ключа.");
             }
+        } else {
+            alert("Функция управления ключами не доступна в этой среде.");
         }
     };
 
@@ -940,13 +936,16 @@ export default function App() {
         try {
             for (const frame of localFrames) {
                 // FIX: Skip placeholder frames that are currently being generated.
-                if (frame.isGenerating) {
+                if (frame.isGenerating && frame.id.startsWith('placeholder-')) {
+                    console.log(`Skipping check for placeholder frame ${frame.id}`);
+                    updateFrames(prev => prev.map(f => f.id === frame.id ? { ...f, isGenerating: false, generatingMessage: undefined } : f));
                     continue; 
                 }
                 const activeImageUrl = frame.imageUrls[frame.activeVersionIndex];
 
                 // FIX: Also skip frames with no valid image URL.
                 if (!activeImageUrl) {
+                    console.log(`Skipping check for frame ${frame.id} due to missing image URL`);
                     updateFrames(prev => prev.map(f => f.id === frame.id ? { ...f, isGenerating: false, generatingMessage: undefined, prompt: `${f.prompt || ''} (Ошибка: отсутствует изображение)` } : f));
                     continue;
                 }
@@ -1081,6 +1080,7 @@ export default function App() {
                 onSaveProject={handleSaveProject}
                 onSaveAsProject={() => setIsSaveModalOpen(true)}
                 onLoadProject={() => setIsLoadModalOpen(true)}
+                onManageApiKey={handleManageApiKey}
             />
             <main className="flex flex-1 flex-col overflow-auto p-6 relative">
                  <AssetLibraryPanel 

@@ -2,6 +2,21 @@ import { GoogleGenAI, Type, Modality } from "@google/genai";
 import type { Frame, Asset, StorySettings } from '../types';
 import { fileToBase64, fetchCorsImage, createImageOnCanvas } from '../utils/fileUtils';
 
+// Centralized error handler to provide user-friendly messages
+function handleApiError(error: unknown) {
+    if (error instanceof Error) {
+        // Check for specific quota-related error messages
+        if (error.message.includes("RESOURCE_EXHAUSTED") || error.message.includes("429")) {
+            throw new Error(
+                "Квота API исчерпана. Пожалуйста, проверьте ваш тарифный план или выберите другой ключ в меню пользователя (иконка в правом верхнем углу)."
+            );
+        }
+    }
+    // Re-throw the original or a generic error if it's not a known type
+    throw error;
+}
+
+
 async function urlOrFileToBase64(frame: Frame | Omit<Asset, 'file'> | Omit<Frame, 'file'>): Promise<{ mimeType: string; data: string }> {
     let base64Data: string;
     let mimeType: string;
@@ -34,318 +49,355 @@ async function urlOrFileToBase64(frame: Frame | Omit<Asset, 'file'> | Omit<Frame
 
 
 export async function analyzeStory(frames: Frame[]): Promise<string[]> {
-    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+    try {
+        const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
-    const imageParts = await Promise.all(
-        frames.map(async (frame) => {
-            const { mimeType, data } = await urlOrFileToBase64(frame);
-            return {
-                inlineData: {
-                    mimeType,
-                    data,
-                },
-            };
-        })
-    );
+        const imageParts = await Promise.all(
+            frames.map(async (frame) => {
+                const { mimeType, data } = await urlOrFileToBase64(frame);
+                return {
+                    inlineData: {
+                        mimeType,
+                        data,
+                    },
+                };
+            })
+        );
 
-    const promptText = `Проанализируй эту последовательность изображений для раскадровки видео. Пойми общий сюжет, развитие персонажей и визуальный стиль. Для каждого изображения сгенерируй краткий, описательный промт для модели генерации видео. Промт должен быть прямой инструкцией, сфокусированной на действии, движении камеры и настроении.
+        const promptText = `Проанализируй эту последовательность изображений для раскадровки видео. Пойми общий сюжет, развитие персонажей и визуальный стиль. Для каждого изображения сгенерируй краткий, описательный промт для модели генерации видео. Промт должен быть прямой инструкцией, сфокусированной на действии, движении камеры и настроении.
 
 Сложность промта должна соответствовать длительности кадра. Вот длительности для каждого кадра по порядку: ${frames.map(f => `${f.duration.toFixed(2)}s`).join(', ')}.
 
 Верни ТОЛЬКО валидный JSON-массив строк, где каждая строка — это промт для соответствующего изображения в предоставленном порядке. Все промты должны быть на русском языке. Не включай никакой другой текст, объяснения или markdown-разметку.`;
 
 
-    const response = await ai.models.generateContent({
-        model: 'gemini-2.5-pro',
-        contents: {
-            parts: [
-                { text: promptText },
-                ...imageParts,
-            ]
-        },
-        config: {
-             responseMimeType: "application/json",
-             responseSchema: {
-                type: Type.ARRAY,
-                items: {
-                    type: Type.STRING,
-                }
-             }
+        const response = await ai.models.generateContent({
+            model: 'gemini-2.5-pro',
+            contents: {
+                parts: [
+                    { text: promptText },
+                    ...imageParts,
+                ]
+            },
+            config: {
+                 responseMimeType: "application/json",
+                 responseSchema: {
+                    type: Type.ARRAY,
+                    items: {
+                        type: Type.STRING,
+                    }
+                 }
+            }
+        });
+        
+        const text = response.text.trim();
+        try {
+            const prompts = JSON.parse(text);
+            if (Array.isArray(prompts) && prompts.every(p => typeof p === 'string')) {
+                return prompts;
+            }
+            throw new Error("AI response is not a valid JSON array of strings.");
+        } catch (e) {
+            console.error("Failed to parse AI response:", text);
+            throw new Error("Could not parse the response from the AI. Please try again.");
         }
-    });
-    
-    const text = response.text.trim();
-    try {
-        const prompts = JSON.parse(text);
-        if (Array.isArray(prompts) && prompts.every(p => typeof p === 'string')) {
-            return prompts;
-        }
-        throw new Error("AI response is not a valid JSON array of strings.");
-    } catch (e) {
-        console.error("Failed to parse AI response:", text);
-        throw new Error("Could not parse the response from the AI. Please try again.");
+    } catch (error) {
+        handleApiError(error);
+        return []; // Should not be reached due to throw
     }
 }
 
 export async function generateSinglePrompt(frameToUpdate: Frame, allFrames: Frame[]): Promise<string> {
-    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-    
-    const { mimeType, data } = await urlOrFileToBase64(frameToUpdate);
-    const imagePart = { inlineData: { mimeType, data } };
+    try {
+        const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+        
+        const { mimeType, data } = await urlOrFileToBase64(frameToUpdate);
+        const imagePart = { inlineData: { mimeType, data } };
 
-    const currentIndex = allFrames.findIndex(f => f.id === frameToUpdate.id);
-    const prevFrame = currentIndex > 0 ? allFrames[currentIndex - 1] : null;
-    const nextFrame = currentIndex < allFrames.length - 1 ? allFrames[currentIndex + 1] : null;
+        const currentIndex = allFrames.findIndex(f => f.id === frameToUpdate.id);
+        const prevFrame = currentIndex > 0 ? allFrames[currentIndex - 1] : null;
+        const nextFrame = currentIndex < allFrames.length - 1 ? allFrames[currentIndex + 1] : null;
 
-    let contextPrompt = `Ты генерируешь видео-промт для одного кадра в большой раскадровке.
-    Длительность текущего кадра: ${frameToUpdate.duration.toFixed(2)} секунд.
-    Промт должен соответствовать этой длительности.`;
+        let contextPrompt = `Ты генерируешь видео-промт для одного кадра в большой раскадровке.
+        Длительность текущего кадра: ${frameToUpdate.duration.toFixed(2)} секунд.
+        Промт должен соответствовать этой длительности.`;
 
-    if (prevFrame?.prompt) {
-        contextPrompt += `\nПромт предыдущего кадра был: "${prevFrame.prompt}"`;
+        if (prevFrame?.prompt) {
+            contextPrompt += `\nПромт предыдущего кадра был: "${prevFrame.prompt}"`;
+        }
+        if (nextFrame?.prompt) {
+            contextPrompt += `\nПромт следующего кадра: "${nextFrame.prompt}"`;
+        }
+
+        contextPrompt += `\n\nОсновываясь на этом контексте, опиши предоставленное изображение для промта генерации видео. Сфокусируйся на действии, движении камеры и настроении, чтобы обеспечить плавный переход между кадрами. Выведи только сам текст промта на русском языке, без каких-либо дополнительных комментариев.`;
+
+
+        const response = await ai.models.generateContent({
+            model: 'gemini-2.5-flash',
+            contents: { parts: [{ text: contextPrompt }, imagePart] },
+        });
+
+        return response.text;
+    } catch (error) {
+        handleApiError(error);
+        return ""; // Should not be reached
     }
-    if (nextFrame?.prompt) {
-        contextPrompt += `\nПромт следующего кадра: "${nextFrame.prompt}"`;
-    }
-
-    contextPrompt += `\n\nОсновываясь на этом контексте, опиши предоставленное изображение для промта генерации видео. Сфокусируйся на действии, движении камеры и настроении, чтобы обеспечить плавный переход между кадрами. Выведи только сам текст промта на русском языке, без каких-либо дополнительных комментариев.`;
-
-
-    const response = await ai.models.generateContent({
-        model: 'gemini-2.5-flash',
-        contents: { parts: [{ text: contextPrompt }, imagePart] },
-    });
-
-    return response.text;
 }
 
 
 export async function generateVideoFromFrame(frame: Frame, setLoadingMessage: (msg: string) => void): Promise<string> {
-    if (!process.env.API_KEY) {
-        throw new Error("API key is not available. Please select one.");
+    try {
+        if (!process.env.API_KEY) {
+            throw new Error("API-ключ не найден. Пожалуйста, выберите ключ в меню пользователя.");
+        }
+        const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+        
+        setLoadingMessage("Подготовка к генерации видео...");
+        const { mimeType, data } = await urlOrFileToBase64(frame);
+
+        setLoadingMessage("Запуск генерации видео... (Это может занять несколько минут)");
+        let operation = await ai.models.generateVideos({
+          model: 'veo-3.1-fast-generate-preview',
+          prompt: frame.prompt,
+          image: {
+            imageBytes: data,
+            mimeType: mimeType,
+          },
+          config: {
+            numberOfVideos: 1,
+            resolution: '720p',
+            aspectRatio: '16:9'
+          }
+        });
+
+        setLoadingMessage("Видео генерируется, ожидание...");
+        let pollCount = 0;
+        while (!operation.done) {
+          await new Promise(resolve => setTimeout(resolve, 10000));
+          pollCount++;
+          setLoadingMessage(`Проверка статуса... (Попытка ${pollCount})`);
+          operation = await ai.operations.getVideosOperation({operation: operation});
+        }
+
+        setLoadingMessage("Видео готово! Загрузка...");
+        const downloadLink = operation.response?.generatedVideos?.[0]?.video?.uri;
+        if (!downloadLink) {
+            throw new Error("Video generation completed, but no download link was found.");
+        }
+
+        const videoResponse = await fetch(`${downloadLink}&key=${process.env.API_KEY}`);
+        if (!videoResponse.ok) {
+            const errorBody = await videoResponse.text();
+            console.error("Failed to download video:", errorBody);
+            throw new Error(`Не удалось загрузить сгенерированное видео. Статус: ${videoResponse.status}`);
+        }
+
+        const videoBlob = await videoResponse.blob();
+        return URL.createObjectURL(videoBlob);
+    } catch (error) {
+        handleApiError(error);
+        return ""; // Should not be reached
     }
-    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-    
-    setLoadingMessage("Подготовка к генерации видео...");
-    const { mimeType, data } = await urlOrFileToBase64(frame);
-
-    setLoadingMessage("Запуск генерации видео... (Это может занять несколько минут)");
-    let operation = await ai.models.generateVideos({
-      model: 'veo-3.1-fast-generate-preview',
-      prompt: frame.prompt,
-      image: {
-        imageBytes: data,
-        mimeType: mimeType,
-      },
-      config: {
-        numberOfVideos: 1,
-        resolution: '720p',
-        aspectRatio: '16:9'
-      }
-    });
-
-    setLoadingMessage("Видео генерируется, ожидание...");
-    let pollCount = 0;
-    while (!operation.done) {
-      await new Promise(resolve => setTimeout(resolve, 10000));
-      pollCount++;
-      setLoadingMessage(`Проверка статуса... (Попытка ${pollCount})`);
-      operation = await ai.operations.getVideosOperation({operation: operation});
-    }
-
-    setLoadingMessage("Видео готово! Загрузка...");
-    const downloadLink = operation.response?.generatedVideos?.[0]?.video?.uri;
-    if (!downloadLink) {
-        throw new Error("Video generation completed, but no download link was found.");
-    }
-
-    const videoResponse = await fetch(`${downloadLink}&key=${process.env.API_KEY}`);
-    if (!videoResponse.ok) {
-        throw new Error("Failed to download the generated video.");
-    }
-
-    const videoBlob = await videoResponse.blob();
-    return URL.createObjectURL(videoBlob);
 }
 
 export async function generateImageFromPrompt(prompt: string): Promise<string> {
-    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+    try {
+        const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
-    const response = await ai.models.generateImages({
-        model: 'imagen-4.0-generate-001',
-        prompt: prompt,
-        config: {
-            numberOfImages: 1,
-            outputMimeType: 'image/png',
-            aspectRatio: '16:9',
-        },
-    });
+        const response = await ai.models.generateImages({
+            model: 'imagen-4.0-generate-001',
+            prompt: prompt,
+            config: {
+                numberOfImages: 1,
+                outputMimeType: 'image/png',
+                aspectRatio: '16:9',
+            },
+        });
 
-    const base64ImageBytes: string | undefined = response.generatedImages[0]?.image.imageBytes;
+        const base64ImageBytes: string | undefined = response.generatedImages[0]?.image.imageBytes;
 
-    if (base64ImageBytes) {
-        return `data:image/png;base64,${base64ImageBytes}`;
+        if (base64ImageBytes) {
+            return `data:image/png;base64,${base64ImageBytes}`;
+        }
+
+        throw new Error("No image was generated by the model.");
+    } catch (error) {
+        handleApiError(error);
+        return ""; // Should not be reached
     }
-
-    throw new Error("No image was generated by the model.");
 }
 
 export async function editImage(
     originalFrame: Omit<Frame, 'file'>,
     editInstruction: string
 ): Promise<{ imageUrl: string, prompt: string }> {
-    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+    try {
+        const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
-    // Step 1: Generate a new image by editing the original one.
-    const { mimeType, data } = await urlOrFileToBase64(originalFrame);
-    const imagePart = { inlineData: { mimeType, data } };
-    const textPart = { text: editInstruction };
-    
-    const editResponse = await ai.models.generateContent({
-        model: 'gemini-2.5-flash-image',
-        contents: { parts: [imagePart, textPart] },
-        config: {
-            responseModalities: [Modality.IMAGE],
-        },
-    });
+        // Step 1: Generate a new image by editing the original one.
+        const { mimeType, data } = await urlOrFileToBase64(originalFrame);
+        const imagePart = { inlineData: { mimeType, data } };
+        const textPart = { text: editInstruction };
+        
+        const editResponse = await ai.models.generateContent({
+            model: 'gemini-2.5-flash-image',
+            contents: { parts: [imagePart, textPart] },
+            config: {
+                responseModalities: [Modality.IMAGE],
+            },
+        });
 
-    let newImageUrl: string | null = null;
-    let newImageMimeType: string = 'image/png';
-    let newImageBase64: string = '';
+        let newImageUrl: string | null = null;
+        let newImageMimeType: string = 'image/png';
+        let newImageBase64: string = '';
 
-    if (editResponse.candidates && editResponse.candidates.length > 0 && editResponse.candidates[0].content && editResponse.candidates[0].content.parts) {
-        for (const part of editResponse.candidates[0].content.parts) {
-            if (part.inlineData) {
-                newImageMimeType = part.inlineData.mimeType;
-                newImageBase64 = part.inlineData.data;
-                newImageUrl = `data:${newImageMimeType};base64,${newImageBase64}`;
-                break;
+        if (editResponse.candidates && editResponse.candidates.length > 0 && editResponse.candidates[0].content && editResponse.candidates[0].content.parts) {
+            for (const part of editResponse.candidates[0].content.parts) {
+                if (part.inlineData) {
+                    newImageMimeType = part.inlineData.mimeType;
+                    newImageBase64 = part.inlineData.data;
+                    newImageUrl = `data:${newImageMimeType};base64,${newImageBase64}`;
+                    break;
+                }
             }
         }
+
+        if (!newImageUrl) {
+            throw new Error("AI failed to generate an edited image.");
+        }
+
+        // Step 2: Generate a new, accurate prompt for the newly created image.
+        const newImagePartForPromptGen = { inlineData: { mimeType: newImageMimeType, data: newImageBase64 } };
+        const promptGenText = `Проанализируй это изображение, которое является результатом редактирования. Оригинальный промт был: "${originalFrame.prompt}". Инструкция по редактированию была: "${editInstruction}". Создай новый, краткий и точный промт на русском языке, который описывает финальное изображение. Выведи только сам текст промта.`;
+        
+        const promptGenResponse = await ai.models.generateContent({
+            model: 'gemini-2.5-flash',
+            contents: { parts: [{ text: promptGenText }, newImagePartForPromptGen] },
+        });
+
+        const newPrompt = promptGenResponse.text.trim();
+
+        if (!newPrompt) {
+            const fallbackPrompt = `${originalFrame.prompt}, ${editInstruction}`;
+            console.warn("AI failed to generate a new prompt. Using a fallback.");
+            return { imageUrl: newImageUrl, prompt: fallbackPrompt };
+        }
+
+        return { imageUrl: newImageUrl, prompt: newPrompt };
+    } catch (error) {
+        handleApiError(error);
+        throw error; // Re-throw to be caught by the UI component
     }
-
-    if (!newImageUrl) {
-        throw new Error("AI failed to generate an edited image.");
-    }
-
-    // Step 2: Generate a new, accurate prompt for the newly created image.
-    const newImagePartForPromptGen = { inlineData: { mimeType: newImageMimeType, data: newImageBase64 } };
-    const promptGenText = `Проанализируй это изображение, которое является результатом редактирования. Оригинальный промт был: "${originalFrame.prompt}". Инструкция по редактированию была: "${editInstruction}". Создай новый, краткий и точный промт на русском языке, который описывает финальное изображение. Выведи только сам текст промта.`;
-    
-    const promptGenResponse = await ai.models.generateContent({
-        model: 'gemini-2.5-flash',
-        contents: { parts: [{ text: promptGenText }, newImagePartForPromptGen] },
-    });
-
-    const newPrompt = promptGenResponse.text.trim();
-
-    if (!newPrompt) {
-        const fallbackPrompt = `${originalFrame.prompt}, ${editInstruction}`;
-        console.warn("AI failed to generate a new prompt. Using a fallback.");
-        return { imageUrl: newImageUrl, prompt: fallbackPrompt };
-    }
-
-    return { imageUrl: newImageUrl, prompt: newPrompt };
 }
 
 export async function generateIntermediateFrame(leftFrame: Frame, rightFrame: Frame): Promise<{ imageUrl: string; prompt: string }> {
-    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+    try {
+        const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
-    // Part 1: Generate a new image that stylistically fits between the two frames
-    const { mimeType: leftMime, data: leftData } = await urlOrFileToBase64(leftFrame);
-    const { mimeType: rightMime, data: rightData } = await urlOrFileToBase64(rightFrame);
+        // Part 1: Generate a new image that stylistically fits between the two frames
+        const { mimeType: leftMime, data: leftData } = await urlOrFileToBase64(leftFrame);
+        const { mimeType: rightMime, data: rightData } = await urlOrFileToBase64(rightFrame);
 
-    const leftImagePart = { inlineData: { mimeType: leftMime, data: leftData } };
-    const rightImagePart = { inlineData: { mimeType: rightMime, data: rightData } };
+        const leftImagePart = { inlineData: { mimeType: leftMime, data: leftData } };
+        const rightImagePart = { inlineData: { mimeType: rightMime, data: rightData } };
 
-    const imageGenPrompt = `Создай изображение, которое служит плавным визуальным и повествовательным переходом между следующими двумя изображениями. Крайне важно идеально соответствовать художественному стилю, цветовой палитре и дизайну персонажей предоставленных кадров.`;
+        const imageGenPrompt = `Создай изображение, которое служит плавным визуальным и повествовательным переходом между следующими двумя изображениями. Крайне важно идеально соответствовать художественному стилю, цветовой палитре и дизайну персонажей предоставленных кадров.`;
 
-    const imageGenResponse = await ai.models.generateContent({
-        model: 'gemini-2.5-flash-image',
-        contents: { parts: [{ text: imageGenPrompt }, leftImagePart, rightImagePart] },
-        config: {
-            responseModalities: [Modality.IMAGE],
-        },
-    });
-    
-    let newImageUrl: string | null = null;
-    let newImageMimeType: string = 'image/png';
-    let newImageBase64: string = '';
+        const imageGenResponse = await ai.models.generateContent({
+            model: 'gemini-2.5-flash-image',
+            contents: { parts: [{ text: imageGenPrompt }, leftImagePart, rightImagePart] },
+            config: {
+                responseModalities: [Modality.IMAGE],
+            },
+        });
+        
+        let newImageUrl: string | null = null;
+        let newImageMimeType: string = 'image/png';
+        let newImageBase64: string = '';
 
-    if (imageGenResponse.candidates && imageGenResponse.candidates.length > 0 && imageGenResponse.candidates[0].content && imageGenResponse.candidates[0].content.parts) {
-        for (const part of imageGenResponse.candidates[0].content.parts) {
-            if (part.inlineData) {
-                newImageMimeType = part.inlineData.mimeType;
-                newImageBase64 = part.inlineData.data;
-                newImageUrl = `data:${newImageMimeType};base64,${newImageBase64}`;
-                break;
+        if (imageGenResponse.candidates && imageGenResponse.candidates.length > 0 && imageGenResponse.candidates[0].content && imageGenResponse.candidates[0].content.parts) {
+            for (const part of imageGenResponse.candidates[0].content.parts) {
+                if (part.inlineData) {
+                    newImageMimeType = part.inlineData.mimeType;
+                    newImageBase64 = part.inlineData.data;
+                    newImageUrl = `data:${newImageMimeType};base64,${newImageBase64}`;
+                    break;
+                }
             }
         }
+
+        if (!newImageUrl || !newImageBase64) {
+            throw new Error("AI failed to generate a visual for the intermediate frame.");
+        }
+
+        // Part 2: Generate a descriptive prompt for the newly created image
+        const newImagePart = { inlineData: { mimeType: newImageMimeType, data: newImageBase64 } };
+        
+        const promptGenText = `Ты — профессиональный художник-раскадровщик, создающий промт для модели генерации видео. Проанализируй предоставленное изображение, которое является переходом между двумя другими кадрами.
+        
+        Промт предыдущего кадра: "${leftFrame.prompt}"
+        Промт следующего кадра: "${rightFrame.prompt}"
+
+        Основываясь на этом контексте, создай краткий, но описательный промт для предоставленного изображения на русском языке. Сфокусируйся на действии, движении камеры и настроении, чтобы обеспечить плавный повествовательный поток. Выведи только сам текст промта.`;
+
+        const promptGenResponse = await ai.models.generateContent({
+            model: 'gemini-2.5-flash',
+            contents: { parts: [{ text: promptGenText }, newImagePart] },
+        });
+
+        const newPrompt = promptGenResponse.text;
+        
+        if (!newPrompt) {
+            throw new Error("AI failed to generate a prompt for the intermediate frame.");
+        }
+
+        return { imageUrl: newImageUrl, prompt: newPrompt };
+    } catch (error) {
+        handleApiError(error);
+        throw error;
     }
-
-    if (!newImageUrl || !newImageBase64) {
-        throw new Error("AI failed to generate a visual for the intermediate frame.");
-    }
-
-    // Part 2: Generate a descriptive prompt for the newly created image
-    const newImagePart = { inlineData: { mimeType: newImageMimeType, data: newImageBase64 } };
-    
-    const promptGenText = `Ты — профессиональный художник-раскадровщик, создающий промт для модели генерации видео. Проанализируй предоставленное изображение, которое является переходом между двумя другими кадрами.
-    
-    Промт предыдущего кадра: "${leftFrame.prompt}"
-    Промт следующего кадра: "${rightFrame.prompt}"
-
-    Основываясь на этом контексте, создай краткий, но описательный промт для предоставленного изображения на русском языке. Сфокусируйся на действии, движении камеры и настроении, чтобы обеспечить плавный повествовательный поток. Выведи только сам текст промта.`;
-
-    const promptGenResponse = await ai.models.generateContent({
-        model: 'gemini-2.5-flash',
-        contents: { parts: [{ text: promptGenText }, newImagePart] },
-    });
-
-    const newPrompt = promptGenResponse.text;
-    
-    if (!newPrompt) {
-        throw new Error("AI failed to generate a prompt for the intermediate frame.");
-    }
-
-    return { imageUrl: newImageUrl, prompt: newPrompt };
 }
 
 export async function generateTransitionPrompt(leftFrame: Frame, rightFrame: Frame): Promise<string> {
-    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+    try {
+        const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
-    const { mimeType: leftMime, data: leftData } = await urlOrFileToBase64(leftFrame);
-    const leftImagePart = { inlineData: { mimeType: leftMime, data: leftData } };
+        const { mimeType: leftMime, data: leftData } = await urlOrFileToBase64(leftFrame);
+        const leftImagePart = { inlineData: { mimeType: leftMime, data: leftData } };
 
-    const { mimeType: rightMime, data: rightData } = await urlOrFileToBase64(rightFrame);
-    const rightImagePart = { inlineData: { mimeType: rightMime, data: rightData } };
+        const { mimeType: rightMime, data: rightData } = await urlOrFileToBase64(rightFrame);
+        const rightImagePart = { inlineData: { mimeType: rightMime, data: rightData } };
 
-    const promptText = `Ты — эксперт по видеомонтажу. Тебе даны два кадра: конец предыдущей сцены и начало следующей. Твоя задача — сгенерировать краткий, креативный промт, описывающий видео-переход от первого кадра ко второму.
+        const promptText = `Ты — эксперт по видеомонтажу. Тебе даны два кадра: конец предыдущей сцены и начало следующей. Твоя задача — сгенерировать краткий, креативный промт, описывающий видео-переход от первого кадра ко второму.
 
-    Контекст:
-    - Промт предыдущей сцены: "${leftFrame.prompt || 'Промт не указан.'}"
-    - Промт следующей сцены: "${rightFrame.prompt || 'Промт не указан.'}"
+        Контекст:
+        - Промт предыдущей сцены: "${leftFrame.prompt || 'Промт не указан.'}"
+        - Промт следующей сцены: "${rightFrame.prompt || 'Промт не указан.'}"
 
-    Инструкции:
-    1. Проанализируй оба изображения и их промты.
-    2. Придумай визуально интересный переход (например, "Камера пролетает через выхлопную трубу машины, которая превращается в...", "Быстрый размытый переход фокусируется на обеспокоенных глазах ученого...", "Экран глитчит и пикселизируется, собираясь в следующую сцену...").
-    3. Сгенерированный текст должен описывать ТОЛЬКО сам переход.
-    4. Результат должен быть одной короткой фразой или предложением на русском языке. Не добавляй никакого лишнего текста, объяснений или заголовков.
+        Инструкции:
+        1. Проанализируй оба изображения и их промты.
+        2. Придумай визуально интересный переход (например, "Камера пролетает через выхлопную трубу машины, которая превращается в...", "Быстрый размытый переход фокусируется на обеспокоенных глазах ученого...", "Экран глитчит и пикселизируется, собираясь в следующую сцену...").
+        3. Сгенерированный текст должен описывать ТОЛЬКО сам переход.
+        4. Результат должен быть одной короткой фразой или предложением на русском языке. Не добавляй никакого лишнего текста, объяснений или заголовков.
 
-    Пример вывода: "Быстрое панорамирование вправо размывает сцену, фокусируясь на..."`;
+        Пример вывода: "Быстрое панорамирование вправо размывает сцену, фокусируясь на..."`;
 
-    const response = await ai.models.generateContent({
-        model: 'gemini-2.5-pro',
-        contents: {
-            parts: [
-                { text: promptText },
-                leftImagePart,
-                rightImagePart,
-            ]
-        },
-    });
+        const response = await ai.models.generateContent({
+            model: 'gemini-2.5-pro',
+            contents: {
+                parts: [
+                    { text: promptText },
+                    leftImagePart,
+                    rightImagePart,
+                ]
+            },
+        });
 
-    return response.text.trim();
+        return response.text.trim();
+    } catch (error) {
+        handleApiError(error);
+        return ""; // Should not be reached
+    }
 }
 
 export async function generateImageInContext(
@@ -353,84 +405,89 @@ export async function generateImageInContext(
     leftFrame: Frame | null,
     rightFrame: Frame | null
 ): Promise<{ imageUrl: string; prompt: string }>{
-    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+    try {
+        const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
-    // --- STEP 1: Generate the image ---
-    const imageGenParts: any[] = [];
-    
-    let instructionText = `Ты — эксперт-художник по раскадровке, создающий новый кадр на основе промта пользователя. Цель — сделать так, чтобы этот новый кадр без проблем вписался между двумя существующими кадрами в истории.
+        // --- STEP 1: Generate the image ---
+        const imageGenParts: any[] = [];
+        
+        let instructionText = `Ты — эксперт-художник по раскадровке, создающий новый кадр на основе промта пользователя. Цель — сделать так, чтобы этот новый кадр без проблем вписался между двумя существующими кадрами в истории.
 
-Промт пользователя для нового кадра: "${userPrompt}"
+    Промт пользователя для нового кадра: "${userPrompt}"
 
-Твоя задача:
-1.  Проанализируй предоставленный контекст: изображение и промт из кадра до (СЛЕВА) и кадра после (СПРАВА). Обрати особое внимание на художественный стиль, цветовую палитру, персонажей и общее настроение.
-2.  Сгенерируй новое изображение, которое является прямой визуальной репрезентацией промта пользователя.
-3.  Критически важно, чтобы стиль сгенерированного изображения был идеально совместим с контекстными кадрами, чтобы оно выглядело как часть той же последовательности. Новая сцена должна логически связывать левый и правый кадры.
-`;
+    Твоя задача:
+    1.  Проанализируй предоставленный контекст: изображение и промт из кадра до (СЛЕВА) и кадра после (СПРАВА). Обрати особое внимание на художественный стиль, цветовую палитру, персонажей и общее настроение.
+    2.  Сгенерируй новое изображение, которое является прямой визуальной репрезентацией промта пользователя.
+    3.  Критически важно, чтобы стиль сгенерированного изображения был идеально совместим с контекстными кадрами, чтобы оно выглядело как часть той же последовательности. Новая сцена должна логически связывать левый и правый кадры.
+    `;
 
-    if (leftFrame) {
-        const { mimeType, data } = await urlOrFileToBase64(leftFrame);
-        imageGenParts.push({ inlineData: { mimeType, data } });
-        instructionText += `\nКонтекст из ЛЕВОГО кадра: Промт был "${leftFrame.prompt || 'без промта'}". Изображение предоставлено.`;
-    }
-    if (rightFrame) {
-        const { mimeType, data } = await urlOrFileToBase64(rightFrame);
-        imageGenParts.push({ inlineData: { mimeType, data } });
-        instructionText += `\nКонтекст из ПРАВОГО кадра: Промт был "${rightFrame.prompt || 'без промта'}". Изображение предоставлено.`;
-    }
+        if (leftFrame) {
+            const { mimeType, data } = await urlOrFileToBase64(leftFrame);
+            imageGenParts.push({ inlineData: { mimeType, data } });
+            instructionText += `\nКонтекст из ЛЕВОГО кадра: Промт был "${leftFrame.prompt || 'без промта'}". Изображение предоставлено.`;
+        }
+        if (rightFrame) {
+            const { mimeType, data } = await urlOrFileToBase64(rightFrame);
+            imageGenParts.push({ inlineData: { mimeType, data } });
+            instructionText += `\nКонтекст из ПРАВОГО кадра: Промт был "${rightFrame.prompt || 'без промта'}". Изображение предоставлено.`;
+        }
 
-    imageGenParts.unshift({ text: instructionText });
+        imageGenParts.unshift({ text: instructionText });
 
-    const imageGenResponse = await ai.models.generateContent({
-        model: 'gemini-2.5-flash-image',
-        contents: { parts: imageGenParts },
-        config: {
-            responseModalities: [Modality.IMAGE],
-        },
-    });
+        const imageGenResponse = await ai.models.generateContent({
+            model: 'gemini-2.5-flash-image',
+            contents: { parts: imageGenParts },
+            config: {
+                responseModalities: [Modality.IMAGE],
+            },
+        });
 
-    let newImageUrl: string | null = null;
-    let newImagePartForPromptGen: any = null;
+        let newImageUrl: string | null = null;
+        let newImagePartForPromptGen: any = null;
 
-    if (imageGenResponse.candidates && imageGenResponse.candidates.length > 0 && imageGenResponse.candidates[0].content && imageGenResponse.candidates[0].content.parts) {
-        for (const part of imageGenResponse.candidates[0].content.parts) {
-            if (part.inlineData) {
-                newImageUrl = `data:${part.inlineData.mimeType};base64,${part.inlineData.data}`;
-                newImagePartForPromptGen = { inlineData: { mimeType: part.inlineData.mimeType, data: part.inlineData.data } };
-                break;
+        if (imageGenResponse.candidates && imageGenResponse.candidates.length > 0 && imageGenResponse.candidates[0].content && imageGenResponse.candidates[0].content.parts) {
+            for (const part of imageGenResponse.candidates[0].content.parts) {
+                if (part.inlineData) {
+                    newImageUrl = `data:${part.inlineData.mimeType};base64,${part.inlineData.data}`;
+                    newImagePartForPromptGen = { inlineData: { mimeType: part.inlineData.mimeType, data: part.inlineData.data } };
+                    break;
+                }
             }
         }
-    }
 
-    if (!newImageUrl || !newImagePartForPromptGen) {
-        throw new Error("AI failed to generate an image with context.");
-    }
+        if (!newImageUrl || !newImagePartForPromptGen) {
+            throw new Error("AI failed to generate an image with context.");
+        }
 
-    // --- STEP 2: Generate a prompt for the new image ---
-    let promptGenText = `Ты — профессиональный художник-раскадровщик, создающий промт для модели генерации видео. Проанализируй предоставленное изображение, которое было создано, чтобы вписаться между двумя другими кадрами на основе запроса пользователя: "${userPrompt}".
+        // --- STEP 2: Generate a prompt for the new image ---
+        let promptGenText = `Ты — профессиональный художник-раскадровщик, создающий промт для модели генерации видео. Проанализируй предоставленное изображение, которое было создано, чтобы вписаться между двумя другими кадрами на основе запроса пользователя: "${userPrompt}".
 
-Контекст:`;
-    if (leftFrame?.prompt) {
-        promptGenText += `\n- Промт предыдущего кадра: "${leftFrame.prompt}"`;
-    }
-    if (rightFrame?.prompt) {
-        promptGenText += `\n- Промт следующего кадра: "${rightFrame.prompt}"`;
-    }
-    promptGenText += `\n\nОсновываясь на всем этом контексте, создай краткий, но описательный промт для нового изображения на русском языке. Этот промт будет использован для генерации видеоклипа. Сфокусируйся на действии, движении камеры и настроении, чтобы обеспечить плавный повествовательный поток. Выведи только сам текст промта.`;
-    
-    const promptGenResponse = await ai.models.generateContent({
-        model: 'gemini-2.5-flash',
-        contents: { parts: [{ text: promptGenText }, newImagePartForPromptGen] },
-    });
+    Контекст:`;
+        if (leftFrame?.prompt) {
+            promptGenText += `\n- Промт предыдущего кадра: "${leftFrame.prompt}"`;
+        }
+        if (rightFrame?.prompt) {
+            promptGenText += `\n- Промт следующего кадра: "${rightFrame.prompt}"`;
+        }
+        promptGenText += `\n\nОсновываясь на всем этом контексте, создай краткий, но описательный промт для нового изображения на русском языке. Этот промт будет использован для генерации видеоклипа. Сфокусируйся на действии, движении камеры и настроении, чтобы обеспечить плавный повествовательный поток. Выведи только сам текст промта.`;
+        
+        const promptGenResponse = await ai.models.generateContent({
+            model: 'gemini-2.5-flash',
+            contents: { parts: [{ text: promptGenText }, newImagePartForPromptGen] },
+        });
 
-    const newPrompt = promptGenResponse.text.trim();
-    
-    if (!newPrompt) {
-        console.warn("AI failed to generate a descriptive prompt. Falling back to user input.");
-        return { imageUrl: newImageUrl, prompt: userPrompt };
-    }
+        const newPrompt = promptGenResponse.text.trim();
+        
+        if (!newPrompt) {
+            console.warn("AI failed to generate a descriptive prompt. Falling back to user input.");
+            return { imageUrl: newImageUrl, prompt: userPrompt };
+        }
 
-    return { imageUrl: newImageUrl, prompt: newPrompt };
+        return { imageUrl: newImageUrl, prompt: newPrompt };
+    } catch (error) {
+        handleApiError(error);
+        throw error;
+    }
 }
 
 export type StoryGenerationUpdate =
@@ -444,140 +501,145 @@ export async function* createStoryFromAssets(
     settings: StorySettings,
     frameCount: number,
 ): AsyncGenerator<StoryGenerationUpdate, Omit<Frame, 'file'>[], void> {
-    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-    const { mode, prompt, genre, ending } = settings;
-    
-    yield { type: 'plan', message: "Анализ ассетов и создание плана сюжета..." };
+    try {
+        const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+        const { mode, prompt, genre, ending } = settings;
+        
+        yield { type: 'plan', message: "Анализ ассетов и создание плана сюжета..." };
 
-    const assetImageParts = await Promise.all(
-        assets.map(async (asset) => {
-            const { mimeType, data } = await urlOrFileToBase64(asset);
-            return { inlineData: { mimeType, data } };
-        })
-    );
-    
-    const assetNames = assets.map(a => a.name).join(', ');
-    let storyPlanPrompt = `Ты — AI-сценарист и режиссер-постановщик раскадровки. Основываясь на предоставленных изображениях-ассетах (представляющих ключевых персонажей, предметы или локации с именами: ${assetNames}), создай захватывающую короткую историю.
+        const assetImageParts = await Promise.all(
+            assets.map(async (asset) => {
+                const { mimeType, data } = await urlOrFileToBase64(asset);
+                return { inlineData: { mimeType, data } };
+            })
+        );
+        
+        const assetNames = assets.map(a => a.name).join(', ');
+        let storyPlanPrompt = `Ты — AI-сценарист и режиссер-постановщик раскадровки. Основываясь на предоставленных изображениях-ассетах (представляющих ключевых персонажей, предметы или локации с именами: ${assetNames}), создай захватывающую короткую историю.
 
-Твоя задача — разбить эту историю ровно на ${frameCount} отдельных сцен или кадров.`;
-    
-    if (mode === 'manual') {
-        storyPlanPrompt += "\n\nСледуй этим указаниям от пользователя:";
-        if (prompt) {
-            storyPlanPrompt += `\n- Основная идея сюжета: "${prompt}"`;
+    Твоя задача — разбить эту историю ровно на ${frameCount} отдельных сцен или кадров.`;
+        
+        if (mode === 'manual') {
+            storyPlanPrompt += "\n\nСледуй этим указаниям от пользователя:";
+            if (prompt) {
+                storyPlanPrompt += `\n- Основная идея сюжета: "${prompt}"`;
+            }
+            if (genre) {
+                storyPlanPrompt += `\n- Жанр или тональность истории: "${genre}"`;
+            }
+            if (ending) {
+                storyPlanPrompt += `\n- Тип концовки: "${ending}"`;
+            }
         }
-        if (genre) {
-            storyPlanPrompt += `\n- Жанр или тональность истории: "${genre}"`;
-        }
-        if (ending) {
-            storyPlanPrompt += `\n- Тип концовки: "${ending}"`;
-        }
-    }
 
-    storyPlanPrompt += `
+        storyPlanPrompt += `
 
-    Для каждого кадра ты должен предоставить:
-    1.  'description': Краткое описание действия и композиции сцены в одном предложении, на русском языке.
-    2.  'prompt': Краткий, мощный промт на русском языке для AI-генератора изображений, чтобы создать визуал для этой сцены. Этот промт должен фокусироваться на визуальных деталях, ракурсах камеры и настроении, и ОБЯЗАТЕЛЬНО должен быть стилистически совместим с предоставленными ассетами.
+        Для каждого кадра ты должен предоставить:
+        1.  'description': Краткое описание действия и композиции сцены в одном предложении, на русском языке.
+        2.  'prompt': Краткий, мощный промт на русском языке для AI-генератора изображений, чтобы создать визуал для этой сцены. Этот промт должен фокусироваться на визуальных деталях, ракурсах камеры и настроении, и ОБЯЗАТЕЛЬНО должен быть стилистически совместим с предоставленными ассетами.
 
-    Верни свой ответ ТОЛЬКО в виде валидного JSON-массива объектов, где каждый объект имеет ключи 'description' и 'prompt'. Не включай никакой другой текст, объяснения или markdown-разметку. Массив должен содержать ровно ${frameCount} элементов.
-    `;
-
-    const planResponse = await ai.models.generateContent({
-        model: 'gemini-2.5-pro',
-        contents: { parts: [{ text: storyPlanPrompt }, ...assetImageParts] },
-        config: {
-            responseMimeType: "application/json",
-            responseSchema: {
-                type: Type.ARRAY,
-                items: {
-                    type: Type.OBJECT,
-                    properties: {
-                        description: { type: Type.STRING },
-                        prompt: { type: Type.STRING },
-                    },
-                    required: ["description", "prompt"],
-                },
-            },
-        },
-    });
-
-    const storyPlan: { description: string, prompt: string }[] = JSON.parse(planResponse.text.trim());
-
-    if (!storyPlan || storyPlan.length === 0) {
-        throw new Error("AI failed to generate a story plan.");
-    }
-
-    const newFrames: Omit<Frame, 'file'>[] = [];
-    for (let i = 0; i < storyPlan.length; i++) {
-        const plan = storyPlan[i];
-        yield { type: 'progress', message: `Генерация кадра ${i + 1} из ${storyPlan.length}: ${plan.description}`, index: i };
-
-        const imageGenPrompt = `Сгенерируй изображение для раскадровки.
-        Описание сцены: "${plan.description}".
-        Финальный видео-промт будет: "${plan.prompt}".
-
-        Крайне важно, чтобы ты СОХРАНИЛ(А) художественный стиль, цветовую палитру и дизайн персонажей/объектов, установленные в предоставленных референсных изображениях-ассетах. Новое изображение должно ощущаться так, будто оно принадлежит той же вселенной, что и ассеты.
+        Верни свой ответ ТОЛЬКО в виде валидного JSON-массива объектов, где каждый объект имеет ключи 'description' и 'prompt'. Не включай никакой другой текст, объяснения или markdown-разметку. Массив должен содержать ровно ${frameCount} элементов.
         `;
 
-        let imageGenResponse = null;
-        const maxRetries = 2; // Original attempt + 1 retry
-        for (let attempt = 1; attempt <= maxRetries; attempt++) {
-            try {
-                const response = await ai.models.generateContent({
-                    model: 'gemini-2.5-flash-image',
-                    contents: { parts: [{ text: imageGenPrompt }, ...assetImageParts] },
-                    config: {
-                        responseModalities: [Modality.IMAGE],
+        const planResponse = await ai.models.generateContent({
+            model: 'gemini-2.5-pro',
+            contents: { parts: [{ text: storyPlanPrompt }, ...assetImageParts] },
+            config: {
+                responseMimeType: "application/json",
+                responseSchema: {
+                    type: Type.ARRAY,
+                    items: {
+                        type: Type.OBJECT,
+                        properties: {
+                            description: { type: Type.STRING },
+                            prompt: { type: Type.STRING },
+                        },
+                        required: ["description", "prompt"],
                     },
-                });
-                
-                const hasImageData = response.candidates?.[0]?.content?.parts?.some(p => p.inlineData?.data);
-                if (hasImageData) {
-                    imageGenResponse = response;
-                    break; 
-                }
-                
-                if (attempt === maxRetries) {
-                    console.warn(`Generation succeeded but returned no image data after ${maxRetries} attempts for frame ${i + 1}.`);
-                }
+                },
+            },
+        });
 
-            } catch (error) {
-                console.warn(`Image generation attempt ${attempt} for frame ${i + 1} failed:`, error);
-                if (attempt < maxRetries) {
-                    await new Promise(resolve => setTimeout(resolve, 1000)); // Wait 1s before retrying
-                }
-            }
-        }
-        
-        let imageUrls: string[] = [];
-        if (imageGenResponse?.candidates?.[0]?.content?.parts) {
-            for (const part of imageGenResponse.candidates[0].content.parts) {
-                if (part.inlineData) {
-                    imageUrls.push(`data:${part.inlineData.mimeType};base64,${part.inlineData.data}`);
-                    break;
-                }
-            }
-        }
-        
-        if (imageUrls.length === 0) {
-            console.warn(`Failed to generate image for frame ${i+1}. Skipping.`);
-            continue;
+        const storyPlan: { description: string, prompt: string }[] = JSON.parse(planResponse.text.trim());
+
+        if (!storyPlan || storyPlan.length === 0) {
+            throw new Error("AI failed to generate a story plan.");
         }
 
-        const newFrameData: Omit<Frame, 'file'> = {
-            id: crypto.randomUUID(),
-            imageUrls,
-            activeVersionIndex: 0,
-            prompt: plan.prompt,
-            duration: 3.0,
-        };
-        newFrames.push(newFrameData);
-        yield { type: 'frame', frame: newFrameData, index: i };
+        const newFrames: Omit<Frame, 'file'>[] = [];
+        for (let i = 0; i < storyPlan.length; i++) {
+            const plan = storyPlan[i];
+            yield { type: 'progress', message: `Генерация кадра ${i + 1} из ${storyPlan.length}: ${plan.description}`, index: i };
+
+            const imageGenPrompt = `Сгенерируй изображение для раскадровки.
+            Описание сцены: "${plan.description}".
+            Финальный видео-промт будет: "${plan.prompt}".
+
+            Крайне важно, чтобы ты СОХРАНИЛ(А) художественный стиль, цветовую палитру и дизайн персонажей/объектов, установленные в предоставленных референсных изображениях-ассетах. Новое изображение должно ощущаться так, будто оно принадлежит той же вселенной, что и ассеты.
+            `;
+
+            let imageGenResponse = null;
+            const maxRetries = 2; // Original attempt + 1 retry
+            for (let attempt = 1; attempt <= maxRetries; attempt++) {
+                try {
+                    const response = await ai.models.generateContent({
+                        model: 'gemini-2.5-flash-image',
+                        contents: { parts: [{ text: imageGenPrompt }, ...assetImageParts] },
+                        config: {
+                            responseModalities: [Modality.IMAGE],
+                        },
+                    });
+                    
+                    const hasImageData = response.candidates?.[0]?.content?.parts?.some(p => p.inlineData?.data);
+                    if (hasImageData) {
+                        imageGenResponse = response;
+                        break; 
+                    }
+                    
+                    if (attempt === maxRetries) {
+                        console.warn(`Generation succeeded but returned no image data after ${maxRetries} attempts for frame ${i + 1}.`);
+                    }
+
+                } catch (error) {
+                    console.warn(`Image generation attempt ${attempt} for frame ${i + 1} failed:`, error);
+                    if (attempt < maxRetries) {
+                        await new Promise(resolve => setTimeout(resolve, 1000)); // Wait 1s before retrying
+                    }
+                }
+            }
+            
+            let imageUrls: string[] = [];
+            if (imageGenResponse?.candidates?.[0]?.content?.parts) {
+                for (const part of imageGenResponse.candidates[0].content.parts) {
+                    if (part.inlineData) {
+                        imageUrls.push(`data:${part.inlineData.mimeType};base64,${part.inlineData.data}`);
+                        break;
+                    }
+                }
+            }
+            
+            if (imageUrls.length === 0) {
+                console.warn(`Failed to generate image for frame ${i+1}. Skipping.`);
+                continue;
+            }
+
+            const newFrameData: Omit<Frame, 'file'> = {
+                id: crypto.randomUUID(),
+                imageUrls,
+                activeVersionIndex: 0,
+                prompt: plan.prompt,
+                duration: 3.0,
+            };
+            newFrames.push(newFrameData);
+            yield { type: 'frame', frame: newFrameData, index: i };
+        }
+        
+        yield { type: 'complete', message: "Генерация сюжета завершена!" };
+        return newFrames;
+    } catch (error) {
+        handleApiError(error);
+        return []; // Should not be reached
     }
-    
-    yield { type: 'complete', message: "Генерация сюжета завершена!" };
-    return newFrames;
 }
 
 export async function adaptImageToStory(
@@ -586,149 +648,159 @@ export async function adaptImageToStory(
     rightFrame: Frame | null,
     manualInstruction?: string,
 ): Promise<{ imageUrl: string; prompt: string }> {
-    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+    try {
+        const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
-    // Step 1: Generate the new, adapted image
-    const imageGenParts: any[] = [];
-    let imageGenInstruction = `Ты — эксперт-художник и арт-директор. Твоя задача — взять изображение пользователя и идеально вписать его в существующую раскадровку. Ты должен(на) трансформировать изображение пользователя, чтобы оно полностью соответствовало художественному стилю, цветовой палитре, освещению и повествовательному контексту окружающих кадров.
-    
-КЛЮЧЕВАЯ ИНСТРУКЦИЯ: Сохрани основной объект, персонажей и композицию ИЗОБРАЖЕНИЯ ПОЛЬЗОВАТЕЛЯ, но полностью ПЕРЕРИСУЙ его в художественном стиле КОНТЕКСТНЫХ КАДРОВ. Новое изображение должно служить логическим визуальным и повествовательным мостом между кадрами "до" и "после".`;
-    
-    if (manualInstruction) {
-        imageGenInstruction += `\n\nВАЖНО: Пользователь предоставил конкретную инструкцию, которой ты должен следовать в первую очередь: "${manualInstruction}". Эта инструкция имеет приоритет над автоматическим анализом.`;
-    }
+        // Step 1: Generate the new, adapted image
+        const imageGenParts: any[] = [];
+        let imageGenInstruction = `Ты — эксперт-художник и арт-директор. Твоя задача — взять изображение пользователя и идеально вписать его в существующую раскадровку. Ты должен(на) трансформировать изображение пользователя, чтобы оно полностью соответствовало художественному стилю, цветовой палитре, освещению и повествовательному контексту окружающих кадров.
+        
+    КЛЮЧЕВАЯ ИНСТРУКЦИЯ: Сохрани основной объект, персонажей и композицию ИЗОБРАЖЕНИЯ ПОЛЬЗОВАТЕЛЯ, но полностью ПЕРЕРИСУЙ его в художественном стиле КОНТЕКСТНЫХ КАДРОВ. Новое изображение должно служить логическим визуальным и повествовательным мостом между кадрами "до" и "после".`;
+        
+        if (manualInstruction) {
+            imageGenInstruction += `\n\nВАЖНО: Пользователь предоставил конкретную инструкцию, которой ты должен следовать в первую очередь: "${manualInstruction}". Эта инструкция имеет приоритет над автоматическим анализом.`;
+        }
 
-    imageGenInstruction += `\n\nПример: Если контекстные кадры из мультфильма "Утиные истории", а изображение пользователя — это реальная фотография человека, ты должен(на) перерисовать этого человека и его окружение в стиле мультфильма "Утиные истории". Не просто вставляй фото в сцену, а трансформируй его.`;
+        imageGenInstruction += `\n\nПример: Если контекстные кадры из мультфильма "Утиные истории", а изображение пользователя — это реальная фотография человека, ты должен(на) перерисовать этого человека и его окружение в стиле мультфильма "Утиные истории". Не просто вставляй фото в сцену, а трансформируй его.`;
 
-    const { mimeType: adaptMime, data: adaptData } = await urlOrFileToBase64(frameToAdapt);
-    imageGenParts.push({ text: "ИЗОБРАЖЕНИЕ ПОЛЬЗОВАТЕЛЯ ДЛЯ АДАПТАЦИИ:" });
-    imageGenParts.push({ inlineData: { mimeType: adaptMime, data: adaptData } });
+        const { mimeType: adaptMime, data: adaptData } = await urlOrFileToBase64(frameToAdapt);
+        imageGenParts.push({ text: "ИЗОБРАЖЕНИЕ ПОЛЬЗОВАТЕЛЯ ДЛЯ АДАПТАЦИИ:" });
+        imageGenParts.push({ inlineData: { mimeType: adaptMime, data: adaptData } });
 
-    if (leftFrame) {
-        const { mimeType, data } = await urlOrFileToBase64(leftFrame);
-        imageGenParts.push({ text: "КОНТЕКСТ: КАДР ДО (СЛЕВА):" });
-        imageGenParts.push({ inlineData: { mimeType, data } });
-    }
-    if (rightFrame) {
-        const { mimeType, data } = await urlOrFileToBase64(rightFrame);
-        imageGenParts.push({ text: "КОНТЕКСТ: КАДР ПОСЛЕ (СПРАВА):" });
-        imageGenParts.push({ inlineData: { mimeType, data } });
-    }
+        if (leftFrame) {
+            const { mimeType, data } = await urlOrFileToBase64(leftFrame);
+            imageGenParts.push({ text: "КОНТЕКСТ: КАДР ДО (СЛЕВА):" });
+            imageGenParts.push({ inlineData: { mimeType, data } });
+        }
+        if (rightFrame) {
+            const { mimeType, data } = await urlOrFileToBase64(rightFrame);
+            imageGenParts.push({ text: "КОНТЕКСТ: КАДР ПОСЛЕ (СПРАВА):" });
+            imageGenParts.push({ inlineData: { mimeType, data } });
+        }
 
-    imageGenParts.unshift({ text: imageGenInstruction });
+        imageGenParts.unshift({ text: imageGenInstruction });
 
-    const imageGenResponse = await ai.models.generateContent({
-        model: 'gemini-2.5-flash-image',
-        contents: { parts: imageGenParts },
-        config: {
-            responseModalities: [Modality.IMAGE],
-        },
-    });
+        const imageGenResponse = await ai.models.generateContent({
+            model: 'gemini-2.5-flash-image',
+            contents: { parts: imageGenParts },
+            config: {
+                responseModalities: [Modality.IMAGE],
+            },
+        });
 
-    let newImageUrl: string | null = null;
-    let newImagePartForPromptGen: any = null;
-    if (imageGenResponse.candidates && imageGenResponse.candidates.length > 0 && imageGenResponse.candidates[0].content && imageGenResponse.candidates[0].content.parts) {
-        for (const part of imageGenResponse.candidates[0].content.parts) {
-            if (part.inlineData) {
-                newImageUrl = `data:${part.inlineData.mimeType};base64,${part.inlineData.data}`;
-                newImagePartForPromptGen = { inlineData: { mimeType: part.inlineData.mimeType, data: part.inlineData.data } };
-                break;
+        let newImageUrl: string | null = null;
+        let newImagePartForPromptGen: any = null;
+        if (imageGenResponse.candidates && imageGenResponse.candidates.length > 0 && imageGenResponse.candidates[0].content && imageGenResponse.candidates[0].content.parts) {
+            for (const part of imageGenResponse.candidates[0].content.parts) {
+                if (part.inlineData) {
+                    newImageUrl = `data:${part.inlineData.mimeType};base64,${part.inlineData.data}`;
+                    newImagePartForPromptGen = { inlineData: { mimeType: part.inlineData.mimeType, data: part.inlineData.data } };
+                    break;
+                }
             }
         }
-    }
 
-    if (!newImageUrl || !newImagePartForPromptGen) {
-        throw new Error("AI failed to generate an adapted image.");
-    }
+        if (!newImageUrl || !newImagePartForPromptGen) {
+            throw new Error("AI failed to generate an adapted image.");
+        }
 
-    // Step 2: Generate a new prompt for the adapted image
-    let promptGenText = `Ты — профессиональный художник-раскадровщик, создающий промт для генерации видео. Проанализируй предоставленное изображение, которое было стилистически адаптировано, чтобы вписаться между двумя другими кадрами.`;
-    if (manualInstruction) {
-        promptGenText += `\n- Инструкция от пользователя по адаптации была: "${manualInstruction}"`;
-    }
-    if (leftFrame?.prompt) {
-        promptGenText += `\n- Промт предыдущего кадра: "${leftFrame.prompt}"`;
-    }
-    if (rightFrame?.prompt) {
-        promptGenText += `\n- Промт следующего кадра: "${rightFrame.prompt}"`;
-    }
-    promptGenText += `\n\nОсновываясь на этом контексте, создай новый, краткий, но описательный промт на русском языке для предоставленного изображения. Промт должен фокусироваться на движении камеры, действии и настроении, чтобы обеспечить плавный повествовательный поток. Выведи ТОЛЬКО сам текст промта.`;
-    
-    const promptGenResponse = await ai.models.generateContent({
-        model: 'gemini-2.5-flash',
-        contents: { parts: [{ text: promptGenText }, newImagePartForPromptGen] },
-    });
+        // Step 2: Generate a new prompt for the adapted image
+        let promptGenText = `Ты — профессиональный художник-раскадровщик, создающий промт для генерации видео. Проанализируй предоставленное изображение, которое было стилистически адаптировано, чтобы вписаться между двумя другими кадрами.`;
+        if (manualInstruction) {
+            promptGenText += `\n- Инструкция от пользователя по адаптации была: "${manualInstruction}"`;
+        }
+        if (leftFrame?.prompt) {
+            promptGenText += `\n- Промт предыдущего кадра: "${leftFrame.prompt}"`;
+        }
+        if (rightFrame?.prompt) {
+            promptGenText += `\n- Промт следующего кадра: "${rightFrame.prompt}"`;
+        }
+        promptGenText += `\n\nОсновываясь на этом контексте, создай новый, краткий, но описательный промт на русском языке для предоставленного изображения. Промт должен фокусироваться на движении камеры, действии и настроении, чтобы обеспечить плавный повествовательный поток. Выведи ТОЛЬКО сам текст промта.`;
+        
+        const promptGenResponse = await ai.models.generateContent({
+            model: 'gemini-2.5-flash',
+            contents: { parts: [{ text: promptGenText }, newImagePartForPromptGen] },
+        });
 
-    const newPrompt = promptGenResponse.text.trim();
-    if (!newPrompt) {
-        console.warn("AI failed to generate a new prompt. A default will be used.");
-        return { imageUrl: newImageUrl, prompt: manualInstruction || "Стилизованный кадр, интегрированный в сюжет." };
-    }
+        const newPrompt = promptGenResponse.text.trim();
+        if (!newPrompt) {
+            console.warn("AI failed to generate a new prompt. A default will be used.");
+            return { imageUrl: newImageUrl, prompt: manualInstruction || "Стилизованный кадр, интегрированный в сюжет." };
+        }
 
-    return { imageUrl: newImageUrl, prompt: newPrompt };
+        return { imageUrl: newImageUrl, prompt: newPrompt };
+    } catch (error) {
+        handleApiError(error);
+        throw error;
+    }
 }
 
 export async function adaptImageAspectRatio(
     frame: Frame,
     targetRatio: string
 ): Promise<{ imageUrl: string; prompt: string }> {
-    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-    const originalImageUrl = frame.imageUrls[frame.activeVersionIndex];
+    try {
+        const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+        const originalImageUrl = frame.imageUrls[frame.activeVersionIndex];
 
-    // STEP 1: Create a new canvas with the original image centered and black bars.
-    const compositeImageUrl = await createImageOnCanvas(originalImageUrl, targetRatio);
-    
-    // Convert the new composite image to the format needed for the API.
-    const arr = compositeImageUrl.split(',');
-    const mimeMatch = arr[0].match(/:(.*?);/);
-    if (!mimeMatch) {
-      throw new Error("Invalid data URL format from canvas");
-    }
-    const mimeType = mimeMatch[1];
-    const data = arr[1];
-    const imagePart = { inlineData: { mimeType, data } };
+        // STEP 1: Create a new canvas with the original image centered and black bars.
+        const compositeImageUrl = await createImageOnCanvas(originalImageUrl, targetRatio);
+        
+        // Convert the new composite image to the format needed for the API.
+        const arr = compositeImageUrl.split(',');
+        const mimeMatch = arr[0].match(/:(.*?);/);
+        if (!mimeMatch) {
+          throw new Error("Invalid data URL format from canvas");
+        }
+        const mimeType = mimeMatch[1];
+        const data = arr[1];
+        const imagePart = { inlineData: { mimeType, data } };
 
-    // --- STEP 2: Generate the new image by filling in the blank areas (outpainting) ---
-    const imageGenInstruction = `Твоя задача — дорисовать (outpainting) это изображение. Заполни черные поля, творчески расширяя сцену. Новые области должны бесшовно продолжать оригинальное изображение, полностью совпадая по стилю, освещению и содержанию. Результат должен быть единым цельным изображением без черных полей.`;
-    
-    const imageGenResponse = await ai.models.generateContent({
-        model: 'gemini-2.5-flash-image',
-        contents: { parts: [imagePart, { text: imageGenInstruction }] },
-        config: {
-            responseModalities: [Modality.IMAGE],
-        },
-    });
+        // --- STEP 2: Generate the new image by filling in the blank areas (outpainting) ---
+        const imageGenInstruction = `Твоя задача — дорисовать (outpainting) это изображение. Заполни черные поля, творчески расширяя сцену. Новые области должны бесшовно продолжать оригинальное изображение, полностью совпадая по стилю, освещению и содержанию. Результат должен быть единым цельным изображением без черных полей.`;
+        
+        const imageGenResponse = await ai.models.generateContent({
+            model: 'gemini-2.5-flash-image',
+            contents: { parts: [imagePart, { text: imageGenInstruction }] },
+            config: {
+                responseModalities: [Modality.IMAGE],
+            },
+        });
 
-    let newImageUrl: string | null = null;
-    let newImagePartForPromptGen: any = null;
-    if (imageGenResponse.candidates?.[0]?.content?.parts) {
-        for (const part of imageGenResponse.candidates[0].content.parts) {
-            if (part.inlineData) {
-                newImageUrl = `data:${part.inlineData.mimeType};base64,${part.inlineData.data}`;
-                newImagePartForPromptGen = { inlineData: { mimeType: part.inlineData.mimeType, data: part.inlineData.data } };
-                break;
+        let newImageUrl: string | null = null;
+        let newImagePartForPromptGen: any = null;
+        if (imageGenResponse.candidates?.[0]?.content?.parts) {
+            for (const part of imageGenResponse.candidates[0].content.parts) {
+                if (part.inlineData) {
+                    newImageUrl = `data:${part.inlineData.mimeType};base64,${part.inlineData.data}`;
+                    newImagePartForPromptGen = { inlineData: { mimeType: part.inlineData.mimeType, data: part.inlineData.data } };
+                    break;
+                }
             }
         }
-    }
-    if (!newImageUrl || !newImagePartForPromptGen) {
-        throw new Error("AI failed to generate an outpainted image.");
-    }
-    
-    // --- STEP 3: Generate a new prompt for the adapted image ---
-    const promptGenInstruction = `Опиши это новое, расширенное изображение. Оригинальный промт был: "${frame.prompt}". Сцена была расширена до нового формата. Создай новый, точный промт на русском языке, который описывает всю сцену целиком. Выведи только сам текст промта.`;
+        if (!newImageUrl || !newImagePartForPromptGen) {
+            throw new Error("AI failed to generate an outpainted image.");
+        }
+        
+        // --- STEP 3: Generate a new prompt for the adapted image ---
+        const promptGenInstruction = `Опиши это новое, расширенное изображение. Оригинальный промт был: "${frame.prompt}". Сцена была расширена до нового формата. Создай новый, точный промт на русском языке, который описывает всю сцену целиком. Выведи только сам текст промта.`;
 
-    const promptGenResponse = await ai.models.generateContent({
-        model: 'gemini-2.5-flash',
-        contents: { parts: [{ text: promptGenInstruction }, newImagePartForPromptGen] },
-    });
-    
-    const newPrompt = promptGenResponse.text.trim();
-    if (!newPrompt) {
-        console.warn("AI failed to generate a new prompt. Using original.");
-        return { imageUrl: newImageUrl, prompt: frame.prompt };
-    }
+        const promptGenResponse = await ai.models.generateContent({
+            model: 'gemini-2.5-flash',
+            contents: { parts: [{ text: promptGenInstruction }, newImagePartForPromptGen] },
+        });
+        
+        const newPrompt = promptGenResponse.text.trim();
+        if (!newPrompt) {
+            console.warn("AI failed to generate a new prompt. Using original.");
+            return { imageUrl: newImageUrl, prompt: frame.prompt };
+        }
 
-    return { imageUrl: newImageUrl, prompt: newPrompt };
+        return { imageUrl: newImageUrl, prompt: newPrompt };
+    } catch (error) {
+        handleApiError(error);
+        throw error;
+    }
 }
 
 export async function generateAdaptationSuggestions(
@@ -736,66 +808,71 @@ export async function generateAdaptationSuggestions(
     leftFrame: Frame | null,
     rightFrame: Frame | null
 ): Promise<string[]> {
-    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-    const parts: any[] = [];
-
-    let promptText = `Ты — креативный AI-ассистент для видео-раскадровки. Твоя задача — предложить 4 идеи для ручной адаптации кадра пользователя, чтобы он лучше вписался в существующий сюжет. Идеи должны быть краткими, действенными промтами на русском языке, подходящими для AI-редактора изображений.
-
-Анализируй основной кадр пользователя и его окружение. Предлагай как стилистические, так и повествовательные изменения.
-
-Контекст:`;
-
-    const { mimeType, data } = await urlOrFileToBase64(frameToAdapt);
-    parts.push({text: 'ОСНОВНОЙ КАДР (для адаптации):'});
-    parts.push({ inlineData: { mimeType, data } });
-
-    if (leftFrame) {
-        const { mimeType: leftMime, data: leftData } = await urlOrFileToBase64(leftFrame);
-        parts.push({text: 'ПРЕДЫДУЩИЙ КАДР (стиль-референс):'});
-        parts.push({ inlineData: { mimeType: leftMime, data: leftData } });
-        promptText += `\n- ПРЕДЫДУЩИЙ кадр предоставлен. Его промт: "${leftFrame.prompt || 'N/A'}"`;
-    } else {
-        promptText += `\n- Предыдущего кадра нет. Это начало.`;
-    }
-
-    if (rightFrame) {
-        const { mimeType: rightMime, data: rightData } = await urlOrFileToBase64(rightFrame);
-        parts.push({text: 'СЛЕДУЮЩИЙ КАДР (стиль-референс):'});
-        parts.push({ inlineData: { mimeType: rightMime, data: rightData } });
-        promptText += `\n- СЛЕДУЮЩИЙ кадр предоставлен. Его промт: "${rightFrame.prompt || 'N/A'}"`;
-    } else {
-        promptText += `\n- Следующего кадра нет. Это конец.`;
-    }
-
-     promptText += `
-
-Примеры идей: "Сделать освещение более драматичным, как в сцене слева", "Добавить персонажу обеспокоенное выражение лица, как реакцию на предыдущий кадр", "Изменить цветовую палитру на более холодную, чтобы подготовить к следующей сцене", "Слегка изменить ракурс, чтобы он соответствовал кинематографическому стилю".
-
-Верни ТОЛЬКО валидный JSON-массив из 4 строк. Не включай markdown, объяснения или любой другой текст.`;
-    
-    parts.unshift({ text: promptText });
-    
-    const response = await ai.models.generateContent({
-        model: 'gemini-2.5-pro',
-        contents: { parts },
-        config: {
-            responseMimeType: "application/json",
-            responseSchema: {
-                type: Type.ARRAY,
-                items: { type: Type.STRING },
-            },
-        },
-    });
-
     try {
-        const suggestions = JSON.parse(response.text.trim());
-        if (Array.isArray(suggestions) && suggestions.every(s => typeof s === 'string') && suggestions.length > 0) {
-            return suggestions;
+        const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+        const parts: any[] = [];
+
+        let promptText = `Ты — креативный AI-ассистент для видео-раскадровки. Твоя задача — предложить 4 идеи для ручной адаптации кадра пользователя, чтобы он лучше вписался в существующий сюжет. Идеи должны быть краткими, действенными промтами на русском языке, подходящими для AI-редактора изображений.
+
+    Анализируй основной кадр пользователя и его окружение. Предлагай как стилистические, так и повествовательные изменения.
+
+    Контекст:`;
+
+        const { mimeType, data } = await urlOrFileToBase64(frameToAdapt);
+        parts.push({text: 'ОСНОВНОЙ КАДР (для адаптации):'});
+        parts.push({ inlineData: { mimeType, data } });
+
+        if (leftFrame) {
+            const { mimeType: leftMime, data: leftData } = await urlOrFileToBase64(leftFrame);
+            parts.push({text: 'ПРЕДЫДУЩИЙ КАДР (стиль-референс):'});
+            parts.push({ inlineData: { mimeType: leftMime, data: leftData } });
+            promptText += `\n- ПРЕДЫДУЩИЙ кадр предоставлен. Его промт: "${leftFrame.prompt || 'N/A'}"`;
+        } else {
+            promptText += `\n- Предыдущего кадра нет. Это начало.`;
         }
-        throw new Error("AI response is not a valid JSON array of strings.");
-    } catch (e) {
-        console.error("Failed to parse suggestions from AI:", response.text);
-        throw new Error("Could not parse suggestions from the AI.");
+
+        if (rightFrame) {
+            const { mimeType: rightMime, data: rightData } = await urlOrFileToBase64(rightFrame);
+            parts.push({text: 'СЛЕДУЮЩИЙ КАДР (стиль-референс):'});
+            parts.push({ inlineData: { mimeType: rightMime, data: rightData } });
+            promptText += `\n- СЛЕДУЮЩИЙ кадр предоставлен. Его промт: "${rightFrame.prompt || 'N/A'}"`;
+        } else {
+            promptText += `\n- Следующего кадра нет. Это конец.`;
+        }
+
+         promptText += `
+
+    Примеры идей: "Сделать освещение более драматичным, как в сцене слева", "Добавить персонажу обеспокоенное выражение лица, как реакцию на предыдущий кадр", "Изменить цветовую палитру на более холодную, чтобы подготовить к следующей сцене", "Слегка изменить ракурс, чтобы он соответствовал кинематографическому стилю".
+
+    Верни ТОЛЬКО валидный JSON-массив из 4 строк. Не включай markdown, объяснения или любой другой текст.`;
+        
+        parts.unshift({ text: promptText });
+        
+        const response = await ai.models.generateContent({
+            model: 'gemini-2.5-pro',
+            contents: { parts },
+            config: {
+                responseMimeType: "application/json",
+                responseSchema: {
+                    type: Type.ARRAY,
+                    items: { type: Type.STRING },
+                },
+            },
+        });
+
+        try {
+            const suggestions = JSON.parse(response.text.trim());
+            if (Array.isArray(suggestions) && suggestions.every(s => typeof s === 'string') && suggestions.length > 0) {
+                return suggestions;
+            }
+            throw new Error("AI response is not a valid JSON array of strings.");
+        } catch (e) {
+            console.error("Failed to parse suggestions from AI:", response.text);
+            throw new Error("Could not parse suggestions from the AI.");
+        }
+    } catch (error) {
+        handleApiError(error);
+        return [];
     }
 }
 
@@ -804,73 +881,78 @@ export async function generateEditSuggestions(
     leftFrame: Frame | null,
     rightFrame: Frame | null
 ): Promise<string[]> {
-    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-
-    const parts: any[] = [];
-    
-    let promptText = `Проанализируй предоставленное основное изображение для видео-раскадровки. Твоя цель — предложить 4 креативных и интуитивно понятных способа его отредактировать. Предложения должны быть короткими, действенными промтами, подходящими для AI-редактора изображений.
-
-Учитывай контекст из соседних кадров, если они предоставлены.
-
-Анализ основного изображения:
-- Что является объектом? Что он делает?
-- Какой ракурс камеры и тип плана (например, общий план, крупный план)?
-- Какое общее настроение и художественный стиль?
-
-Контекст:`;
-
-    const { mimeType, data } = await urlOrFileToBase64(frameToEdit);
-    parts.push({text: 'ОСНОВНОЕ ИЗОБРАЖЕНИЕ:'});
-    parts.push({ inlineData: { mimeType, data } });
-
-    if (leftFrame) {
-        const { mimeType, data } = await urlOrFileToBase64(leftFrame);
-        parts.push({text: 'ПРЕДЫДУЩИЙ КАДР:'});
-        parts.push({ inlineData: { mimeType, data } });
-        promptText += `\n- ПРЕДЫДУЩИЙ кадр предоставлен. Его видео-промт был: "${leftFrame.prompt || 'N/A'}"`;
-    } else {
-        promptText += `\n- Предыдущего кадра нет. Это начало последовательности.`;
-    }
-
-    if (rightFrame) {
-        const { mimeType, data } = await urlOrFileToBase64(rightFrame);
-        parts.push({text: 'СЛЕДУЮЩИЙ КАДР:'});
-        parts.push({ inlineData: { mimeType, data } });
-        promptText += `\n- СЛЕДУЮЩИЙ кадр предоставлен. Его видео-промт был: "${rightFrame.prompt || 'N/A'}"`;
-    } else {
-        promptText += `\n- Следующего кадра нет. Это конец последовательности.`;
-    }
-
-    promptText += `
-
-Основываясь на полном анализе, предоставь 4 различных предложения. Они должны быть креативными и полезными.
-Примеры: "Изменить на драматичный ракурс с низкой точки", "Добавить кинематографический блик", "Сделать стиль более похожим на акварельную живопись", "Приблизить камеру к реакции персонажа", "Изменить время суток на закат".
-
-Верни ТОЛЬКО валидный JSON-массив из 4 строк на русском языке. Не включай markdown, объяснения или любой другой текст.`;
-    
-    parts.unshift({ text: promptText });
-
-    const response = await ai.models.generateContent({
-        model: 'gemini-2.5-pro',
-        contents: { parts },
-        config: {
-            responseMimeType: "application/json",
-            responseSchema: {
-                type: Type.ARRAY,
-                items: { type: Type.STRING },
-            },
-        },
-    });
-
     try {
-        const suggestions = JSON.parse(response.text.trim());
-        if (Array.isArray(suggestions) && suggestions.every(s => typeof s === 'string') && suggestions.length > 0) {
-            return suggestions;
+        const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+
+        const parts: any[] = [];
+        
+        let promptText = `Проанализируй предоставленное основное изображение для видео-раскадровки. Твоя цель — предложить 4 креативных и интуитивно понятных способа его отредактировать. Предложения должны быть короткими, действенными промтами, подходящими для AI-редактора изображений.
+
+    Учитывай контекст из соседних кадров, если они предоставлены.
+
+    Анализ основного изображения:
+    - Что является объектом? Что он делает?
+    - Какой ракурс камеры и тип плана (например, общий план, крупный план)?
+    - Какое общее настроение и художественный стиль?
+
+    Контекст:`;
+
+        const { mimeType, data } = await urlOrFileToBase64(frameToEdit);
+        parts.push({text: 'ОСНОВНОЕ ИЗОБРАЖЕНИЕ:'});
+        parts.push({ inlineData: { mimeType, data } });
+
+        if (leftFrame) {
+            const { mimeType, data } = await urlOrFileToBase64(leftFrame);
+            parts.push({text: 'ПРЕДЫДУЩИЙ КАДР:'});
+            parts.push({ inlineData: { mimeType, data } });
+            promptText += `\n- ПРЕДЫДУЩИЙ кадр предоставлен. Его видео-промт был: "${leftFrame.prompt || 'N/A'}"`;
+        } else {
+            promptText += `\n- Предыдущего кадра нет. Это начало последовательности.`;
         }
-        throw new Error("AI response is not a valid JSON array of strings.");
-    } catch (e) {
-        console.error("Failed to parse suggestions from AI:", response.text);
-        throw new Error("Could not parse suggestions from the AI.");
+
+        if (rightFrame) {
+            const { mimeType, data } = await urlOrFileToBase64(rightFrame);
+            parts.push({text: 'СЛЕДУЮЩИЙ КАДР:'});
+            parts.push({ inlineData: { mimeType, data } });
+            promptText += `\n- СЛЕДУЮЩИЙ кадр предоставлен. Его видео-промт был: "${rightFrame.prompt || 'N/A'}"`;
+        } else {
+            promptText += `\n- Следующего кадра нет. Это конец последовательности.`;
+        }
+
+        promptText += `
+
+    Основываясь на полном анализе, предоставь 4 различных предложения. Они должны быть креативными и полезными.
+    Примеры: "Изменить на драматичный ракурс с низкой точки", "Добавить кинематографический блик", "Сделать стиль более похожим на акварельную живопись", "Приблизить камеру к реакции персонажа", "Изменить время суток на закат".
+
+    Верни ТОЛЬКО валидный JSON-массив из 4 строк на русском языке. Не включай markdown, объяснения или любой другой текст.`;
+        
+        parts.unshift({ text: promptText });
+
+        const response = await ai.models.generateContent({
+            model: 'gemini-2.5-pro',
+            contents: { parts },
+            config: {
+                responseMimeType: "application/json",
+                responseSchema: {
+                    type: Type.ARRAY,
+                    items: { type: Type.STRING },
+                },
+            },
+        });
+
+        try {
+            const suggestions = JSON.parse(response.text.trim());
+            if (Array.isArray(suggestions) && suggestions.every(s => typeof s === 'string') && suggestions.length > 0) {
+                return suggestions;
+            }
+            throw new Error("AI response is not a valid JSON array of strings.");
+        } catch (e) {
+            console.error("Failed to parse suggestions from AI:", response.text);
+            throw new Error("Could not parse suggestions from the AI.");
+        }
+    } catch (error) {
+        handleApiError(error);
+        return [];
     }
 }
 
@@ -878,62 +960,67 @@ export async function generatePromptSuggestions(
     leftFrame: Frame | null,
     rightFrame: Frame | null
 ): Promise<string[]> {
-    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-    const parts: any[] = [];
-    
-    let promptText = `Ты — AI-ассистент для создания раскадровок. Твоя задача — предложить 4 креативных идеи для нового кадра, который должен логично и стилистически вписаться между двумя существующими кадрами.
-    
-Контекст:`;
-
-    if (leftFrame) {
-        const { mimeType, data } = await urlOrFileToBase64(leftFrame);
-        parts.push({text: 'ПРЕДЫДУЩИЙ КАДР (СЛЕВА):'});
-        parts.push({ inlineData: { mimeType, data } });
-        promptText += `\n- Кадр СЛЕВА предоставлен. Его промт: "${leftFrame.prompt || 'N/A'}"`;
-    } else {
-        promptText += `\n- Предыдущего кадра нет. Это начало истории.`;
-    }
-
-    if (rightFrame) {
-        const { mimeType, data } = await urlOrFileToBase64(rightFrame);
-        parts.push({text: 'СЛЕДУЮЩИЙ КАДР (СПРАВА):'});
-        parts.push({ inlineData: { mimeType, data } });
-        promptText += `\n- Кадр СПРАВА предоставлен. Его промт: "${rightFrame.prompt || 'N/A'}"`;
-    } else {
-        promptText += `\n- Следующего кадра нет. Это конец истории.`;
-    }
-
-    promptText += `
-
-Проанализируй предоставленные кадры (стиль, содержание, сюжет). Придумай 4 различных промта для генерации изображения нового, промежуточного кадра. Идеи должны быть краткими, действенными и на русском языке.
-
-Примеры идей: "Крупный план: рука персонажа тянется к загадочному артефакту", "Камера отъезжает, показывая, что за героями наблюдают", "Быстрая смена плана на реакцию второго персонажа", "Драматический взгляд на город с высоты птичьего полета".
-
-Верни ТОЛЬКО валидный JSON-массив из 4 строк. Не включай markdown, объяснения или любой другой текст.`;
-    
-    parts.unshift({ text: promptText });
-
-    const response = await ai.models.generateContent({
-        model: 'gemini-2.5-pro',
-        contents: { parts },
-        config: {
-            responseMimeType: "application/json",
-            responseSchema: {
-                type: Type.ARRAY,
-                items: { type: Type.STRING },
-            },
-        },
-    });
-
     try {
-        const suggestions = JSON.parse(response.text.trim());
-        if (Array.isArray(suggestions) && suggestions.every(s => typeof s === 'string') && suggestions.length > 0) {
-            return suggestions;
+        const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+        const parts: any[] = [];
+        
+        let promptText = `Ты — AI-ассистент для создания раскадровок. Твоя задача — предложить 4 креативных идеи для нового кадра, который должен логично и стилистически вписаться между двумя существующими кадрами.
+        
+    Контекст:`;
+
+        if (leftFrame) {
+            const { mimeType, data } = await urlOrFileToBase64(leftFrame);
+            parts.push({text: 'ПРЕДЫДУЩИЙ КАДР (СЛЕВА):'});
+            parts.push({ inlineData: { mimeType, data } });
+            promptText += `\n- Кадр СЛЕВА предоставлен. Его промт: "${leftFrame.prompt || 'N/A'}"`;
+        } else {
+            promptText += `\n- Предыдущего кадра нет. Это начало истории.`;
         }
-        throw new Error("AI response is not a valid JSON array of strings.");
-    } catch (e) {
-        console.error("Failed to parse prompt suggestions from AI:", response.text);
-        throw new Error("Could not parse prompt suggestions from the AI.");
+
+        if (rightFrame) {
+            const { mimeType, data } = await urlOrFileToBase64(rightFrame);
+            parts.push({text: 'СЛЕДУЮЩИЙ КАДР (СПРАВА):'});
+            parts.push({ inlineData: { mimeType, data } });
+            promptText += `\n- Кадр СПРАВА предоставлен. Его промт: "${rightFrame.prompt || 'N/A'}"`;
+        } else {
+            promptText += `\n- Следующего кадра нет. Это конец истории.`;
+        }
+
+        promptText += `
+
+    Проанализируй предоставленные кадры (стиль, содержание, сюжет). Придумай 4 различных промта для генерации изображения нового, промежуточного кадра. Идеи должны быть краткими, действенными и на русском языке.
+
+    Примеры идей: "Крупный план: рука персонажа тянется к загадочному артефакту", "Камера отъезжает, показывая, что за героями наблюдают", "Быстрая смена плана на реакцию второго персонажа", "Драматический взгляд на город с высоты птичьего полета".
+
+    Верни ТОЛЬКО валидный JSON-массив из 4 строк. Не включай markdown, объяснения или любой другой текст.`;
+        
+        parts.unshift({ text: promptText });
+
+        const response = await ai.models.generateContent({
+            model: 'gemini-2.5-pro',
+            contents: { parts },
+            config: {
+                responseMimeType: "application/json",
+                responseSchema: {
+                    type: Type.ARRAY,
+                    items: { type: Type.STRING },
+                },
+            },
+        });
+
+        try {
+            const suggestions = JSON.parse(response.text.trim());
+            if (Array.isArray(suggestions) && suggestions.every(s => typeof s === 'string') && suggestions.length > 0) {
+                return suggestions;
+            }
+            throw new Error("AI response is not a valid JSON array of strings.");
+        } catch (e) {
+            console.error("Failed to parse prompt suggestions from AI:", response.text);
+            throw new Error("Could not parse prompt suggestions from the AI.");
+        }
+    } catch (error) {
+        handleApiError(error);
+        return [];
     }
 }
 
@@ -942,61 +1029,66 @@ export async function generateStoryIdeasFromAssets(
     assets: Asset[],
     settings: StorySettings
 ): Promise<{ title: string; synopsis: string }[]> {
-    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-    if (assets.length === 0) {
-        throw new Error("Cannot generate ideas without assets.");
-    }
+    try {
+        const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+        if (assets.length === 0) {
+            throw new Error("Cannot generate ideas without assets.");
+        }
 
-    const assetImageParts = await Promise.all(
-        assets.map(async (asset) => {
-            const { mimeType, data } = await urlOrFileToBase64(asset);
-            return { inlineData: { mimeType, data } };
-        })
-    );
-    
-    const assetNames = assets.map(a => a.name).join(', ');
-    let prompt = `Ты — AI-сценарист и режиссер-постановщик. Проанализируй предоставленные изображения-ассеты (представляющие персонажей, предметы или локации с именами: ${assetNames}).
-Твоя задача — придумать 4 захватывающие концепции для короткой истории, используя эти ассеты. Для каждой концепции предоставь 'title' (это может быть жанр или броское название) и краткий 'synopsis' (1-2 предложения).
-`;
+        const assetImageParts = await Promise.all(
+            assets.map(async (asset) => {
+                const { mimeType, data } = await urlOrFileToBase64(asset);
+                return { inlineData: { mimeType, data } };
+            })
+        );
+        
+        const assetNames = assets.map(a => a.name).join(', ');
+        let prompt = `Ты — AI-сценарист и режиссер-постановщик. Проанализируй предоставленные изображения-ассеты (представляющие персонажей, предметы или локации с именами: ${assetNames}).
+    Твоя задача — придумать 4 захватывающие концепции для короткой истории, используя эти ассеты. Для каждой концепции предоставь 'title' (это может быть жанр или броское название) и краткий 'synopsis' (1-2 предложения).
+    `;
 
-    const hasConstraints = settings.genre || settings.ending;
-    if (hasConstraints) {
-        prompt += "\nВАЖНО: Пользователь предоставил следующие ограничения для сюжета. Все твои идеи должны им соответствовать:\n";
-        if (settings.genre) prompt += `- Жанр/Тональность: "${settings.genre}"\n`;
-        if (settings.ending) prompt += `- Тип концовки: "${settings.ending}"\n`;
-    } else {
-        prompt += "\nПользователь не задал ограничений, поэтому прояви креативность: предложи идеи в РАЗНЫХ жанрах и с РАЗНЫМИ типами концовок (счастливая, трагическая, открытая и т.д.).\n";
-    }
+        const hasConstraints = settings.genre || settings.ending;
+        if (hasConstraints) {
+            prompt += "\nВАЖНО: Пользователь предоставил следующие ограничения для сюжета. Все твои идеи должны им соответствовать:\n";
+            if (settings.genre) prompt += `- Жанр/Тональность: "${settings.genre}"\n`;
+            if (settings.ending) prompt += `- Тип концовки: "${settings.ending}"\n`;
+        } else {
+            prompt += "\nПользователь не задал ограничений, поэтому прояви креативность: предложи идеи в РАЗНЫХ жанрах и с РАЗНЫМИ типами концовок (счастливая, трагическая, открытая и т.д.).\n";
+        }
 
-    prompt += "\nВерни свой ответ ТОЛЬКО в виде валидного JSON-массива объектов. Каждый объект должен иметь ключи 'title' и 'synopsis'. Массив должен содержать ровно 4 элемента. Не добавляй никаких объяснений или markdown.";
+        prompt += "\nВерни свой ответ ТОЛЬКО в виде валидного JSON-массива объектов. Каждый объект должен иметь ключи 'title' и 'synopsis'. Массив должен содержать ровно 4 элемента. Не добавляй никаких объяснений или markdown.";
 
-    const response = await ai.models.generateContent({
-        model: 'gemini-2.5-pro',
-        contents: { parts: [{ text: prompt }, ...assetImageParts] },
-        config: {
-            responseMimeType: "application/json",
-            responseSchema: {
-                type: Type.ARRAY,
-                items: {
-                    type: Type.OBJECT,
-                    properties: {
-                        title: { type: Type.STRING },
-                        synopsis: { type: Type.STRING },
+        const response = await ai.models.generateContent({
+            model: 'gemini-2.5-pro',
+            contents: { parts: [{ text: prompt }, ...assetImageParts] },
+            config: {
+                responseMimeType: "application/json",
+                responseSchema: {
+                    type: Type.ARRAY,
+                    items: {
+                        type: Type.OBJECT,
+                        properties: {
+                            title: { type: Type.STRING },
+                            synopsis: { type: Type.STRING },
+                        },
+                        required: ["title", "synopsis"],
                     },
-                    required: ["title", "synopsis"],
                 },
             },
-        },
-    });
+        });
 
-    try {
-        const ideas = JSON.parse(response.text.trim());
-        if (Array.isArray(ideas) && ideas.length > 0) {
-            return ideas;
+        try {
+            const ideas = JSON.parse(response.text.trim());
+            if (Array.isArray(ideas) && ideas.length > 0) {
+                return ideas;
+            }
+            throw new Error("AI response is not a valid array of story ideas.");
+        } catch (e) {
+            console.error("Failed to parse story ideas from AI:", response.text);
+            throw new Error("Could not parse story ideas from the AI.");
         }
-        throw new Error("AI response is not a valid array of story ideas.");
-    } catch (e) {
-        console.error("Failed to parse story ideas from AI:", response.text);
-        throw new Error("Could not parse story ideas from the AI.");
+    } catch (error) {
+        handleApiError(error);
+        return [];
     }
 }

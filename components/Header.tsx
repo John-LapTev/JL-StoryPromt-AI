@@ -1,4 +1,3 @@
-
 import React, { useState, useRef, useEffect } from 'react';
 import { LogoIcon } from './icons';
 
@@ -9,16 +8,22 @@ interface HeaderProps {
     onSaveProject: () => void;
     onSaveAsProject: () => void;
     onLoadProject: () => void;
+    onManageApiKey: () => void;
 }
 
-export const Header: React.FC<HeaderProps> = ({ projectName, hasUnsavedChanges, onNewProject, onSaveProject, onSaveAsProject, onLoadProject }) => {
-    const [isMenuOpen, setIsMenuOpen] = useState(false);
-    const menuRef = useRef<HTMLDivElement>(null);
+export const Header: React.FC<HeaderProps> = ({ projectName, hasUnsavedChanges, onNewProject, onSaveProject, onSaveAsProject, onLoadProject, onManageApiKey }) => {
+    const [isProjectMenuOpen, setIsProjectMenuOpen] = useState(false);
+    const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
+    const projectMenuRef = useRef<HTMLDivElement>(null);
+    const userMenuRef = useRef<HTMLDivElement>(null);
 
     useEffect(() => {
         const handleClickOutside = (event: MouseEvent) => {
-            if (menuRef.current && !menuRef.current.contains(event.target as Node)) {
-                setIsMenuOpen(false);
+            if (projectMenuRef.current && !projectMenuRef.current.contains(event.target as Node)) {
+                setIsProjectMenuOpen(false);
+            }
+            if (userMenuRef.current && !userMenuRef.current.contains(event.target as Node)) {
+                setIsUserMenuOpen(false);
             }
         };
         document.addEventListener('mousedown', handleClickOutside);
@@ -36,24 +41,24 @@ export const Header: React.FC<HeaderProps> = ({ projectName, hasUnsavedChanges, 
                     <p className="text-xs text-white/60 leading-tight">Создание промтов для генерации видео</p>
                 </div>
                 <div className="h-6 w-px bg-white/10 mx-2"></div>
-                <div className="relative" ref={menuRef}>
-                    <button onClick={() => setIsMenuOpen(prev => !prev)} className="flex items-center gap-2 text-white/80 hover:text-white">
+                <div className="relative" ref={projectMenuRef}>
+                    <button onClick={() => setIsProjectMenuOpen(prev => !prev)} className="flex items-center gap-2 text-white/80 hover:text-white">
                         <span className="font-medium">{projectName}{hasUnsavedChanges ? '*' : ''}</span>
-                        <span className="material-symbols-outlined text-xl transition-transform" style={{ transform: isMenuOpen ? 'rotate(180deg)' : 'none' }}>expand_more</span>
+                        <span className="material-symbols-outlined text-xl transition-transform" style={{ transform: isProjectMenuOpen ? 'rotate(180deg)' : 'none' }}>expand_more</span>
                     </button>
-                    {isMenuOpen && (
+                    {isProjectMenuOpen && (
                         <div className="absolute top-full left-0 mt-2 w-48 bg-[#191C2D] border border-white/10 rounded-lg shadow-lg z-50 p-1">
-                            <button onClick={() => { onNewProject(); setIsMenuOpen(false); }} className="w-full text-left px-3 py-1.5 text-sm rounded-md hover:bg-white/10 flex items-center gap-2">
+                            <button onClick={() => { onNewProject(); setIsProjectMenuOpen(false); }} className="w-full text-left px-3 py-1.5 text-sm rounded-md hover:bg-white/10 flex items-center gap-2">
                                 <span className="material-symbols-outlined text-base">add</span> Новый проект
                             </button>
-                             <button onClick={() => { onLoadProject(); setIsMenuOpen(false); }} className="w-full text-left px-3 py-1.5 text-sm rounded-md hover:bg-white/10 flex items-center gap-2">
+                             <button onClick={() => { onLoadProject(); setIsProjectMenuOpen(false); }} className="w-full text-left px-3 py-1.5 text-sm rounded-md hover:bg-white/10 flex items-center gap-2">
                                 <span className="material-symbols-outlined text-base">folder_open</span> Загрузить...
                             </button>
                             <div className="h-px bg-white/10 my-1"></div>
-                            <button onClick={() => { onSaveProject(); setIsMenuOpen(false); }} className="w-full text-left px-3 py-1.5 text-sm rounded-md hover:bg-white/10 flex items-center gap-2">
+                            <button onClick={() => { onSaveProject(); setIsProjectMenuOpen(false); }} className="w-full text-left px-3 py-1.5 text-sm rounded-md hover:bg-white/10 flex items-center gap-2">
                                 <span className="material-symbols-outlined text-base">save</span> Сохранить
                             </button>
-                            <button onClick={() => { onSaveAsProject(); setIsMenuOpen(false); }} className="w-full text-left px-3 py-1.5 text-sm rounded-md hover:bg-white/10 flex items-center gap-2">
+                            <button onClick={() => { onSaveAsProject(); setIsProjectMenuOpen(false); }} className="w-full text-left px-3 py-1.5 text-sm rounded-md hover:bg-white/10 flex items-center gap-2">
                                 <span className="material-symbols-outlined text-base">save_as</span> Сохранить как...
                             </button>
                         </div>
@@ -61,7 +66,22 @@ export const Header: React.FC<HeaderProps> = ({ projectName, hasUnsavedChanges, 
                 </div>
             </div>
             <div className="flex items-center gap-4">
-                <div className="bg-center bg-no-repeat aspect-square bg-cover rounded-full size-10" style={{ backgroundImage: `url("https://picsum.photos/40/40")` }}></div>
+                <div className="relative" ref={userMenuRef}>
+                    <button 
+                        onClick={() => setIsUserMenuOpen(prev => !prev)} 
+                        className="flex items-center justify-center size-10 rounded-full bg-white/10 text-white/80 hover:bg-white/20 hover:text-white transition-colors"
+                        aria-label="Меню пользователя"
+                    >
+                        <span className="material-symbols-outlined text-2xl">person</span>
+                    </button>
+                     {isUserMenuOpen && (
+                        <div className="absolute top-full right-0 mt-2 w-56 bg-[#191C2D] border border-white/10 rounded-lg shadow-lg z-50 p-1">
+                            <button onClick={() => { onManageApiKey(); setIsUserMenuOpen(false); }} className="w-full text-left px-3 py-1.5 text-sm rounded-md hover:bg-white/10 flex items-center gap-2">
+                                <span className="material-symbols-outlined text-base">key</span> Управление API ключом
+                            </button>
+                        </div>
+                    )}
+                </div>
             </div>
         </header>
     );
