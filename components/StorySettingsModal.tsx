@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect } from 'react';
 import type { StorySettings } from '../types';
 
@@ -92,8 +91,8 @@ export const StorySettingsModal: React.FC<StorySettingsModalProps> = ({ isOpen, 
                                     value={localSettings.genre}
                                     onChange={(e) => handleFieldChange('genre', e.target.value)}
                                 >
-                                    <option value="">Не выбрано</option>
-                                    {genres.map(g => <option key={g} value={g}>{g}</option>)}
+                                    <option value="" className="bg-[#191C2D] text-white/70">Не выбрано</option>
+                                    {genres.map(g => <option key={g} value={g} className="bg-[#191C2D] text-white">{g}</option>)}
                                 </StyledSelect>
                             </div>
                             <div>
@@ -103,8 +102,8 @@ export const StorySettingsModal: React.FC<StorySettingsModalProps> = ({ isOpen, 
                                     value={localSettings.ending}
                                     onChange={(e) => handleFieldChange('ending', e.target.value)}
                                 >
-                                    <option value="">Не выбрано</option>
-                                    {endings.map(e => <option key={e} value={e}>{e}</option>)}
+                                    <option value="" className="bg-[#191C2D] text-white/70">Не выбрано</option>
+                                    {endings.map(e => <option key={e} value={e} className="bg-[#191C2D] text-white">{e}</option>)}
                                 </StyledSelect>
                             </div>
                         </div>
