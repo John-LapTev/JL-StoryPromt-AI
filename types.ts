@@ -1,4 +1,3 @@
-
 export interface Frame {
   id: string;
   imageUrls: string[]; // Can be a URL or a base64 string
@@ -8,6 +7,7 @@ export interface Frame {
   file?: File; // Store the original file if uploaded, for mimeType etc. This won't be saved.
   isTransition?: boolean;
   isGenerating?: boolean;
+  generatingMessage?: string;
 }
 
 export interface Asset {

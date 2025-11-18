@@ -55,7 +55,7 @@ export const FrameCard: React.FC<FrameCardProps> = ({
                     </div>
                 </div>
                 <div className="flex items-center justify-center gap-2 w-48 h-[76px] bg-white/5 p-2 rounded-lg text-xs text-center text-white/60 overflow-hidden">
-                    <p className="leading-snug">{frame.prompt}</p>
+                    <p className="leading-snug">{frame.generatingMessage || frame.prompt}</p>
                 </div>
             </div>
         );
@@ -169,7 +169,7 @@ export const FrameCard: React.FC<FrameCardProps> = ({
                         <button 
                             onClick={(e) => { e.stopPropagation(); onVersionChange(frame.id, 'next'); }}
                             disabled={frame.activeVersionIndex === frame.imageUrls.length - 1}
-                            className="size-8 rounded-full bg-black/50 backdrop-blur-sm text-white flex items-center justify-center hover:bg-black/80 disabled:opacity-30 disabled:cursor-not-allowed pointer-events-auto"
+                            className="absolute size-8 rounded-full bg-black/50 backdrop-blur-sm text-white flex items-center justify-center hover:bg-black/80 disabled:opacity-30 disabled:cursor-not-allowed pointer-events-auto"
                              aria-label="Next version"
                         >
                             <span className="material-symbols-outlined">chevron_right</span>

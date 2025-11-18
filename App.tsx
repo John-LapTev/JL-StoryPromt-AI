@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import type { Frame, Project, Asset, StorySettings } from './types';
 import { initialFrames, initialAssets } from './constants';
@@ -16,7 +15,8 @@ import { ProjectLoadModal } from './components/ProjectLoadModal';
 import { AssetLibraryPanel } from './components/AssetLibraryPanel';
 import { ContextMenu } from './components/ContextMenu';
 import { StorySettingsModal } from './components/StorySettingsModal';
-import { analyzeStory, generateSinglePrompt, generateIntermediateFrame, generateTransitionPrompt, generateImageFromPrompt, editImage, generateVideoFromFrame, generateImageInContext, createStoryFromAssets } from './services/geminiService';
+import { Toast } from './components/Toast';
+import { analyzeStory, generateSinglePrompt, generateIntermediateFrame, generateTransitionPrompt, generateImageFromPrompt, editImage, generateVideoFromFrame, generateImageInContext, createStoryFromAssets, adaptImageToStory } from './services/geminiService';
 import { fileToBase64, dataUrlToFile, fetchCorsImage } from './utils/fileUtils';
 
 declare global {
@@ -84,6 +84,7 @@ export default function App() {
     const [transform, setTransform] = useState({ scale: 1, x: 0, y: 0 });
     const [isAssetLibraryOpen, setIsAssetLibraryOpen] = useState(false);
     const [contextMenu, setContextMenu] = useState<{ x: number, y: number, frame: Frame } | null>(null);
+    const [styleAdaptToast, setStyleAdaptToast] = useState<{ frameId: string } | null>(null);
     
     // Non-blocking loading states
     const [generatingStory, setGeneratingStory] = useState(false);
@@ -257,7 +258,7 @@ export default function App() {
             return;
         }
 
-        const framesToSave = localFrames.map(({ file, ...rest }) => ({ ...rest, isGenerating: undefined }));
+        const framesToSave = localFrames.map(({ file, ...rest }) => ({ ...rest, isGenerating: undefined, generatingMessage: undefined }));
         const assetsToSave = localAssets.map(({ file, ...rest }) => rest);
         const updatedProject = { ...currentProject, frames: framesToSave, assets: assetsToSave, lastModified: Date.now() };
         const updatedProjects = projects.map(p => p.id === currentProject.id ? updatedProject : p);
@@ -275,7 +276,7 @@ export default function App() {
             ...currentProject,
             id: currentProject.id === DEMO_PROJECT_ID ? crypto.randomUUID() : currentProject.id,
             name: newName,
-            frames: localFrames.map(({ file, ...rest }) => ({...rest, isGenerating: undefined })),
+            frames: localFrames.map(({ file, ...rest }) => ({...rest, isGenerating: undefined, generatingMessage: undefined })),
             assets: localAssets.map(({ file, ...rest }) => rest),
             lastModified: Date.now(),
         };
@@ -397,6 +398,16 @@ export default function App() {
                             newFrames.splice(index, 0, newFrame);
                             return newFrames;
                         });
+                        // Check for adaptation context after state update
+                        setTimeout(() => {
+                           setLocalFrames(currentFrames => {
+                                const newIndex = currentFrames.findIndex(f => f.id === newFrame.id);
+                                if (newIndex > -1 && (newIndex > 0 || newIndex < currentFrames.length - 1)) {
+                                    setStyleAdaptToast({ frameId: newFrame.id });
+                                }
+                                return currentFrames;
+                           });
+                        }, 0);
                     } catch (error) {
                         console.error("Error reading file:", error);
                         alert("Could not load image file.");
@@ -433,6 +444,20 @@ export default function App() {
             framesCopy.splice(index, 0, ...newFrames);
             return framesCopy;
         });
+
+        // Check context for the first new frame
+        const firstNewFrameId = newFrames[0]?.id;
+        if (firstNewFrameId) {
+            setTimeout(() => {
+                setLocalFrames(currentFrames => {
+                    const newIndex = currentFrames.findIndex(f => f.id === firstNewFrameId);
+                    if (newIndex > -1 && (newIndex > 0 || newIndex < currentFrames.length - newFrames.length)) {
+                         setStyleAdaptToast({ frameId: firstNewFrameId });
+                    }
+                    return currentFrames;
+                })
+            }, 0);
+        }
     }, [localAssets, updateFrames]);
 
     const handleAddFramesFromFiles = useCallback(async (files: File[], index: number) => {
@@ -455,6 +480,19 @@ export default function App() {
             framesCopy.splice(index, 0, ...newFrames);
             return framesCopy;
         });
+
+        const firstNewFrameId = newFrames[0]?.id;
+        if (firstNewFrameId) {
+             setTimeout(() => {
+                setLocalFrames(currentFrames => {
+                    const newIndex = currentFrames.findIndex(f => f.id === firstNewFrameId);
+                    if (newIndex > -1 && (newIndex > 0 || newIndex < currentFrames.length - newFrames.length)) {
+                         setStyleAdaptToast({ frameId: firstNewFrameId });
+                    }
+                    return currentFrames;
+                })
+            }, 0);
+        }
     }, [updateFrames]);
 
     const handleStartFrameGeneration = async (data: { prompt: string }) => {
@@ -478,6 +516,7 @@ export default function App() {
             prompt: 'Генерация кадра...',
             duration: 3.0,
             isGenerating: true,
+            generatingMessage: 'Генерация кадра...',
             file: new File([], 'placeholder.txt', { type: 'text/plain' })
         };
 
@@ -770,6 +809,44 @@ export default function App() {
         setIsStorySettingsModalOpen(false);
     };
 
+    const handleAdaptFrameToStory = useCallback(async (frameId: string) => {
+        const frameIndex = localFrames.findIndex(f => f.id === frameId);
+        if (frameIndex === -1) return;
+
+        const frameToAdapt = localFrames[frameIndex];
+        const leftFrame = frameIndex > 0 ? localFrames[frameIndex - 1] : null;
+        const rightFrame = frameIndex < localFrames.length - 1 ? localFrames[frameIndex + 1] : null;
+
+        updateFrames(prev => prev.map(f => f.id === frameId ? { ...f, isGenerating: true, generatingMessage: 'Адаптация стиля...' } : f));
+        
+        try {
+            const { imageUrl, prompt } = await adaptImageToStory(frameToAdapt, leftFrame, rightFrame);
+            const file = dataUrlToFile(imageUrl, `adapted-${frameId}.png`);
+
+            updateFrames(prev => prev.map(f => {
+                if (f.id === frameId) {
+                    const newImageUrls = [...f.imageUrls, imageUrl];
+                    return {
+                        ...f,
+                        imageUrls: newImageUrls,
+                        activeVersionIndex: newImageUrls.length - 1,
+                        file,
+                        prompt,
+                        isTransition: false,
+                        isGenerating: false,
+                        generatingMessage: undefined,
+                    };
+                }
+                return f;
+            }));
+        } catch (error) {
+            console.error("Error adapting frame to story:", error);
+            alert(`Не удалось адаптировать кадр: ${error instanceof Error ? error.message : String(error)}`);
+            updateFrames(prev => prev.map(f => f.id === frameId ? { ...f, isGenerating: false, generatingMessage: undefined } : f));
+        }
+
+    }, [localFrames, updateFrames]);
+
     // --- Context Menu Handlers ---
     const handleContextMenu = (e: React.MouseEvent, frame: Frame) => {
         e.preventDefault();
@@ -991,6 +1068,7 @@ export default function App() {
                     onClose={handleCloseContextMenu}
                     actions={[
                         { label: 'Создать видео', icon: 'movie', onClick: () => handleGenerateVideo(contextMenu.frame) },
+                        { label: 'Адаптировать к сюжету', icon: 'auto_fix', onClick: () => handleAdaptFrameToStory(contextMenu.frame.id) },
                         { label: 'Редактировать кадр', icon: 'tune', onClick: () => {
                             setAdvancedGenerateModalConfig({ mode: 'edit', frameToEdit: contextMenu.frame });
                             setIsAdvancedGenerateModalOpen(true);
@@ -998,6 +1076,17 @@ export default function App() {
                         { label: 'Дублировать', icon: 'content_copy', onClick: () => handleDuplicateFrame(contextMenu.frame.id) },
                         { label: 'Заменить кадр', icon: 'swap_horiz', onClick: () => handleReplaceFrame(contextMenu.frame.id) },
                     ]}
+                />
+            )}
+            {styleAdaptToast && (
+                <Toast
+                    message="Хотите адаптировать кадр под стиль сюжета?"
+                    actionText="Адаптировать"
+                    onAction={() => {
+                        handleAdaptFrameToStory(styleAdaptToast.frameId);
+                        setStyleAdaptToast(null);
+                    }}
+                    onClose={() => setStyleAdaptToast(null)}
                 />
             )}
         </div>

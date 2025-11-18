@@ -1,4 +1,3 @@
-
 import { GoogleGenAI, Type, Modality } from "@google/genai";
 import type { Frame, Asset, StorySettings } from '../types';
 import { fileToBase64, fetchCorsImage } from '../utils/fileUtils';
@@ -549,6 +548,88 @@ export async function* createStoryFromAssets(
     
     yield { type: 'complete', message: "Генерация сюжета завершена!" };
     return newFrames;
+}
+
+export async function adaptImageToStory(
+    frameToAdapt: Frame,
+    leftFrame: Frame | null,
+    rightFrame: Frame | null
+): Promise<{ imageUrl: string; prompt: string }> {
+    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+
+    // Step 1: Generate the new, adapted image
+    const imageGenParts: any[] = [];
+    let imageGenInstruction = `Ты — эксперт-художник и арт-директор. Твоя задача — взять изображение пользователя и идеально вписать его в существующую раскадровку. Ты должен(на) трансформировать изображение пользователя, чтобы оно полностью соответствовало художественному стилю, цветовой палитре, освещению и повествовательному контексту окружающих кадров.
+
+КЛЮЧЕВАЯ ИНСТРУКЦИЯ: Сохрани основной объект, персонажей и композицию ИЗОБРАЖЕНИЯ ПОЛЬЗОВАТЕЛЯ, но полностью ПЕРЕРИСУЙ его в художественном стиле КОНТЕКСТНЫХ КАДРОВ. Новое изображение должно служить логическим визуальным и повествовательным мостом между кадрами "до" и "после".
+
+Пример: Если контекстные кадры из мультфильма "Утиные истории", а изображение пользователя — это реальная фотография человека, ты должен(на) перерисовать этого человека и его окружение в стиле мультфильма "Утиные истории". Не просто вставляй фото в сцену, а трансформируй его.
+`;
+
+    const { mimeType: adaptMime, data: adaptData } = await urlOrFileToBase64(frameToAdapt);
+    imageGenParts.push({ text: "ИЗОБРАЖЕНИЕ ПОЛЬЗОВАТЕЛЯ ДЛЯ АДАПТАЦИИ:" });
+    imageGenParts.push({ inlineData: { mimeType: adaptMime, data: adaptData } });
+
+    if (leftFrame) {
+        const { mimeType, data } = await urlOrFileToBase64(leftFrame);
+        imageGenParts.push({ text: "КОНТЕКСТ: КАДР ДО (СЛЕВА):" });
+        imageGenParts.push({ inlineData: { mimeType, data } });
+        imageGenInstruction += `\n- Промт кадра СЛЕВА был: "${leftFrame.prompt || 'не указан'}".`;
+    }
+    if (rightFrame) {
+        const { mimeType, data } = await urlOrFileToBase64(rightFrame);
+        imageGenParts.push({ text: "КОНТЕКСТ: КАДР ПОСЛЕ (СПРАВА):" });
+        imageGenParts.push({ inlineData: { mimeType, data } });
+        imageGenInstruction += `\n- Промт кадра СПРАВА будет: "${rightFrame.prompt || 'не указан'}".`;
+    }
+
+    imageGenParts.unshift({ text: imageGenInstruction });
+
+    const imageGenResponse = await ai.models.generateContent({
+        model: 'gemini-2.5-flash-image',
+        contents: { parts: imageGenParts },
+        config: {
+            responseModalities: [Modality.IMAGE],
+        },
+    });
+
+    let newImageUrl: string | null = null;
+    let newImagePartForPromptGen: any = null;
+    for (const part of imageGenResponse.candidates[0].content.parts) {
+        if (part.inlineData) {
+            newImageUrl = `data:${part.inlineData.mimeType};base64,${part.inlineData.data}`;
+            newImagePartForPromptGen = { inlineData: { mimeType: part.inlineData.mimeType, data: part.inlineData.data } };
+            break;
+        }
+    }
+
+    if (!newImageUrl || !newImagePartForPromptGen) {
+        throw new Error("AI failed to generate an adapted image.");
+    }
+
+    // Step 2: Generate a new prompt for the adapted image
+    let promptGenText = `Ты — профессиональный художник-раскадровщик, создающий промт для генерации видео. Проанализируй предоставленное изображение, которое было стилистически адаптировано, чтобы вписаться между двумя другими кадрами.`;
+    if (leftFrame?.prompt) {
+        promptGenText += `\n- Промт предыдущего кадра: "${leftFrame.prompt}"`;
+    }
+    if (rightFrame?.prompt) {
+        promptGenText += `\n- Промт следующего кадра: "${rightFrame.prompt}"`;
+    }
+    promptGenText += `\n\nОсновываясь на этом контексте, создай новый, краткий, но описательный промт на русском языке для предоставленного изображения. Промт должен фокусироваться на движении камеры, действии и настроении, чтобы обеспечить плавный повествовательный поток. Выведи ТОЛЬКО сам текст промта.`;
+    
+    const promptGenResponse = await ai.models.generateContent({
+        model: 'gemini-2.5-flash',
+        contents: { parts: [{ text: promptGenText }, newImagePartForPromptGen] },
+    });
+
+    const newPrompt = promptGenResponse.text.trim();
+    if (!newPrompt) {
+        console.warn("AI failed to generate a new prompt. A default will be used.");
+        // FIX: The variable holding the URL is `newImageUrl`, not `imageUrl`.
+        return { imageUrl: newImageUrl, prompt: "Стилизованный кадр, интегрированный в сюжет." };
+    }
+
+    return { imageUrl: newImageUrl, prompt: newPrompt };
 }
 
 export async function generateEditSuggestions(
