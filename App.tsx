@@ -711,7 +711,7 @@ export default function App() {
     // --- Pan and Zoom Handlers ---
     const panState = useRef({ isPanning: false, startX: 0, startY: 0, lastX: 0, lastY: 0 });
     const handleBoardMouseDown = (e: React.MouseEvent) => {
-        if (e.button !== 1 && !(e.button === 0 && e.ctrlKey)) return;
+        if (e.button !== 0 && e.button !== 1) return;
         if ((e.target as HTMLElement).closest('.board-interactive-item')) return;
         
         setContextMenu(null);
