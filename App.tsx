@@ -98,7 +98,12 @@ type DragState = {
 
 
 // --- Sketch Card Component ---
-const SketchCard: React.FC<{ sketch: Sketch; onMouseDown: (e: React.MouseEvent, id: string) => void }> = ({ sketch, onMouseDown }) => (
+const SketchCard: React.FC<{
+    sketch: Sketch;
+    onMouseDown: (e: React.MouseEvent, id: string) => void;
+    onContextMenu: (e: React.MouseEvent, sketch: Sketch) => void;
+    onDragStart: (e: React.DragEvent, id: string) => void;
+}> = ({ sketch, onMouseDown, onContextMenu, onDragStart }) => (
     <div
         className="absolute group bg-white p-2 pb-6 rounded-sm shadow-lg transition-transform hover:scale-105 hover:z-20 cursor-grab"
         style={{
@@ -108,6 +113,9 @@ const SketchCard: React.FC<{ sketch: Sketch; onMouseDown: (e: React.MouseEvent, 
             height: sketch.size.height,
         }}
         onMouseDown={(e) => onMouseDown(e, sketch.id)}
+        onContextMenu={(e) => onContextMenu(e, sketch)}
+        draggable
+        onDragStart={(e) => onDragStart(e, sketch.id)}
     >
         <div className="w-full h-full bg-black">
              <img src={sketch.imageUrl} alt={sketch.prompt} className="w-full h-full object-contain" />
@@ -215,6 +223,7 @@ export default function App() {
     const [isAssetLibraryOpen, setIsAssetLibraryOpen] = useState(false);
     const [contextMenu, setContextMenu] = useState<{ x: number, y: number, frame: Frame } | null>(null);
     const [boardContextMenu, setBoardContextMenu] = useState<{ x: number, y: number, boardPosition: Position } | null>(null);
+    const [sketchContextMenu, setSketchContextMenu] = useState<{ x: number, y: number, sketch: Sketch } | null>(null);
     const [addFrameMenu, setAddFrameMenu] = useState<{ index: number; rect: DOMRect } | null>(null);
     const [dragState, setDragState] = useState<DragState>(null);
     
@@ -555,6 +564,7 @@ export default function App() {
 
     const handleBoardContextMenu = (e: React.MouseEvent) => {
         e.preventDefault();
+        setSketchContextMenu(null); // Close sketch menu if open
         if ((e.target as HTMLElement).closest('.board-interactive-item')) return;
         const board = boardRef.current;
         if (!board) return;
@@ -616,6 +626,10 @@ export default function App() {
         if (e.button !== 0) return;
         const target = e.target as HTMLElement;
         if (target.closest('.board-interactive-item')) return;
+        
+        setContextMenu(null);
+        setBoardContextMenu(null);
+        setSketchContextMenu(null);
 
         setDragState({ type: 'pan', start: { x: e.clientX, y: e.clientY } });
         e.currentTarget.style.cursor = 'grabbing';
@@ -631,9 +645,12 @@ export default function App() {
             setTransform(prev => ({ ...prev, x: prev.x + dx, y: prev.y + dy }));
             setDragState({ ...dragState, start: { x: e.clientX, y: e.clientY } });
         } else if (dragState.type === 'sketch') {
-            const newX = e.clientX - dragState.offset.x;
-            const newY = e.clientY - dragState.offset.y;
-            updateSketches(prev => prev.map(s => s.id === dragState.id ? { ...s, position: { x: newX / transform.scale, y: newY / transform.scale } } : s));
+            const newViewportX = e.clientX - dragState.offset.x;
+            const newViewportY = e.clientY - dragState.offset.y;
+            updateSketches(prev => prev.map(s => s.id === dragState.id ? { ...s, position: { 
+                x: (newViewportX - transform.x) / transform.scale,
+                y: (newViewportY - transform.y) / transform.scale,
+            } } : s));
         }
     };
 
@@ -668,19 +685,81 @@ export default function App() {
     };
 
     const handleSketchMouseDown = (e: React.MouseEvent, id: string) => {
+        if (e.button !== 0) return; // Only allow left-click drag
         e.stopPropagation();
         const target = e.currentTarget as HTMLElement;
-        const rect = target.getBoundingClientRect();
+        const boardRect = boardRef.current!.getBoundingClientRect();
+        // We need the element's position relative to the board, not the viewport
+        const sketch = localSketches.find(s => s.id === id);
+        if (!sketch) return;
+
+        // Calculate the element's top-left in viewport coordinates
+        const elementViewportX = (sketch.position.x * transform.scale) + transform.x + boardRect.left;
+        const elementViewportY = (sketch.position.y * transform.scale) + transform.y + boardRect.top;
+
         setDragState({
             type: 'sketch',
             id,
             offset: {
-                x: e.clientX - rect.left,
-                y: e.clientY - rect.top,
+                x: e.clientX - elementViewportX,
+                y: e.clientY - elementViewportY,
             }
         });
     };
     
+    // --- Sketch Context Menu and Drag Handlers ---
+    const handleSketchContextMenu = (e: React.MouseEvent, sketch: Sketch) => {
+        e.preventDefault();
+        e.stopPropagation();
+        setBoardContextMenu(null); // Close board menu if open
+        setSketchContextMenu({ x: e.clientX, y: e.clientY, sketch });
+    };
+
+    const handleDuplicateSketch = (sketchId: string) => {
+        const sketch = localSketches.find(s => s.id === sketchId);
+        if (!sketch) return;
+        const newSketch: Sketch = {
+            ...sketch,
+            id: crypto.randomUUID(),
+            position: { x: sketch.position.x + 20, y: sketch.position.y + 20 },
+        };
+        updateSketches(prev => [...prev, newSketch]);
+    };
+
+    const handleDeleteSketch = (sketchId: string) => {
+        updateSketches(prev => prev.filter(s => s.id !== sketchId));
+    };
+
+    const handleSketchDragStart = (e: React.DragEvent, sketchId: string) => {
+        e.dataTransfer.setData('application/json;type=sketch-id', sketchId);
+        e.dataTransfer.effectAllowed = 'copy';
+    };
+
+    const handleAddFrameFromSketch = useCallback((sketchId: string, index: number) => {
+        const sketch = localSketches.find(s => s.id === sketchId);
+        if (!sketch || !sketch.file) return;
+
+        const newFrame: Frame = {
+            id: crypto.randomUUID(),
+            imageUrls: [sketch.imageUrl],
+            activeVersionIndex: 0,
+            prompt: sketch.prompt,
+            duration: 3.0,
+            file: sketch.file,
+            aspectRatio: sketch.aspectRatio,
+        };
+        
+        // Perform updates atomically if possible, or sequentially
+        updateFrames(prev => {
+            const framesCopy = [...prev];
+            framesCopy.splice(index, 0, newFrame);
+            return framesCopy;
+        });
+        updateSketches(prev => prev.filter(s => s.id !== sketchId));
+
+    }, [localSketches, updateFrames, updateSketches]);
+
+
     // Construct actions for AddFrameMenu
     const addFrameMenuActions: AddFrameMenuAction[] = [];
     if (addFrameMenu) {
@@ -745,6 +824,7 @@ export default function App() {
                             onPromptChange={handlePromptChange}
                             onAddFramesFromAssets={handleAddFramesFromAssets}
                             onAddFramesFromFiles={handleAddFramesFromFiles}
+                            onAddFrameFromSketch={handleAddFrameFromSketch}
                             onDeleteFrame={handleDeleteFrame}
                             onReorderFrame={handleReorderFrame}
                             onAnalyzeStory={() => alert('Analyze Story not implemented in this view.')}
@@ -762,7 +842,12 @@ export default function App() {
 
                     {localSketches.map(sketch => (
                          <div key={sketch.id} className="board-interactive-item">
-                            <SketchCard sketch={sketch} onMouseDown={handleSketchMouseDown} />
+                            <SketchCard 
+                                sketch={sketch} 
+                                onMouseDown={handleSketchMouseDown} 
+                                onContextMenu={handleSketchContextMenu}
+                                onDragStart={handleSketchDragStart}
+                            />
                          </div>
                     ))}
                 </div>
@@ -898,6 +983,17 @@ export default function App() {
                                 setIsAdvancedGenerateModalOpen(true);
                             } 
                         },
+                    ]}
+                />
+            )}
+             {sketchContextMenu && (
+                <ContextMenu
+                    x={sketchContextMenu.x}
+                    y={sketchContextMenu.y}
+                    onClose={() => setSketchContextMenu(null)}
+                    actions={[
+                        { label: 'Дублировать', icon: 'content_copy', onClick: () => handleDuplicateSketch(sketchContextMenu.sketch.id) },
+                        { label: 'Удалить', icon: 'delete', isDestructive: true, onClick: () => handleDeleteSketch(sketchContextMenu.sketch.id) },
                     ]}
                 />
             )}

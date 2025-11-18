@@ -21,6 +21,7 @@ interface TimelineProps {
     onPromptChange: (id: string, newPrompt: string) => void;
     onAddFramesFromAssets: (assetIds: string[], index: number) => void;
     onAddFramesFromFiles: (files: File[], index: number) => void;
+    onAddFrameFromSketch: (sketchId: string, index: number) => void;
     onDeleteFrame: (id: string) => void;
     onReorderFrame: (dragIndex: number, dropIndex: number) => void;
     onAnalyzeStory: () => void;
@@ -55,6 +56,7 @@ export const Timeline: React.FC<TimelineProps> = ({
     onPromptChange,
     onAddFramesFromAssets,
     onAddFramesFromFiles,
+    onAddFrameFromSketch,
     onDeleteFrame,
     onReorderFrame,
     onAnalyzeStory,
@@ -88,7 +90,11 @@ export const Timeline: React.FC<TimelineProps> = ({
     
         let newDropTargetIndex: number | null = null;
     
-        if (e.dataTransfer.types.includes('Files') || e.dataTransfer.types.includes('application/json;type=asset-ids')) {
+        const isFile = e.dataTransfer.types.includes('Files');
+        const isAsset = e.dataTransfer.types.includes('application/json;type=asset-ids');
+        const isSketch = e.dataTransfer.types.includes('application/json;type=sketch-id');
+
+        if (isFile || isAsset || isSketch) {
             e.dataTransfer.dropEffect = 'copy';
             newDropTargetIndex = index;
         } else if (draggedIndex !== null) {
@@ -114,6 +120,7 @@ export const Timeline: React.FC<TimelineProps> = ({
         e.stopPropagation();
         
         const assetIdsJson = e.dataTransfer.getData('application/json;type=asset-ids');
+        const sketchId = e.dataTransfer.getData('application/json;type=sketch-id');
         const files = e.dataTransfer.files;
     
         if (files && files.length > 0 && dropTargetIndex !== null) {
@@ -131,6 +138,8 @@ export const Timeline: React.FC<TimelineProps> = ({
             } catch (err) {
                 console.error("Failed to parse dropped asset data", err);
             }
+        } else if (sketchId && dropTargetIndex !== null) {
+            onAddFrameFromSketch(sketchId, dropTargetIndex);
         } else if (draggedIndex !== null && dropTargetIndex !== null) {
             onReorderFrame(draggedIndex, dropTargetIndex);
         }
