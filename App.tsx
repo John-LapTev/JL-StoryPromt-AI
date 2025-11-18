@@ -1,10 +1,12 @@
 
 
 
+
 import React, { useState, useEffect, useCallback, useMemo, useRef, useLayoutEffect } from 'react';
-import type { Frame, Project, Asset, StorySettings, IntegrationConfig, Sketch, Note, Position, Size } from './types';
+import type { Frame, Project, Asset, StorySettings, IntegrationConfig, Sketch, Note, Position, Size, AppSettings } from './types';
 import { initialFrames, initialAssets } from './constants';
 import { projectService } from './services/projectService';
+import { settingsService } from './services/settingsService';
 import { Header } from './components/Header';
 import { Timeline } from './components/Timeline';
 import { VideoModal } from './components/VideoModal';
@@ -22,6 +24,8 @@ import { AdaptationSettingsModal } from './components/AdaptationSettingsModal';
 import { IntegrationModal } from './components/IntegrationModal';
 import { LoadingModal } from './components/LoadingModal';
 import { ConfirmationModal } from './components/ConfirmationModal';
+import { SettingsModal } from './components/SettingsModal';
+import { SimpleImageViewerModal } from './components/SimpleImageViewerModal';
 import { generateImageFromPrompt, adaptImageToStory, adaptImageAspectRatio, createStoryFromAssets, analyzeStory, generateSinglePrompt } from './services/geminiService';
 import { fileToBase64, dataUrlToFile, fetchCorsImage, getImageDimensions } from './utils/fileUtils';
 import { StoryGenerationUpdate } from './services/geminiService';
@@ -275,6 +279,7 @@ export default function App() {
     const [frameCount, setFrameCount] = useState(10);
     const [globalAspectRatio, setGlobalAspectRatio] = useState('16:9');
     const [isAspectRatioLocked, setIsAspectRatioLocked] = useState(true);
+    const [appSettings, setAppSettings] = useState<AppSettings>(settingsService.getSettings());
 
 
     // Modal States
@@ -296,6 +301,8 @@ export default function App() {
         message: string;
         onConfirm: () => void;
     } | null>(null);
+    const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
+    const [zoomedImage, setZoomedImage] = useState<{ url: string; title: string } | null>(null);
 
     // UI States
     const [generatedVideoUrl, setGeneratedVideoUrl] = useState<string | null>(null);
@@ -329,7 +336,7 @@ export default function App() {
     // Derived state
     const currentProject = useMemo(() => projects.find(p => p.id === currentProjectId), [projects, currentProjectId]);
 
-    // Initial project loading
+    // Initial project and settings loading
     useEffect(() => {
         let allProjects = projectService.getProjects();
         const demoProjectExists = allProjects.some(p => p.id === DEMO_PROJECT_ID);
@@ -364,6 +371,8 @@ export default function App() {
         } else {
             console.error("Could not determine a project to load.");
         }
+        
+        setAppSettings(settingsService.getSettings());
     }, []);
 
     // Sync and hydrate local state from the current project
@@ -427,6 +436,11 @@ export default function App() {
         setLocalNotes(updater);
         setHasUnsavedChanges(true);
     }, []);
+    
+    const handleSaveSettings = (newSettings: AppSettings) => {
+        setAppSettings(newSettings);
+        settingsService.saveSettings(newSettings);
+    };
 
     // VEO Key check
     useEffect(() => {
@@ -952,6 +966,8 @@ export default function App() {
 
     // --- Director's Board Handlers ---
     const handleBoardDoubleClick = (e: React.MouseEvent) => {
+        if (!appSettings.doubleClickToGenerate) return;
+
         if ((e.target as HTMLElement).closest('.board-interactive-item')) return;
         const board = boardRef.current;
         if (!board) return;
@@ -1371,6 +1387,7 @@ export default function App() {
                 onSaveAsProject={() => setIsSaveModalOpen(true)}
                 onLoadProject={() => setIsLoadModalOpen(true)}
                 onManageApiKey={handleManageApiKey}
+                onOpenSettings={() => setIsSettingsModalOpen(true)}
             />
             <main 
                 ref={boardRef}
@@ -1548,6 +1565,7 @@ export default function App() {
                     onClose={() => { setIsIntegrationModalOpen(false); setIntegrationConfig(null); }}
                     config={integrationConfig}
                     onIntegrate={handleApplyIntegration}
+                    onZoomImage={(url, title) => setZoomedImage({ url, title })}
                 />
             )}
             {editingFrame && ( <EditPromptModal frame={editingFrame} onClose={() => setEditingFrame(null)} onSave={handleSavePrompt} /> )}
@@ -1562,6 +1580,21 @@ export default function App() {
                     message={confirmationState.message}
                     onConfirm={confirmationState.onConfirm}
                     onCancel={() => setConfirmationState(null)}
+                />
+            )}
+            {isSettingsModalOpen && (
+                <SettingsModal
+                    isOpen={isSettingsModalOpen}
+                    onClose={() => setIsSettingsModalOpen(false)}
+                    settings={appSettings}
+                    onSave={handleSaveSettings}
+                />
+            )}
+            {zoomedImage && (
+                <SimpleImageViewerModal
+                    imageUrl={zoomedImage.url}
+                    title={zoomedImage.title}
+                    onClose={() => setZoomedImage(null)}
                 />
             )}
             {contextMenu && (

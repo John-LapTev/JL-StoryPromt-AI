@@ -68,3 +68,7 @@ export interface IntegrationConfig {
   sourceAsset?: Asset | { imageUrl: string, file: File, name: string };
   targetFrame: Frame;
 }
+
+export interface AppSettings {
+    doubleClickToGenerate: boolean;
+}

@@ -9,9 +9,10 @@ interface HeaderProps {
     onSaveAsProject: () => void;
     onLoadProject: () => void;
     onManageApiKey: () => void;
+    onOpenSettings: () => void;
 }
 
-export const Header: React.FC<HeaderProps> = ({ projectName, hasUnsavedChanges, onNewProject, onSaveProject, onSaveAsProject, onLoadProject, onManageApiKey }) => {
+export const Header: React.FC<HeaderProps> = ({ projectName, hasUnsavedChanges, onNewProject, onSaveProject, onSaveAsProject, onLoadProject, onManageApiKey, onOpenSettings }) => {
     const [isProjectMenuOpen, setIsProjectMenuOpen] = useState(false);
     const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
     const projectMenuRef = useRef<HTMLDivElement>(null);
@@ -78,6 +79,9 @@ export const Header: React.FC<HeaderProps> = ({ projectName, hasUnsavedChanges, 
                         <div className="absolute top-full right-0 mt-2 w-56 bg-[#191C2D] border border-white/10 rounded-lg shadow-lg z-50 p-1">
                             <button onClick={() => { onManageApiKey(); setIsUserMenuOpen(false); }} className="w-full text-left px-3 py-1.5 text-sm rounded-md hover:bg-white/10 flex items-center gap-2">
                                 <span className="material-symbols-outlined text-base">key</span> Управление API ключом
+                            </button>
+                            <button onClick={() => { onOpenSettings(); setIsUserMenuOpen(false); }} className="w-full text-left px-3 py-1.5 text-sm rounded-md hover:bg-white/10 flex items-center gap-2">
+                                <span className="material-symbols-outlined text-base">settings</span> Настройки
                             </button>
                         </div>
                     )}

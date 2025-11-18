@@ -8,18 +8,23 @@ interface IntegrationModalProps {
     onClose: () => void;
     config: IntegrationConfig;
     onIntegrate: (result: { imageUrl: string, prompt: string }) => void;
+    onZoomImage: (imageUrl: string, title: string) => void;
 }
 
 type SourceAsset = IntegrationConfig['sourceAsset'];
 type IntegrationMode = 'object' | 'style' | 'background';
 
-// A robust component for displaying images within a constrained, flexible container.
-const ImagePanel: React.FC<{ imageUrl: string | null, label: string, isLoading?: boolean, isResult?: boolean }> = ({ imageUrl, label, isLoading = false, isResult = false }) => (
+const ImagePanel: React.FC<{ imageUrl: string | null, label: string, isLoading?: boolean, isResult?: boolean, onZoom: (imageUrl: string, title: string) => void }> = ({ imageUrl, label, isLoading = false, isResult = false, onZoom }) => (
     <div className="flex flex-col gap-2 text-center h-full">
         <h4 className="text-sm font-bold text-white/60 shrink-0">{label}</h4>
         <div className="relative w-full flex-1 rounded-lg bg-black/30 flex items-center justify-center border border-white/10 overflow-hidden min-h-0">
             {imageUrl ? (
-                <img src={imageUrl} alt={label} className="absolute inset-0 w-full h-full object-contain" />
+                <>
+                    <img src={imageUrl} alt={label} className="absolute inset-0 w-full h-full object-contain" />
+                    <button onClick={() => onZoom(imageUrl, label)} className="absolute inset-0 bg-black/50 opacity-0 hover:opacity-100 transition-opacity flex items-center justify-center group/zoom" aria-label={`Увеличить ${label}`}>
+                        <span className="material-symbols-outlined text-4xl text-white">zoom_in</span>
+                    </button>
+                </>
             ) : (
                 (isLoading || isResult) && (
                     <div className="flex flex-col items-center text-white/50 p-4">
@@ -34,7 +39,7 @@ const ImagePanel: React.FC<{ imageUrl: string | null, label: string, isLoading?:
 );
 
 
-export const IntegrationModal: React.FC<IntegrationModalProps> = ({ isOpen, onClose, config, onIntegrate }) => {
+export const IntegrationModal: React.FC<IntegrationModalProps> = ({ isOpen, onClose, config, onIntegrate, onZoomImage }) => {
     const [uiMode, setUiMode] = useState<'auto' | 'manual'>('auto');
     const [integrationMode, setIntegrationMode] = useState<IntegrationMode>('object');
     const [manualPrompt, setManualPrompt] = useState('');
@@ -191,9 +196,12 @@ export const IntegrationModal: React.FC<IntegrationModalProps> = ({ isOpen, onCl
                             {sourceAsset ? (
                                 <>
                                     <img src={sourceAsset.imageUrl} alt="Source Asset" className="absolute inset-0 w-full h-full object-contain" />
-                                    <div className="absolute inset-0 bg-black/70 opacity-0 hover:opacity-100 transition-opacity flex items-center justify-center group/replace">
-                                        <button onClick={() => sourceFileInputRef.current?.click()} className="flex items-center gap-2 px-4 py-2 rounded-lg bg-white/10 text-white font-bold hover:bg-white/20">
-                                            <span className="material-symbols-outlined">swap_horiz</span>
+                                    <div className="absolute inset-0 opacity-0 hover:opacity-100 transition-opacity group/source-overlay">
+                                        <button onClick={() => onZoomImage(sourceAsset.imageUrl, 'Исходный ассет')} className="absolute inset-0 bg-black/50 flex items-center justify-center z-10" aria-label="Увеличить Исходный ассет">
+                                            <span className="material-symbols-outlined text-4xl text-white">zoom_in</span>
+                                        </button>
+                                        <button onClick={(e) => { e.stopPropagation(); sourceFileInputRef.current?.click(); }} className="absolute bottom-2 right-2 flex items-center gap-1 px-2 py-1 rounded-md bg-white/10 text-white text-xs font-bold hover:bg-white/20 z-20">
+                                            <span className="material-symbols-outlined text-sm">swap_horiz</span>
                                             Заменить
                                         </button>
                                     </div>
@@ -216,8 +224,18 @@ export const IntegrationModal: React.FC<IntegrationModalProps> = ({ isOpen, onCl
                             className="hidden"
                         />
                     </div>
-                    <ImagePanel imageUrl={config.targetFrame.imageUrls[config.targetFrame.activeVersionIndex]} label="Целевой кадр" />
-                    <ImagePanel imageUrl={resultImageUrl} label="Результат" isLoading={isIntegrating} isResult />
+                    <ImagePanel 
+                        imageUrl={config.targetFrame.imageUrls[config.targetFrame.activeVersionIndex]} 
+                        label="Целевой кадр"
+                        onZoom={onZoomImage}
+                    />
+                    <ImagePanel 
+                        imageUrl={resultImageUrl} 
+                        label="Результат" 
+                        isLoading={isIntegrating} 
+                        isResult 
+                        onZoom={onZoomImage}
+                    />
                 </div>
 
                 {/* Controls Section */}
