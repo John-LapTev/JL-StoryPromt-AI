@@ -161,7 +161,7 @@ export const FrameCard: React.FC<FrameCardProps> = ({
                 
             return (
                 <div 
-                    onMouseDown={(e) => e.stopPropagation()}
+                    onMouseDown={(e) => { if (e.button === 0) e.stopPropagation(); }}
                     onWheel={(e) => e.stopPropagation()}
                     className={`relative group/prompt w-full flex flex-col min-h-[76px] max-h-32 p-2.5 rounded-lg transition-all hover:bg-black/40 ${promptBgClass}`}
                 >
@@ -197,7 +197,7 @@ export const FrameCard: React.FC<FrameCardProps> = ({
         }
 
         return (
-            <button onMouseDown={(e) => e.stopPropagation()} onClick={() => onGenerateSinglePrompt(frame.id)} className="flex min-w-[84px] w-full max-w-[480px] cursor-pointer items-center justify-center overflow-hidden rounded-lg h-10 px-4 bg-white/10 text-white text-sm font-bold leading-normal tracking-[0.015em] gap-2 hover:bg-white/20">
+            <button onMouseDown={(e) => { if (e.button === 0) e.stopPropagation(); }} onClick={() => onGenerateSinglePrompt(frame.id)} className="flex min-w-[84px] w-full max-w-[480px] cursor-pointer items-center justify-center overflow-hidden rounded-lg h-10 px-4 bg-white/10 text-white text-sm font-bold leading-normal tracking-[0.015em] gap-2 hover:bg-white/20">
                 <span className="material-symbols-outlined">auto_awesome</span>
                 <span className="truncate">Сгенерировать промт</span>
             </button>
@@ -232,7 +232,7 @@ export const FrameCard: React.FC<FrameCardProps> = ({
                 className={`relative group transition-opacity ${isDragging ? 'opacity-40' : 'opacity-100'}`}
                 onDoubleClick={() => onOpenDetailView(frame)}
                 draggable
-                onMouseDown={(e) => e.stopPropagation()}
+                onMouseDown={(e) => { if (e.button === 0) e.stopPropagation(); }}
                 onDragStart={onDragStart}
                 onDragEnd={onDragEnd}
                 style={{ cursor: 'grab' }}

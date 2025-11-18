@@ -215,7 +215,7 @@ export const AssetLibraryPanel = forwardRef<HTMLDivElement, AssetLibraryPanelPro
                             <div 
                                 key={asset.id} 
                                 className="relative group/asset cursor-pointer" 
-                                onMouseDown={(e) => e.stopPropagation()}
+                                onMouseDown={(e) => { if (e.button === 0) e.stopPropagation(); }}
                                 onClick={() => handleAssetClick(asset.id, index)}
                                 draggable={true}
                                 onDragStart={(e) => handleDragStart(e, asset.id)}
