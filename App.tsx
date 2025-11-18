@@ -504,19 +504,16 @@ export default function App() {
         }
     }, [updateFrames, isAspectRatioLocked, globalAspectRatio]);
 
-    const handleStartFrameGeneration = async (data: { prompt: string }) => {
-        setIsAdvancedGenerateModalOpen(false);
-        const insertIndex = advancedGenerateModalConfig.insertIndex ?? 0;
-
+    const handleGenerateFrame = async (prompt: string, insertIndex: number) => {
         const framesBeforePlaceholder = localFrames;
         const leftFrame = framesBeforePlaceholder[insertIndex - 1] || null;
         const rightFrame = framesBeforePlaceholder[insertIndex] || null;
-
-        if (data.prompt === '__AUTO__' && (!leftFrame || !rightFrame)) {
+    
+        if (prompt === '__AUTO__' && (!leftFrame || !rightFrame)) {
             alert("Не удалось найти соседние кадры для автоматической генерации. Операция отменена.");
             return;
         }
-
+    
         const placeholderId = crypto.randomUUID();
         const placeholderFrame: Frame = {
             id: placeholderId,
@@ -529,22 +526,21 @@ export default function App() {
             aspectRatio: isAspectRatioLocked ? globalAspectRatio : '16:9',
             file: new File([], 'placeholder.txt', { type: 'text/plain' })
         };
-
+    
         updateFrames(prev => {
             const newFrames = [...prev];
             newFrames.splice(insertIndex, 0, placeholderFrame);
             return newFrames;
         });
-
+    
         try {
             let result: { imageUrl: string, prompt: string };
-
-            if (data.prompt === '__AUTO__') {
-                // This check is now pre-emptive, but we re-check here to satisfy TypeScript
+    
+            if (prompt === '__AUTO__') {
                 if (!leftFrame || !rightFrame) throw new Error("Соседние кадры не найдены.");
                 result = await generateIntermediateFrame(leftFrame, rightFrame);
             } else {
-                result = await generateImageInContext(data.prompt, leftFrame, rightFrame);
+                result = await generateImageInContext(prompt, leftFrame, rightFrame);
             }
             
             const file = dataUrlToFile(result.imageUrl, `generated-${Date.now()}.png`);
@@ -559,14 +555,20 @@ export default function App() {
                 isGenerating: false,
                 aspectRatio: placeholderFrame.aspectRatio,
             };
-
+    
             updateFrames(prev => prev.map(frame => frame.id === placeholderId ? finalFrame : frame));
-
+    
         } catch (error) {
             console.error("Error during generation:", error);
             alert(`Не удалось выполнить операцию: ${error instanceof Error ? error.message : String(error)}`);
             updateFrames(prev => prev.filter(f => f.id !== placeholderId));
         }
+    };
+
+    const handleStartFrameGeneration = async (data: { prompt: string }) => {
+        setIsAdvancedGenerateModalOpen(false);
+        const insertIndex = advancedGenerateModalConfig.insertIndex ?? localFrames.length;
+        handleGenerateFrame(data.prompt, insertIndex);
     };
 
     const handleApplyEdit = useCallback(async (frameId: string, newImageUrl: string, newPrompt: string) => {
@@ -1142,7 +1144,12 @@ export default function App() {
                 />
             </main>
 
-            <Chatbot isOpen={isChatOpen} onClose={() => setIsChatOpen(false)} />
+            <Chatbot 
+                isOpen={isChatOpen} 
+                onClose={() => setIsChatOpen(false)} 
+                frames={localFrames}
+                onGenerateFrame={(prompt) => handleGenerateFrame(prompt, localFrames.length)}
+            />
             
             <button
                 onClick={() => setIsChatOpen(true)}
