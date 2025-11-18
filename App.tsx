@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import type { Frame, Project, Asset } from './types';
+import type { Frame, Project, Asset, StorySettings } from './types';
 import { initialFrames, initialAssets } from './constants';
 import { projectService } from './services/projectService';
 import { Header } from './components/Header';
@@ -15,6 +15,7 @@ import { ProjectSaveModal } from './components/ProjectSaveModal';
 import { ProjectLoadModal } from './components/ProjectLoadModal';
 import { AssetLibraryPanel } from './components/AssetLibraryPanel';
 import { ContextMenu } from './components/ContextMenu';
+import { StorySettingsModal } from './components/StorySettingsModal';
 import { analyzeStory, generateSinglePrompt, generateIntermediateFrame, generateTransitionPrompt, generateImageFromPrompt, editImage, generateVideoFromFrame, generateImageInContext, createStoryFromAssets } from './services/geminiService';
 import { fileToBase64, dataUrlToFile, fetchCorsImage } from './utils/fileUtils';
 
@@ -44,6 +45,13 @@ const hydrateFrame = async (frameData: Omit<Frame, 'file'>): Promise<Frame> => {
     return { ...frameWithVersions, file };
 };
 
+const initialStorySettings: StorySettings = {
+    mode: 'auto',
+    prompt: '',
+    genre: '',
+    ending: '',
+};
+
 export default function App() {
     // Project State
     const [projects, setProjects] = useState<Project[]>([]);
@@ -52,11 +60,13 @@ export default function App() {
     const [localFrames, setLocalFrames] = useState<Frame[]>([]);
     const [localAssets, setLocalAssets] = useState<Asset[]>([]);
     const [selectedAssetIds, setSelectedAssetIds] = useState<Set<string>>(new Set());
+    const [storySettings, setStorySettings] = useState<StorySettings>(initialStorySettings);
 
     // Modal States
     const [isSaveModalOpen, setIsSaveModalOpen] = useState(false);
     const [isLoadModalOpen, setIsLoadModalOpen] = useState(false);
     const [isAdvancedGenerateModalOpen, setIsAdvancedGenerateModalOpen] = useState(false);
+    const [isStorySettingsModalOpen, setIsStorySettingsModalOpen] = useState(false);
     const [advancedGenerateModalConfig, setAdvancedGenerateModalConfig] = useState<{
         mode: 'generate' | 'edit';
         frameToEdit?: Frame;
@@ -703,6 +713,10 @@ export default function App() {
             );
             return;
         }
+        if (frameCount < 2 || frameCount > 20) {
+            alert("Пожалуйста, укажите количество кадров от 2 до 20.");
+            return;
+        }
 
         try {
             setGeneratingStory(true);
@@ -719,7 +733,7 @@ export default function App() {
             }));
             updateFrames(placeholderFrames);
 
-            for await (const update of createStoryFromAssets(assetsToUse, frameCount)) {
+            for await (const update of createStoryFromAssets(assetsToUse, storySettings, frameCount)) {
                 if (update.type === 'progress' || update.type === 'plan' || update.type === 'complete') {
                     if (update.type === 'progress') {
                         updateFrames(prev => {
@@ -751,6 +765,11 @@ export default function App() {
         }
     };
     
+    const handleSaveStorySettings = (newSettings: StorySettings) => {
+        setStorySettings(newSettings);
+        setIsStorySettingsModalOpen(false);
+    };
+
     // --- Context Menu Handlers ---
     const handleContextMenu = (e: React.MouseEvent, frame: Frame) => {
         e.preventDefault();
@@ -851,6 +870,7 @@ export default function App() {
                     onClose={() => setIsAssetLibraryOpen(false)}
                     assets={localAssets}
                     selectedAssetIds={selectedAssetIds}
+                    storySettings={storySettings}
                     onAddAssets={handleAddAssets}
                     onDeleteAsset={handleDeleteAsset}
                     onToggleSelectAsset={(id) => {
@@ -867,6 +887,7 @@ export default function App() {
                     onSelectAllAssets={handleSelectAllAssets}
                     onDeselectAllAssets={handleDeselectAllAssets}
                     onGenerateStory={handleCreateStoryFromAssets}
+                    onOpenStorySettings={() => setIsStorySettingsModalOpen(true)}
                 />
                 <Timeline
                     frames={localFrames}
@@ -914,6 +935,14 @@ export default function App() {
                     onApplyEdit={handleApplyEdit}
                     config={advancedGenerateModalConfig}
                     frames={localFrames}
+                />
+            )}
+             {isStorySettingsModalOpen && (
+                <StorySettingsModal
+                    isOpen={isStorySettingsModalOpen}
+                    onClose={() => setIsStorySettingsModalOpen(false)}
+                    settings={storySettings}
+                    onSave={handleSaveStorySettings}
                 />
             )}
             {editingFrame && (

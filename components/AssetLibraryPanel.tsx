@@ -1,5 +1,6 @@
+
 import React, { useState, useRef } from 'react';
-import type { Asset } from '../types';
+import type { Asset, StorySettings } from '../types';
 import { AssetViewerModal } from './AssetViewerModal';
 
 interface AssetLibraryPanelProps {
@@ -7,12 +8,14 @@ interface AssetLibraryPanelProps {
     onClose: () => void;
     assets: Asset[];
     selectedAssetIds: Set<string>;
+    storySettings: StorySettings;
     onAddAssets: (files: File[]) => void;
     onDeleteAsset: (id: string) => void;
     onToggleSelectAsset: (id: string) => void;
     onSelectAllAssets: () => void;
     onDeselectAllAssets: () => void;
     onGenerateStory: (frameCount: number) => void;
+    onOpenStorySettings: () => void;
 }
 
 export const AssetLibraryPanel: React.FC<AssetLibraryPanelProps> = ({ 
@@ -20,18 +23,21 @@ export const AssetLibraryPanel: React.FC<AssetLibraryPanelProps> = ({
     onClose, 
     assets, 
     selectedAssetIds, 
+    storySettings,
     onAddAssets, 
     onDeleteAsset, 
     onToggleSelectAsset, 
     onSelectAllAssets,
     onDeselectAllAssets,
-    onGenerateStory 
+    onGenerateStory,
+    onOpenStorySettings,
 }) => {
-    const [frameCount, setFrameCount] = useState(10);
     const fileInputRef = useRef<HTMLInputElement>(null);
     const [isSelectionMode, setIsSelectionMode] = useState(false);
     const [viewingAssetIndex, setViewingAssetIndex] = useState<number | null>(null);
     const [isDraggingOver, setIsDraggingOver] = useState(false);
+    const [frameCount, setFrameCount] = useState(10);
+
 
     const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
         if (event.target.files) {
@@ -41,14 +47,6 @@ export const AssetLibraryPanel: React.FC<AssetLibraryPanelProps> = ({
 
     const handleUploadClick = () => {
         fileInputRef.current?.click();
-    };
-
-    const handleGenerateClick = () => {
-        if (frameCount < 2 || frameCount > 20) {
-            alert("Пожалуйста, укажите количество кадров от 2 до 20.");
-            return;
-        }
-        onGenerateStory(frameCount);
     };
     
     const handleAssetClick = (assetId: string, index: number) => {
@@ -150,9 +148,12 @@ export const AssetLibraryPanel: React.FC<AssetLibraryPanelProps> = ({
         }
     };
 
-    const createStoryButtonText = selectedAssetIds.size > 0
-        ? `Создать сюжет (${selectedAssetIds.size})`
-        : 'Создать сюжет';
+    const modeText = storySettings.mode === 'auto' ? 'Авто' : 'Ручной';
+    let createStoryButtonText = `Создать сюжет (${modeText})`;
+    if (selectedAssetIds.size > 0) {
+        createStoryButtonText = `Создать сюжет из ${selectedAssetIds.size} ассетов (${modeText})`;
+    }
+
 
     return (
         <>
@@ -248,20 +249,29 @@ export const AssetLibraryPanel: React.FC<AssetLibraryPanelProps> = ({
                 </div>
 
                 <div className="p-4 border-t border-white/10 shrink-0 space-y-4 bg-[#191C2D]/50">
-                    <div className="flex flex-col gap-2">
-                        <label htmlFor="frame-count" className="text-sm font-bold text-white/80">Количество кадров в сюжете:</label>
-                        <input
-                            type="number"
-                            id="frame-count"
-                            value={frameCount}
-                            onChange={(e) => setFrameCount(parseInt(e.target.value, 10))}
-                            min="2"
-                            max="20"
-                            className="w-full bg-white/5 p-2 rounded-lg text-sm text-white/90 placeholder:text-white/40 focus:ring-2 focus:ring-primary border-none"
-                        />
+                     <div className="flex items-center gap-2">
+                         <div className="flex-1">
+                             <label htmlFor="frame-count" className="text-xs font-bold text-white/70 mb-1 block">Количество кадров</label>
+                             <input
+                                type="number"
+                                id="frame-count"
+                                value={frameCount}
+                                onChange={(e) => setFrameCount(Math.max(2, Math.min(20, parseInt(e.target.value, 10) || 2)))}
+                                min="2"
+                                max="20"
+                                className="w-full bg-white/5 p-2 rounded-lg text-sm text-white/90 focus:ring-2 focus:ring-primary border-none"
+                             />
+                        </div>
+                        <button
+                            onClick={onOpenStorySettings}
+                            className="self-end flex-shrink-0 size-10 flex items-center justify-center rounded-lg bg-white/10 text-white hover:bg-white/20"
+                            aria-label="Настройки сюжета"
+                        >
+                             <span className="material-symbols-outlined">tune</span>
+                        </button>
                     </div>
-                    <button 
-                        onClick={handleGenerateClick}
+                     <button 
+                        onClick={() => onGenerateStory(frameCount)}
                         disabled={assets.length === 0}
                         className="w-full flex items-center justify-center gap-2 rounded-lg h-12 px-4 bg-primary text-white text-base font-bold hover:bg-primary/90 disabled:bg-primary/50 disabled:cursor-not-allowed"
                     >

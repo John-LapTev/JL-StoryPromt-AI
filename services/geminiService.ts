@@ -1,5 +1,6 @@
+
 import { GoogleGenAI, Type, Modality } from "@google/genai";
-import type { Frame, Asset } from '../types';
+import type { Frame, Asset, StorySettings } from '../types';
 import { fileToBase64, fetchCorsImage } from '../utils/fileUtils';
 
 async function urlOrFileToBase64(frame: Frame | Omit<Asset, 'file'> | Omit<Frame, 'file'>): Promise<{ mimeType: string; data: string }> {
@@ -435,9 +436,11 @@ export type StoryGenerationUpdate =
 
 export async function* createStoryFromAssets(
     assets: Asset[],
+    settings: StorySettings,
     frameCount: number,
 ): AsyncGenerator<StoryGenerationUpdate, Omit<Frame, 'file'>[], void> {
     const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+    const { mode, prompt, genre, ending } = settings;
     
     yield { type: 'plan', message: "Анализ ассетов и создание плана сюжета..." };
 
@@ -449,9 +452,24 @@ export async function* createStoryFromAssets(
     );
     
     const assetNames = assets.map(a => a.name).join(', ');
-    const storyPlanPrompt = `Ты — AI-сценарист и режиссер-постановщик раскадровки. Основываясь на предоставленных изображениях-ассетах (представляющих ключевых персонажей, предметы или локации с именами: ${assetNames}), создай захватывающую короткую историю.
+    let storyPlanPrompt = `Ты — AI-сценарист и режиссер-постановщик раскадровки. Основываясь на предоставленных изображениях-ассетах (представляющих ключевых персонажей, предметы или локации с именами: ${assetNames}), создай захватывающую короткую историю.
 
-    Твоя задача — разбить эту историю ровно на ${frameCount} отдельных сцен или кадров.
+Твоя задача — разбить эту историю ровно на ${frameCount} отдельных сцен или кадров.`;
+    
+    if (mode === 'manual') {
+        storyPlanPrompt += "\n\nСледуй этим указаниям от пользователя:";
+        if (prompt) {
+            storyPlanPrompt += `\n- Основная идея сюжета: "${prompt}"`;
+        }
+        if (genre) {
+            storyPlanPrompt += `\n- Жанр или тональность истории: "${genre}"`;
+        }
+        if (ending) {
+            storyPlanPrompt += `\n- Тип концовки: "${ending}"`;
+        }
+    }
+
+    storyPlanPrompt += `
 
     Для каждого кадра ты должен предоставить:
     1.  'description': Краткое описание действия и композиции сцены в одном предложении, на русском языке.

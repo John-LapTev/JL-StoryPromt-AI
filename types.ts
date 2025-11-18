@@ -25,3 +25,10 @@ export interface Project {
   assets: Omit<Asset, 'file'>[];
   lastModified: number; // Unix timestamp
 }
+
+export interface StorySettings {
+  mode: 'auto' | 'manual';
+  prompt: string;
+  genre: string;
+  ending: string;
+}
