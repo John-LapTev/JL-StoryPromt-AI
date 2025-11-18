@@ -95,7 +95,7 @@ const initialStorySettings: StorySettings = {
 };
 
 type DraggingInfo = {
-    type: 'sketch-move' | 'note-move' | 'note-resize';
+    type: 'note-move' | 'note-resize';
     id: string;
     initialMousePos: { x: number; y: number };
     initialPosition: Position;
@@ -108,18 +108,21 @@ const SketchCard: React.FC<{
     sketch: Sketch;
     isDragging: boolean;
     onContextMenu: (e: React.MouseEvent, sketch: Sketch) => void;
-    onMouseDown: (e: React.MouseEvent, sketch: Sketch) => void;
-}> = ({ sketch, isDragging, onContextMenu, onMouseDown }) => (
+    onDragStart: (e: React.DragEvent, sketch: Sketch) => void;
+    onDragEnd: () => void;
+}> = ({ sketch, isDragging, onContextMenu, onDragStart, onDragEnd }) => (
     <div
-        className={`absolute group bg-white p-2 pb-6 rounded-sm shadow-lg transition-transform ${isDragging ? 'opacity-60 scale-[1.05] z-50 pointer-events-none' : 'hover:scale-[1.025] hover:z-20'} cursor-grab`}
+        className={`absolute group bg-white p-2 pb-6 rounded-sm shadow-lg transition-all ${isDragging ? 'opacity-50 grayscale z-50' : 'hover:scale-[1.025] hover:z-20'} cursor-grab active:cursor-grabbing`}
         style={{
             left: sketch.position.x,
             top: sketch.position.y,
             width: sketch.size.width,
             height: sketch.size.height,
         }}
+        draggable={true}
+        onDragStart={(e) => onDragStart(e, sketch)}
+        onDragEnd={onDragEnd}
         onContextMenu={(e) => onContextMenu(e, sketch)}
-        onMouseDown={(e) => onMouseDown(e, sketch)}
     >
         <div className="w-full h-full bg-black pointer-events-none">
             {sketch.imageUrl ? (
@@ -331,6 +334,7 @@ export default function App() {
     const [draggingInfo, setDraggingInfo] = useState<DraggingInfo>(null);
     const [sketchDropTargetIndex, setSketchDropTargetIndex] = useState<number | null>(null);
     const [isAssetLibraryDropTarget, setIsAssetLibraryDropTarget] = useState(false);
+    const [draggingSketchId, setDraggingSketchId] = useState<string | null>(null);
     
     // Non-blocking loading states
     const [generatingStory, setGeneratingStory] = useState(false);
@@ -342,6 +346,7 @@ export default function App() {
     const boardRef = useRef<HTMLDivElement>(null);
     const timelineDropZoneRefs = useRef(new Map<number, HTMLElement>());
     const assetLibraryRef = useRef<HTMLDivElement>(null);
+    const dragOffset = useRef({ x: 0, y: 0 }); // Stores offset relative to the sketch card (unscaled)
 
     // Derived state
     const currentProject = useMemo(() => projects.find(p => p.id === currentProjectId), [projects, currentProjectId]);
@@ -1319,34 +1324,6 @@ export default function App() {
             const dy = (e.clientY - draggingInfo.initialMousePos.y) / transform.scale;
 
             switch (draggingInfo.type) {
-                case 'sketch-move': {
-                    const newX = draggingInfo.initialPosition.x + dx;
-                    const newY = draggingInfo.initialPosition.y + dy;
-                    updateSketches(prev => prev.map(s => s.id === draggingInfo.id ? { ...s, position: { x: newX, y: newY } } : s));
-                    
-                    // Check for Timeline Drop Zones
-                    const mouseX = e.clientX;
-                    const mouseY = e.clientY;
-                    let foundIndex: number | null = null;
-                    for (const [index, el] of timelineDropZoneRefs.current.entries()) {
-                        const rect = el.getBoundingClientRect();
-                        if (mouseX >= rect.left && mouseX <= rect.right && mouseY >= rect.top && mouseY <= rect.bottom) {
-                            foundIndex = index;
-                            break;
-                        }
-                    }
-                    setSketchDropTargetIndex(foundIndex);
-
-                    // Check for Asset Library Drop Zone
-                    if (assetLibraryRef.current) {
-                         const rect = assetLibraryRef.current.getBoundingClientRect();
-                         const isOver = isAssetLibraryOpen && mouseX >= rect.left && mouseX <= rect.right && mouseY >= rect.top && mouseY <= rect.bottom;
-                         setIsAssetLibraryDropTarget(isOver);
-                    } else {
-                        setIsAssetLibraryDropTarget(false);
-                    }
-                    break;
-                }
                 case 'note-move': {
                     const newX = draggingInfo.initialPosition.x + dx;
                     const newY = draggingInfo.initialPosition.y + dy;
@@ -1371,42 +1348,6 @@ export default function App() {
             (e.currentTarget as HTMLElement).style.cursor = 'grab';
         }
         if (draggingInfo) {
-            if (draggingInfo.type === 'sketch-move') {
-                
-                // 1. Check for Asset Library Drop
-                if (isAssetLibraryDropTarget) {
-                    const sketch = localSketches.find(s => s.id === draggingInfo.id);
-                    if (sketch && sketch.file) {
-                        const newAsset: Asset = {
-                            id: crypto.randomUUID(),
-                            imageUrl: sketch.imageUrl,
-                            file: sketch.file,
-                            name: sketch.prompt || `Sketch ${sketch.id.substring(0, 4)}`,
-                        };
-                        updateAssets(prev => [...prev, newAsset]);
-                        updateSketches(prev => prev.filter(s => s.id !== sketch.id));
-                    }
-                } 
-                // 2. Check for Timeline Insertion (via Drop Zones)
-                else if (sketchDropTargetIndex !== null) {
-                    handleAddFrameFromSketch(draggingInfo.id, sketchDropTargetIndex);
-                } 
-                // 3. Check for Timeline Integration (Dropping ON a Frame)
-                else {
-                    // Since dragging element has pointer-events-none (set in SketchCard), 
-                    // we can detect elements beneath it.
-                    const elementsBelow = document.elementsFromPoint(e.clientX, e.clientY);
-                    // Find the closest parent with a data-frame-id attribute
-                    const frameElement = elementsBelow.find(el => el.closest('[data-frame-id]'));
-                    
-                    if (frameElement) {
-                        const targetFrameId = frameElement.closest('[data-frame-id]')?.getAttribute('data-frame-id');
-                        if (targetFrameId) {
-                            handleStartIntegrationFromSketch(draggingInfo.id, targetFrameId);
-                        }
-                    }
-                }
-            }
             setDraggingInfo(null);
             setSketchDropTargetIndex(null);
             setIsAssetLibraryDropTarget(false);
@@ -1436,19 +1377,62 @@ export default function App() {
         setTransform({ scale: 1, x: 0, y: 0 });
     };
 
-    // --- Sketch & Note Drag & Drop (Manual Implementation for Notes) ---
-    const handleSketchMouseDown = (e: React.MouseEvent, sketch: Sketch) => {
-        if (e.button !== 0) return;
-        e.stopPropagation();
-        // Prevent board panning and start custom sketch drag
-        setDraggingInfo({
-            type: 'sketch-move',
-            id: sketch.id,
-            initialMousePos: { x: e.clientX, y: e.clientY },
-            initialPosition: sketch.position,
-        });
+    // --- Sketch Drag & Drop (Native HTML5) ---
+    const handleSketchDragStart = (e: React.DragEvent, sketch: Sketch) => {
+        e.stopPropagation(); 
+        setDraggingSketchId(sketch.id);
+        setIsAssetLibraryDropTarget(true);
+
+        // Calculate offset in "board space" relative to current transform
+        const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+        
+        // We calculate how far into the element we clicked, but scale it back to 1.0 coordinate space
+        const clickOffsetX = (e.clientX - rect.left) / transform.scale;
+        const clickOffsetY = (e.clientY - rect.top) / transform.scale;
+        
+        dragOffset.current = { x: clickOffsetX, y: clickOffsetY };
+
+        e.dataTransfer.setData('application/json;type=sketch-id', sketch.id);
+        e.dataTransfer.effectAllowed = 'copyMove';
+        
+        // Create custom transparent ghost image to avoid "Zoom" effect
+        try {
+            const ghost = document.createElement('div');
+            ghost.style.position = 'absolute';
+            ghost.style.top = '-1000px';
+            ghost.style.left = '-1000px';
+            ghost.style.width = '160px'; // Fixed width for consistency
+            ghost.style.height = `${160 / (rect.width / rect.height)}px`;
+            ghost.style.backgroundImage = `url(${sketch.imageUrl})`;
+            ghost.style.backgroundSize = 'contain';
+            ghost.style.backgroundRepeat = 'no-repeat';
+            ghost.style.opacity = '0.6'; // Transparency
+            ghost.style.pointerEvents = 'none';
+            ghost.style.borderRadius = '4px';
+            ghost.style.zIndex = '-1';
+            
+            document.body.appendChild(ghost);
+            e.dataTransfer.setDragImage(ghost, 80, 80 * (rect.height / rect.width)); 
+            
+            // Cleanup ghost element after drag starts
+            setTimeout(() => {
+                if (document.body.contains(ghost)) {
+                    document.body.removeChild(ghost);
+                }
+            }, 0);
+        } catch (err) {
+            console.warn("Failed to set custom drag image", err);
+        }
     };
     
+    const handleSketchDragEnd = () => {
+        setDraggingSketchId(null);
+        setSketchDropTargetIndex(null);
+        setIsAssetLibraryDropTarget(false);
+    };
+
+
+    // --- Note Drag & Drop (Manual Implementation) ---
     const handleNoteMouseDown = (e: React.MouseEvent, note: Note) => {
         if (e.button !== 0) return;
         e.stopPropagation();
@@ -1474,10 +1458,15 @@ export default function App() {
 
     const handleBoardDragOver = (e: React.DragEvent) => {
         e.preventDefault();
+        // Important: Stop propagation to prevent parent handlers (if any)
+        e.stopPropagation(); 
+
         const isFrame = e.dataTransfer.types.includes('application/json;type=frame-id');
         const isAsset = e.dataTransfer.types.includes('application/json;type=asset-ids');
+        const isSketch = e.dataTransfer.types.includes('application/json;type=sketch-id');
         const isFile = e.dataTransfer.types.includes('Files');
-        if (isFrame) {
+        
+        if (isFrame || isSketch) {
             e.dataTransfer.dropEffect = 'move';
         } else if (isAsset || isFile) {
             e.dataTransfer.dropEffect = 'copy';
@@ -1486,11 +1475,15 @@ export default function App() {
     
     const handleBoardDragLeave = (e: React.DragEvent) => {
         e.preventDefault();
+        e.stopPropagation();
     };
 
     const handleBoardDrop = async (e: React.DragEvent) => {
         e.preventDefault();
+        e.stopPropagation();
+
         const frameId = e.dataTransfer.getData('application/json;type=frame-id');
+        const sketchId = e.dataTransfer.getData('application/json;type=sketch-id');
         const assetIdsJson = e.dataTransfer.getData('application/json;type=asset-ids');
 
         if (frameId) {
@@ -1517,6 +1510,17 @@ export default function App() {
             
             updateSketches(prev => [...prev, newSketch]);
             updateFrames(prev => prev.filter(f => f.id !== frameId));
+        } else if (sketchId) {
+            // Moving a sketch on the board
+            const sketch = localSketches.find(s => s.id === sketchId);
+            if (sketch && boardRef.current) {
+                 const boardRect = boardRef.current.getBoundingClientRect();
+                 // Calculate new position relative to board top-left, taking scale and drag offset into account
+                 const newX = (e.clientX - boardRect.left - transform.x) / transform.scale - dragOffset.current.x;
+                 const newY = (e.clientY - boardRect.top - transform.y) / transform.scale - dragOffset.current.y;
+                 
+                 updateSketches(prev => prev.map(s => s.id === sketchId ? { ...s, position: { x: newX, y: newY } } : s));
+            }
         } else if (assetIdsJson) {
             try {
                 const assetIds = JSON.parse(assetIdsJson);
@@ -1654,6 +1658,21 @@ export default function App() {
         updateSketches(prev => prev.filter(s => s.id !== sketchId));
 
     }, [localSketches, updateFrames, updateSketches]);
+    
+    const handleAddAssetFromSketch = useCallback((sketchId: string) => {
+        const sketch = localSketches.find(s => s.id === sketchId);
+        if (!sketch || !sketch.file) return;
+        
+        const newAsset: Asset = {
+            id: crypto.randomUUID(),
+            imageUrl: sketch.imageUrl,
+            file: sketch.file,
+            name: sketch.prompt || 'Набросок',
+        };
+        
+        updateAssets(prev => [...prev, newAsset]);
+        updateSketches(prev => prev.filter(s => s.id !== sketchId));
+    }, [localSketches, updateAssets, updateSketches]);
 
     const registerTimelineDropZone = useCallback((index: number, element: HTMLElement | null) => {
         const map = timelineDropZoneRefs.current;
@@ -1683,7 +1702,7 @@ export default function App() {
 
 
     return (
-        <div className="relative flex h-screen w-full flex-col group/design-root overflow-hidden">
+        <div className="relative flex h-screen w-full flex-col group/design-root overflow-hidden select-none">
             <Header 
                 projectName={currentProject?.name || 'Загрузка...'}
                 hasUnsavedChanges={hasUnsavedChanges}
@@ -1759,9 +1778,10 @@ export default function App() {
                          <div key={sketch.id} className="board-interactive-item">
                             <SketchCard 
                                 sketch={sketch} 
-                                isDragging={draggingInfo?.id === sketch.id}
+                                isDragging={draggingSketchId === sketch.id}
                                 onContextMenu={handleSketchContextMenu}
-                                onMouseDown={handleSketchMouseDown}
+                                onDragStart={handleSketchDragStart}
+                                onDragEnd={handleSketchDragEnd}
                             />
                          </div>
                     ))}
@@ -1789,6 +1809,7 @@ export default function App() {
                     frameCount={frameCount}
                     isDropTarget={isAssetLibraryDropTarget}
                     onAddAssets={handleAddAssets}
+                    onAddAssetFromSketch={handleAddAssetFromSketch}
                     onDeleteAsset={handleDeleteAsset}
                     onToggleSelectAsset={(id) => {
                         setSelectedAssetIds(prev => { const n = new Set(prev); if (n.has(id)) { n.delete(id); } else { n.add(id); } return n; });

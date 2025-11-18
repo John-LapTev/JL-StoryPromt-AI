@@ -1,3 +1,4 @@
+
 import React, { useState, useRef, forwardRef } from 'react';
 import type { Asset, StorySettings } from '../types';
 import { AssetViewerModal } from './AssetViewerModal';
@@ -11,6 +12,7 @@ interface AssetLibraryPanelProps {
     frameCount: number;
     isDropTarget?: boolean;
     onAddAssets: (files: File[]) => void;
+    onAddAssetFromSketch: (sketchId: string) => void;
     onDeleteAsset: (id: string) => void;
     onToggleSelectAsset: (id: string) => void;
     onSelectAllAssets: () => void;
@@ -29,6 +31,7 @@ export const AssetLibraryPanel = forwardRef<HTMLDivElement, AssetLibraryPanelPro
     frameCount,
     isDropTarget,
     onAddAssets, 
+    onAddAssetFromSketch,
     onDeleteAsset, 
     onToggleSelectAsset, 
     onSelectAllAssets,
@@ -125,7 +128,10 @@ export const AssetLibraryPanel = forwardRef<HTMLDivElement, AssetLibraryPanelPro
     const handlePanelDragOver = (e: React.DragEvent) => {
         e.preventDefault();
         e.stopPropagation();
-        if (e.dataTransfer.types.includes('Files')) {
+        const isFile = e.dataTransfer.types.includes('Files');
+        const isSketch = e.dataTransfer.types.includes('application/json;type=sketch-id');
+
+        if (isFile || isSketch) {
             setIsDraggingOver(true);
             e.dataTransfer.dropEffect = 'copy';
         }
@@ -141,6 +147,13 @@ export const AssetLibraryPanel = forwardRef<HTMLDivElement, AssetLibraryPanelPro
         e.preventDefault();
         e.stopPropagation();
         setIsDraggingOver(false);
+        
+        const sketchId = e.dataTransfer.getData('application/json;type=sketch-id');
+        if (sketchId) {
+            onAddAssetFromSketch(sketchId);
+            return;
+        }
+
         const files = e.dataTransfer.files;
         if (files && files.length > 0) {
             // FIX: Explicitly type the 'file' parameter in the filter to resolve 'unknown' type error.
