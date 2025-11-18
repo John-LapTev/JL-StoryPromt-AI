@@ -259,6 +259,7 @@ const AddFrameMenu: React.FC<AddFrameMenuProps> = ({ targetRect, actions, onClos
     );
 };
 
+const gcd = (a: number, b: number): number => (b ? gcd(b, a % b) : a);
 
 export default function App() {
     // Project State
@@ -1291,9 +1292,10 @@ export default function App() {
         e.preventDefault();
         const isFrame = e.dataTransfer.types.includes('application/json;type=frame-id');
         const isAsset = e.dataTransfer.types.includes('application/json;type=asset-ids');
+        const isFile = e.dataTransfer.types.includes('Files');
         if (isFrame) {
             e.dataTransfer.dropEffect = 'move';
-        } else if (isAsset) {
+        } else if (isAsset || isFile) {
             e.dataTransfer.dropEffect = 'copy';
         }
     };
@@ -1302,7 +1304,7 @@ export default function App() {
         e.preventDefault();
     };
 
-    const handleBoardDrop = (e: React.DragEvent) => {
+    const handleBoardDrop = async (e: React.DragEvent) => {
         e.preventDefault();
         const frameId = e.dataTransfer.getData('application/json;type=frame-id');
         const assetIdsJson = e.dataTransfer.getData('application/json;type=asset-ids');
@@ -1364,6 +1366,39 @@ export default function App() {
                 updateSketches(prev => [...prev, ...newSketches]);
             } catch (err) {
                  console.error("Failed to parse dropped asset data on board", err);
+            }
+        } else if (e.dataTransfer.files.length > 0) {
+            const files = Array.from(e.dataTransfer.files) as File[];
+            const imageFiles = files.filter(file => file.type.startsWith('image/'));
+    
+            if (imageFiles.length > 0 && boardRef.current) {
+                const boardRect = boardRef.current.getBoundingClientRect();
+                const startX = (e.clientX - boardRect.left - transform.x) / transform.scale;
+                const startY = (e.clientY - boardRect.top - transform.y) / transform.scale;
+    
+                const newSketchesPromises = imageFiles.map(async (file, index) => {
+                    const imageUrl = await fileToBase64(file);
+                    const { width, height } = await getImageDimensions(file);
+                    const commonDivisor = gcd(width, height);
+                    const aspectRatio = `${width / commonDivisor}:${height / commonDivisor}`;
+    
+                    const sketchWidth = 320;
+                    const sketchHeight = (sketchWidth * height) / width;
+    
+                    const newSketch: Sketch = {
+                        id: crypto.randomUUID(),
+                        imageUrl,
+                        prompt: file.name.replace(/\.[^/.]+$/, ""),
+                        file,
+                        position: { x: startX + index * 20, y: startY + index * 20 },
+                        size: { width: sketchWidth, height: sketchHeight },
+                        aspectRatio: aspectRatio,
+                    };
+                    return newSketch;
+                });
+                
+                const newSketches = await Promise.all(newSketchesPromises);
+                updateSketches(prev => [...prev, ...newSketches]);
             }
         }
     };
