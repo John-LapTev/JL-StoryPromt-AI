@@ -1,12 +1,13 @@
-import React, { useRef } from 'react';
+
+import React, { useRef, useEffect } from 'react';
 
 interface AddFrameButtonProps {
     index: number;
     onOpenMenu: (index: number, rect: DOMRect) => void;
-    // Drag and drop props
     onDragOver?: (e: React.DragEvent) => void;
     onDrop?: (e: React.DragEvent) => void;
     isDropTarget?: boolean;
+    onRegisterDropZone?: (index: number, element: HTMLElement | null) => void;
 }
 
 export const AddFrameButton: React.FC<AddFrameButtonProps> = ({ 
@@ -14,9 +15,23 @@ export const AddFrameButton: React.FC<AddFrameButtonProps> = ({
     onOpenMenu,
     onDragOver,
     onDrop,
-    isDropTarget 
+    isDropTarget,
+    onRegisterDropZone,
 }) => {
     const buttonRef = useRef<HTMLButtonElement>(null);
+    const dropZoneRef = useRef<HTMLDivElement>(null);
+
+    useEffect(() => {
+        const element = dropZoneRef.current;
+        if (element && onRegisterDropZone) {
+            onRegisterDropZone(index, element);
+        }
+        return () => {
+            if (onRegisterDropZone) {
+                onRegisterDropZone(index, null);
+            }
+        };
+    }, [index, onRegisterDropZone]);
 
     const handleClick = () => {
         if (buttonRef.current) {
@@ -31,6 +46,7 @@ export const AddFrameButton: React.FC<AddFrameButtonProps> = ({
     
     return (
         <div 
+            ref={dropZoneRef}
             className={`group shrink-0 h-[228px] flex items-center justify-center px-2 transition-colors ${dropZoneClasses}`}
             onDragOver={onDragOver}
             onDrop={onDrop}

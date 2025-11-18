@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useCallback, useMemo, useRef, useLayoutEffect } from 'react';
 import type { Frame, Project, Asset, StorySettings, IntegrationConfig, Sketch, Note, Position } from './types';
 import { initialFrames, initialAssets } from './constants';
@@ -89,7 +90,8 @@ const initialStorySettings: StorySettings = {
 
 type DraggingSketchInfo = {
     id: string;
-    offset: { x: number; y: number }; // Offset of cursor within the sketch in viewport pixels
+    initialMousePos: { x: number; y: number };
+    initialSketchPos: Position;
 } | null;
 
 
@@ -98,11 +100,10 @@ const SketchCard: React.FC<{
     sketch: Sketch;
     isDragging: boolean;
     onContextMenu: (e: React.MouseEvent, sketch: Sketch) => void;
-    onDragStart: (e: React.DragEvent, sketch: Sketch) => void;
-    onDragEnd: (e: React.DragEvent) => void;
-}> = ({ sketch, isDragging, onContextMenu, onDragStart, onDragEnd }) => (
+    onMouseDown: (e: React.MouseEvent, sketch: Sketch) => void;
+}> = ({ sketch, isDragging, onContextMenu, onMouseDown }) => (
     <div
-        className={`absolute group bg-white p-2 pb-6 rounded-sm shadow-lg transition-transform hover:scale-105 hover:z-20 cursor-grab ${isDragging ? 'opacity-40' : ''}`}
+        className={`absolute group bg-white p-2 pb-6 rounded-sm shadow-lg transition-transform hover:scale-105 ${isDragging ? 'opacity-80 cursor-grabbing z-30 ring-2 ring-primary' : 'hover:z-20 cursor-grab'}`}
         style={{
             left: sketch.position.x,
             top: sketch.position.y,
@@ -110,20 +111,23 @@ const SketchCard: React.FC<{
             height: sketch.size.height,
         }}
         onContextMenu={(e) => onContextMenu(e, sketch)}
-        draggable
-        onDragStart={(e) => onDragStart(e, sketch)}
-        onDragEnd={onDragEnd}
+        onMouseDown={(e) => onMouseDown(e, sketch)}
     >
-        <div className="w-full h-full bg-black">
-             {sketch.imageUrl ? (
-                <img src={sketch.imageUrl} alt={sketch.prompt} className="w-full h-full object-contain pointer-events-none" onDragStart={(e) => e.preventDefault()} />
+        <div className="w-full h-full bg-black pointer-events-none">
+            {sketch.imageUrl ? (
+                <div
+                    className="w-full h-full bg-contain bg-no-repeat bg-center"
+                    style={{ backgroundImage: `url(${sketch.imageUrl})` }}
+                    role="img"
+                    aria-label={sketch.prompt}
+                ></div>
             ) : (
                 <div className="w-full h-full flex items-center justify-center">
                     <div className="w-8 h-8 border-4 border-white/50 border-t-transparent rounded-full animate-spin"></div>
                 </div>
             )}
         </div>
-        <p className="absolute bottom-1 left-2 right-2 text-center text-xs text-black truncate">{sketch.prompt}</p>
+        <p className="absolute bottom-1 left-2 right-2 text-center text-xs text-black truncate pointer-events-none">{sketch.prompt}</p>
     </div>
 );
 
@@ -228,8 +232,8 @@ export default function App() {
     const [boardContextMenu, setBoardContextMenu] = useState<{ x: number, y: number, boardPosition: Position } | null>(null);
     const [sketchContextMenu, setSketchContextMenu] = useState<{ x: number, y: number, sketch: Sketch } | null>(null);
     const [addFrameMenu, setAddFrameMenu] = useState<{ index: number; rect: DOMRect } | null>(null);
-    const [isPanning, setIsPanning] = useState(false);
     const [draggingSketchInfo, setDraggingSketchInfo] = useState<DraggingSketchInfo>(null);
+    const [sketchDropTargetIndex, setSketchDropTargetIndex] = useState<number | null>(null);
     
     // Non-blocking loading states
     const [generatingStory, setGeneratingStory] = useState(false);
@@ -238,6 +242,7 @@ export default function App() {
 
     // Refs
     const boardRef = useRef<HTMLDivElement>(null);
+    const timelineDropZoneRefs = useRef(new Map<number, HTMLElement>());
 
     // Derived state
     const currentProject = useMemo(() => projects.find(p => p.id === currentProjectId), [projects, currentProjectId]);
@@ -627,8 +632,8 @@ export default function App() {
     
     // --- Pan and Zoom Handlers ---
     const panState = useRef({ isPanning: false, startX: 0, startY: 0, lastX: 0, lastY: 0 });
-    const handleMouseDown = (e: React.MouseEvent) => {
-        if (e.button !== 0) return;
+    const handleBoardMouseDown = (e: React.MouseEvent) => {
+        if (e.button !== 1 && !(e.button === 0 && e.ctrlKey)) return;
         if ((e.target as HTMLElement).closest('.board-interactive-item')) return;
         
         setContextMenu(null);
@@ -636,22 +641,50 @@ export default function App() {
         setSketchContextMenu(null);
 
         panState.current = { isPanning: true, startX: e.clientX, startY: e.clientY, lastX: transform.x, lastY: transform.y };
-        e.currentTarget.style.cursor = 'grabbing';
+        (e.currentTarget as HTMLElement).style.cursor = 'grabbing';
     };
 
-    const handleMouseMove = (e: React.MouseEvent) => {
-        if (!panState.current.isPanning) return;
-        e.preventDefault();
+    const handleBoardMouseMove = (e: React.MouseEvent) => {
+        if (panState.current.isPanning) {
+            e.preventDefault();
+            const dx = e.clientX - panState.current.startX;
+            const dy = e.clientY - panState.current.startY;
+            setTransform(prev => ({ ...prev, x: panState.current.lastX + dx, y: panState.current.lastY + dy }));
+        }
         
-        const dx = e.clientX - panState.current.startX;
-        const dy = e.clientY - panState.current.startY;
-        setTransform(prev => ({ ...prev, x: panState.current.lastX + dx, y: panState.current.lastY + dy }));
+        if (draggingSketchInfo) {
+             const dx = e.clientX - draggingSketchInfo.initialMousePos.x;
+            const dy = e.clientY - draggingSketchInfo.initialMousePos.y;
+            const newX = draggingSketchInfo.initialSketchPos.x + (dx / transform.scale);
+            const newY = draggingSketchInfo.initialSketchPos.y + (dy / transform.scale);
+            updateSketches(prev => prev.map(s => s.id === draggingSketchInfo.id ? { ...s, position: { x: newX, y: newY } } : s));
+
+            let foundIndex: number | null = null;
+            for (const [index, element] of timelineDropZoneRefs.current.entries()) {
+                const rect = element.getBoundingClientRect();
+                if (
+                    e.clientX >= rect.left && e.clientX <= rect.right &&
+                    e.clientY >= rect.top && e.clientY <= rect.bottom
+                ) {
+                    foundIndex = index;
+                    break;
+                }
+            }
+            setSketchDropTargetIndex(foundIndex);
+        }
     };
 
-    const handleMouseUp = (e: React.MouseEvent) => {
+    const handleBoardMouseUp = (e: React.MouseEvent) => {
         if (panState.current.isPanning) {
             panState.current.isPanning = false;
-            e.currentTarget.style.cursor = 'grab';
+            (e.currentTarget as HTMLElement).style.cursor = 'grab';
+        }
+        if (draggingSketchInfo) {
+            if (sketchDropTargetIndex !== null) {
+                handleAddFrameFromSketch(draggingSketchInfo.id, sketchDropTargetIndex);
+            }
+            setDraggingSketchInfo(null);
+            setSketchDropTargetIndex(null);
         }
     };
 
@@ -678,73 +711,22 @@ export default function App() {
         setTransform({ scale: 1, x: 0, y: 0 });
     };
 
-    // --- Sketch Drag & Drop (Unified) ---
-    const handleSketchDragStart = (e: React.DragEvent, sketch: Sketch) => {
-        e.stopPropagation(); // Prevents board panning
-        
-        const elRect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-        const offsetX = e.clientX - elRect.left;
-        const offsetY = e.clientY - elRect.top;
-        
-        setDraggingSketchInfo({ id: sketch.id, offset: { x: offsetX, y: offsetY } });
-        
-        e.dataTransfer.setData('application/json;type=sketch-id', sketch.id);
-        e.dataTransfer.effectAllowed = 'copyMove';
+    // --- Sketch Drag & Drop (Manual Implementation) ---
+    const handleSketchMouseDown = (e: React.MouseEvent, sketch: Sketch) => {
+        if (e.button !== 0) return;
+        e.stopPropagation();
     
-        // --- Create a custom, reasonably-sized drag preview ---
-        const preview = document.createElement('img');
-        preview.src = sketch.imageUrl;
-        // Base the preview size on the sketch size, but cap it.
-        const previewWidth = Math.min(sketch.size.width, 160);
-        const aspectRatio = sketch.size.width / sketch.size.height;
-        const previewHeight = previewWidth / aspectRatio;
-        
-        preview.style.width = `${previewWidth}px`;
-        preview.style.height = `${previewHeight}px`;
-        preview.style.position = 'absolute';
-        preview.style.top = '-10000px';
-        preview.style.left = '-10000px';
-        preview.style.objectFit = 'contain';
-        preview.style.borderRadius = '4px';
-        preview.style.opacity = '0.8';
-        preview.style.boxShadow = '0 4px 8px rgba(0,0,0,0.3)';
-        preview.style.pointerEvents = 'none';
-        document.body.appendChild(preview);
-        
-        // Use this off-screen element as the drag image, centered on the cursor
-        e.dataTransfer.setDragImage(preview, previewWidth / 2, previewHeight / 2);
-    
-        // Clean up the element after the drag operation has started
-        setTimeout(() => {
-            document.body.removeChild(preview);
-        }, 0);
+        setDraggingSketchInfo({
+            id: sketch.id,
+            initialMousePos: { x: e.clientX, y: e.clientY },
+            initialSketchPos: sketch.position,
+        });
     };
 
     const handleBoardDragOver = (e: React.DragEvent) => {
-        e.preventDefault(); // Allow drop for both sketches and frames
-        
+        e.preventDefault();
         const isFrame = e.dataTransfer.types.includes('application/json;type=frame-id');
-
-        if (draggingSketchInfo) {
-            const boardRect = boardRef.current!.getBoundingClientRect();
-            
-            // Calculate new top-left of sketch in viewport coordinates
-            const newViewportX = e.clientX - draggingSketchInfo.offset.x;
-            const newViewportY = e.clientY - draggingSketchInfo.offset.y;
-
-            // Convert viewport coordinates to board coordinates
-            const newBoardX = (newViewportX - boardRect.left - transform.x) / transform.scale;
-            const newBoardY = (newViewportY - boardRect.top - transform.y) / transform.scale;
-            
-            // Update sketch position without causing a full re-render on every pixel move (throttling can be added if needed)
-            updateSketches(prev => 
-                prev.map(s => 
-                    s.id === draggingSketchInfo.id 
-                    ? { ...s, position: { x: newBoardX, y: newBoardY } } 
-                    : s
-                )
-            );
-        } else if (isFrame) {
+        if (isFrame) {
             e.dataTransfer.dropEffect = 'move';
         }
     };
@@ -778,10 +760,6 @@ export default function App() {
             updateSketches(prev => [...prev, newSketch]);
             updateFrames(prev => prev.filter(f => f.id !== frameId));
         }
-    };
-
-    const handleSketchDragEnd = (e: React.DragEvent) => {
-        setDraggingSketchInfo(null);
     };
 
     const handleSketchContextMenu = (e: React.MouseEvent, sketch: Sketch) => {
@@ -829,6 +807,15 @@ export default function App() {
 
     }, [localSketches, updateFrames, updateSketches]);
 
+    const registerTimelineDropZone = useCallback((index: number, element: HTMLElement | null) => {
+        const map = timelineDropZoneRefs.current;
+        if (element) {
+            map.set(index, element);
+        } else {
+            map.delete(index);
+        }
+    }, []);
+
 
     // Construct actions for AddFrameMenu
     const addFrameMenuActions: AddFrameMenuAction[] = [];
@@ -861,13 +848,13 @@ export default function App() {
             <main 
                 ref={boardRef}
                 className="flex-1 flex-col overflow-hidden relative grid-bg-metallic"
-                style={{ cursor: panState.current.isPanning ? 'grabbing' : 'grab' }}
+                style={{ cursor: panState.current.isPanning || draggingSketchInfo ? 'grabbing' : 'grab' }}
                 onDoubleClick={handleBoardDoubleClick}
                 onContextMenu={handleBoardContextMenu}
-                onMouseDown={handleMouseDown}
-                onMouseMove={handleMouseMove}
-                onMouseUp={handleMouseUp}
-                onMouseLeave={handleMouseUp} // End panning if mouse leaves the area
+                onMouseDown={handleBoardMouseDown}
+                onMouseMove={handleBoardMouseMove}
+                onMouseUp={handleBoardMouseUp}
+                onMouseLeave={handleBoardMouseUp}
                 onWheel={handleWheel}
                 onDragOver={handleBoardDragOver}
                 onDrop={handleBoardDrop}
@@ -888,6 +875,7 @@ export default function App() {
                             generatingVideoState={generatingVideoState}
                             globalAspectRatio={globalAspectRatio}
                             isAspectRatioLocked={isAspectRatioLocked}
+                            sketchDropTargetIndex={sketchDropTargetIndex}
                             onGlobalAspectRatioChange={handleGlobalAspectRatioChange}
                             onToggleAspectRatioLock={handleToggleAspectRatioLock}
                             onFrameAspectRatioChange={handleFrameAspectRatioChange}
@@ -910,6 +898,7 @@ export default function App() {
                             onVersionChange={handleVersionChange}
                             onStartIntegration={handleStartIntegration}
                             onOpenAddFrameMenu={handleOpenAddFrameMenu}
+                            onRegisterDropZone={registerTimelineDropZone}
                         />
                     </div>
 
@@ -919,8 +908,7 @@ export default function App() {
                                 sketch={sketch} 
                                 isDragging={draggingSketchInfo?.id === sketch.id}
                                 onContextMenu={handleSketchContextMenu}
-                                onDragStart={(e) => handleSketchDragStart(e, sketch)}
-                                onDragEnd={handleSketchDragEnd}
+                                onMouseDown={handleSketchMouseDown}
                             />
                          </div>
                     ))}

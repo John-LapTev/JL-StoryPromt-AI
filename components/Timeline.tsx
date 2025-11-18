@@ -1,3 +1,4 @@
+
 import React, { useState } from 'react';
 import type { Frame } from '../types';
 import { FrameCard } from './FrameCard';
@@ -12,6 +13,7 @@ interface TimelineProps {
     generatingVideoState: GeneratingVideoState;
     globalAspectRatio: string;
     isAspectRatioLocked: boolean;
+    sketchDropTargetIndex: number | null;
     onGlobalAspectRatioChange: (newRatio: string) => void;
     onToggleAspectRatioLock: () => void;
     onFrameAspectRatioChange: (frameId: string, newRatio: string) => void;
@@ -34,6 +36,7 @@ interface TimelineProps {
     onVersionChange: (frameId: string, direction: 'next' | 'prev') => void;
     onStartIntegration: (source: File | string, targetFrameId: string) => void;
     onOpenAddFrameMenu: (index: number, rect: DOMRect) => void;
+    onRegisterDropZone: (index: number, element: HTMLElement | null) => void;
 }
 
 const aspectRatios = ['16:9', '4:3', '1:1', '9:16'];
@@ -47,6 +50,7 @@ export const Timeline: React.FC<TimelineProps> = ({
     generatingVideoState,
     globalAspectRatio,
     isAspectRatioLocked,
+    sketchDropTargetIndex,
     onGlobalAspectRatioChange,
     onToggleAspectRatioLock,
     onFrameAspectRatioChange,
@@ -69,6 +73,7 @@ export const Timeline: React.FC<TimelineProps> = ({
     onVersionChange,
     onStartIntegration,
     onOpenAddFrameMenu,
+    onRegisterDropZone,
 }) => {
     const [draggedIndex, setDraggedIndex] = useState<number | null>(null);
     const [dropTargetIndex, setDropTargetIndex] = useState<number | null>(null);
@@ -200,13 +205,17 @@ export const Timeline: React.FC<TimelineProps> = ({
                 </div>
             </div>
             <div className="overflow-x-auto pb-2" onDragLeave={handleTimelineContainerDragLeave}>
-                <div className="flex items-start gap-0 h-full p-2 w-max">
+                <div 
+                    className="flex items-start gap-0 h-full p-2 w-max"
+                    onDragOver={(e) => e.preventDefault()}
+                >
                     <AddFrameButton 
                         index={0} 
                         onOpenMenu={onOpenAddFrameMenu}
                         onDragOver={(e) => handleDragOver(e, 0)}
                         onDrop={handleDrop}
-                        isDropTarget={dropTargetIndex === 0}
+                        isDropTarget={dropTargetIndex === 0 || sketchDropTargetIndex === 0}
+                        onRegisterDropZone={onRegisterDropZone}
                     />
                     {frames.map((frame, index) => (
                         <React.Fragment key={frame.id}>
@@ -240,7 +249,8 @@ export const Timeline: React.FC<TimelineProps> = ({
                                 onOpenMenu={onOpenAddFrameMenu}
                                 onDragOver={(e) => handleDragOver(e, index + 1)}
                                 onDrop={handleDrop}
-                                isDropTarget={dropTargetIndex === index + 1}
+                                isDropTarget={dropTargetIndex === index + 1 || sketchDropTargetIndex === index + 1}
+                                onRegisterDropZone={onRegisterDropZone}
                             />
                         </React.Fragment>
                     ))}
