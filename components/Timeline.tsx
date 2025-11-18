@@ -113,10 +113,8 @@ export const Timeline: React.FC<TimelineProps> = ({
         }
     };
 
-    const handleDragLeave = () => {
-        // Intentionally left blank to prevent flickering when moving between drop targets.
-        // `handleDragOver` handles setting the target to null if it's not a valid drop zone.
-        // `handleDrop` and `handleDragEnd` perform the final cleanup.
+    const handleTimelineContainerDragLeave = () => {
+        setDropTargetIndex(null);
     };
 
     const handleDrop = (e: React.DragEvent) => {
@@ -201,46 +199,46 @@ export const Timeline: React.FC<TimelineProps> = ({
                     </button>
                 </div>
             </div>
-            <div className="overflow-x-auto pb-2">
-                <div className="flex items-start gap-4 h-full p-2 w-max">
+            <div className="overflow-x-auto pb-2" onDragLeave={handleTimelineContainerDragLeave}>
+                <div className="flex items-start gap-0 h-full p-2 w-max">
                     <AddFrameButton 
                         index={0} 
                         onOpenMenu={onOpenAddFrameMenu}
                         onDragOver={(e) => handleDragOver(e, 0)}
-                        onDragLeave={handleDragLeave}
                         onDrop={handleDrop}
                         isDropTarget={dropTargetIndex === 0}
                     />
                     {frames.map((frame, index) => (
                         <React.Fragment key={frame.id}>
-                            <FrameCard
-                                frame={frame}
-                                index={index}
-                                isGeneratingPrompt={generatingPromptFrameId === frame.id}
-                                generatingVideoState={generatingVideoState?.frameId === frame.id ? generatingVideoState : null}
-                                isDragging={draggedIndex === index}
-                                isAspectRatioLocked={isAspectRatioLocked}
-                                onDurationChange={onDurationChange}
-                                onPromptChange={onPromptChange}
-                                onDeleteFrame={onDeleteFrame}
-                                onGenerateSinglePrompt={onGenerateSinglePrompt}
-                                onEditPrompt={onEditPrompt}
-                                onViewImage={onViewImage}
-                                onGenerateVideo={onGenerateVideo}
-                                onOpenDetailView={onOpenDetailView}
-                                onDragStart={(e) => handleDragStart(e, index)}
-                                onDragEnd={handleDragEnd}
-                                onContextMenu={onContextMenu}
-                                onVersionChange={onVersionChange}
-                                onAspectRatioChange={onFrameAspectRatioChange}
-                                onAdaptAspectRatio={onAdaptFrameAspectRatio}
-                                onStartIntegration={onStartIntegration}
-                            />
+                            <div className="px-2">
+                                <FrameCard
+                                    frame={frame}
+                                    index={index}
+                                    isGeneratingPrompt={generatingPromptFrameId === frame.id}
+                                    generatingVideoState={generatingVideoState?.frameId === frame.id ? generatingVideoState : null}
+                                    isDragging={draggedIndex === index}
+                                    isAspectRatioLocked={isAspectRatioLocked}
+                                    onDurationChange={onDurationChange}
+                                    onPromptChange={onPromptChange}
+                                    onDeleteFrame={onDeleteFrame}
+                                    onGenerateSinglePrompt={onGenerateSinglePrompt}
+                                    onEditPrompt={onEditPrompt}
+                                    onViewImage={onViewImage}
+                                    onGenerateVideo={onGenerateVideo}
+                                    onOpenDetailView={onOpenDetailView}
+                                    onDragStart={(e) => handleDragStart(e, index)}
+                                    onDragEnd={handleDragEnd}
+                                    onContextMenu={onContextMenu}
+                                    onVersionChange={onVersionChange}
+                                    onAspectRatioChange={onFrameAspectRatioChange}
+                                    onAdaptAspectRatio={onAdaptFrameAspectRatio}
+                                    onStartIntegration={onStartIntegration}
+                                />
+                            </div>
                             <AddFrameButton
                                 index={index + 1}
                                 onOpenMenu={onOpenAddFrameMenu}
                                 onDragOver={(e) => handleDragOver(e, index + 1)}
-                                onDragLeave={handleDragLeave}
                                 onDrop={handleDrop}
                                 isDropTarget={dropTargetIndex === index + 1}
                             />

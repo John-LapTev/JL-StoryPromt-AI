@@ -116,7 +116,7 @@ const SketchCard: React.FC<{
     >
         <div className="w-full h-full bg-black">
              {sketch.imageUrl ? (
-                <img src={sketch.imageUrl} alt={sketch.prompt} className="w-full h-full object-contain pointer-events-none" draggable="false" />
+                <img src={sketch.imageUrl} alt={sketch.prompt} className="w-full h-full object-contain pointer-events-none" onDragStart={(e) => e.preventDefault()} />
             ) : (
                 <div className="w-full h-full flex items-center justify-center">
                     <div className="w-8 h-8 border-4 border-white/50 border-t-transparent rounded-full animate-spin"></div>
