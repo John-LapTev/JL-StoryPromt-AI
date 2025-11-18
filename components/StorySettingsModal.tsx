@@ -168,7 +168,7 @@ export const StorySettingsModal: React.FC<StorySettingsModalProps> = ({
                                 <div className="grid grid-cols-2 gap-3">
                                     {storyIdeas.map((idea, i) => (
                                         <button key={i} onClick={() => handleFieldChange('prompt', idea.synopsis)} className="p-3 bg-white/5 rounded-lg text-left text-white/80 hover:bg-white/10 hover:text-white transition-colors flex flex-col gap-1">
-                                            <p className="font-bold text-xs text-primary">{idea.title}</p>
+                                            <p className="font-bold text-xs text-cyan-400">{idea.title}</p>
                                             <p className="text-xs">{idea.synopsis}</p>
                                         </button>
                                     ))}

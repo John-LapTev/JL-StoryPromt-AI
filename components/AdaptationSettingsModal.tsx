@@ -54,7 +54,7 @@ export const AdaptationSettingsModal: React.FC<AdaptationSettingsModalProps> = (
     
     const CompactFrame: React.FC<{ frame: Frame | null, label: string, className?: string, isMain?: boolean }> = ({ frame, label, className, isMain = false }) => (
         <div className={`flex flex-col gap-2 text-center ${className}`}>
-            <h4 className={`text-xs font-bold uppercase tracking-wider ${isMain ? 'text-primary' : 'text-white/60'}`}>{label}</h4>
+            <h4 className={`text-xs font-bold uppercase tracking-wider ${isMain ? 'text-cyan-400' : 'text-white/60'}`}>{label}</h4>
             <div className={`w-full aspect-video rounded-lg bg-black/30 flex items-center justify-center border ${isMain ? 'border-2 border-primary' : 'border-white/10'}`}>
                 {frame ? (
                     <img src={frame.imageUrls[frame.activeVersionIndex]} alt={label} className="max-h-full max-w-full object-contain rounded-md" />
