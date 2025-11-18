@@ -520,16 +520,38 @@ export async function* createStoryFromAssets(
         Крайне важно, чтобы ты СОХРАНИЛ(А) художественный стиль, цветовую палитру и дизайн персонажей/объектов, установленные в предоставленных референсных изображениях-ассетах. Новое изображение должно ощущаться так, будто оно принадлежит той же вселенной, что и ассеты.
         `;
 
-        const imageGenResponse = await ai.models.generateContent({
-            model: 'gemini-2.5-flash-image',
-            contents: { parts: [{ text: imageGenPrompt }, ...assetImageParts] },
-            config: {
-                responseModalities: [Modality.IMAGE],
-            },
-        });
+        let imageGenResponse = null;
+        const maxRetries = 2; // Original attempt + 1 retry
+        for (let attempt = 1; attempt <= maxRetries; attempt++) {
+            try {
+                const response = await ai.models.generateContent({
+                    model: 'gemini-2.5-flash-image',
+                    contents: { parts: [{ text: imageGenPrompt }, ...assetImageParts] },
+                    config: {
+                        responseModalities: [Modality.IMAGE],
+                    },
+                });
+                
+                const hasImageData = response.candidates?.[0]?.content?.parts?.some(p => p.inlineData?.data);
+                if (hasImageData) {
+                    imageGenResponse = response;
+                    break; 
+                }
+                
+                if (attempt === maxRetries) {
+                    console.warn(`Generation succeeded but returned no image data after ${maxRetries} attempts for frame ${i + 1}.`);
+                }
+
+            } catch (error) {
+                console.warn(`Image generation attempt ${attempt} for frame ${i + 1} failed:`, error);
+                if (attempt < maxRetries) {
+                    await new Promise(resolve => setTimeout(resolve, 1000)); // Wait 1s before retrying
+                }
+            }
+        }
         
         let imageUrls: string[] = [];
-        if (imageGenResponse.candidates && imageGenResponse.candidates.length > 0 && imageGenResponse.candidates[0].content && imageGenResponse.candidates[0].content.parts) {
+        if (imageGenResponse?.candidates?.[0]?.content?.parts) {
             for (const part of imageGenResponse.candidates[0].content.parts) {
                 if (part.inlineData) {
                     imageUrls.push(`data:${part.inlineData.mimeType};base64,${part.inlineData.data}`);

@@ -937,7 +937,18 @@ export default function App() {
     
         try {
             for (const frame of localFrames) {
+                // FIX: Skip placeholder frames that are currently being generated.
+                if (frame.isGenerating) {
+                    continue; 
+                }
                 const activeImageUrl = frame.imageUrls[frame.activeVersionIndex];
+
+                // FIX: Also skip frames with no valid image URL.
+                if (!activeImageUrl) {
+                    updateFrames(prev => prev.map(f => f.id === frame.id ? { ...f, isGenerating: false, generatingMessage: undefined, prompt: `${f.prompt || ''} (Ошибка: отсутствует изображение)` } : f));
+                    continue;
+                }
+                
                 try {
                     const { width, height } = await getImageDimensions(activeImageUrl);
                     const currentRatioValue = width / height;
@@ -956,6 +967,8 @@ export default function App() {
     
             if (framesToAdaptIds.length === 0) {
                 alert("Все кадры уже имеют целевое соотношение сторон.");
+                // Ensure loading state is cleared even if nothing is adapted
+                updateFrames(prev => prev.map(f => f.isGenerating && f.generatingMessage === 'Проверка формата...' ? { ...f, isGenerating: false, generatingMessage: undefined } : f));
                 return;
             }
     
