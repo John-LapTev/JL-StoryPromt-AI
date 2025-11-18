@@ -110,7 +110,7 @@ const SketchCard: React.FC<{
     onMouseDown: (e: React.MouseEvent, sketch: Sketch) => void;
 }> = ({ sketch, isDragging, onContextMenu, onMouseDown }) => (
     <div
-        className={`absolute group bg-white p-2 pb-6 rounded-sm shadow-lg transition-transform hover:scale-105 ${isDragging ? 'opacity-80 cursor-grabbing z-30 ring-2 ring-primary' : 'hover:z-20 cursor-grab'}`}
+        className={`absolute group bg-white p-2 pb-6 rounded-sm shadow-lg transition-transform hover:scale-[1.025] ${isDragging ? 'opacity-80 cursor-grabbing z-30 ring-2 ring-primary' : 'hover:z-20 cursor-grab'}`}
         style={{
             left: sketch.position.x,
             top: sketch.position.y,
