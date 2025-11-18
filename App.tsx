@@ -1092,6 +1092,11 @@ export default function App() {
         setIntegrationConfig({ sourceAsset, targetFrame });
         setIsIntegrationModalOpen(true);
     }, [localFrames, localAssets]);
+    
+    const handleStartIntegrationWithEmptySource = (targetFrame: Frame) => {
+        setIntegrationConfig({ targetFrame });
+        setIsIntegrationModalOpen(true);
+    };
 
     const handleApplyIntegration = useCallback(async (result: { imageUrl: string, prompt: string }) => {
         if (!integrationConfig) return;
@@ -1302,6 +1307,7 @@ export default function App() {
                     actions={[
                         { label: 'Создать видео', icon: 'movie', onClick: () => handleGenerateVideo(contextMenu.frame) },
                         { label: 'Адаптировать к сюжету', icon: 'auto_fix', onClick: () => setAdaptingFrame(contextMenu.frame) },
+                        { label: 'Интегрировать ассет', icon: 'add_photo_alternate', onClick: () => handleStartIntegrationWithEmptySource(contextMenu.frame) },
                         { label: 'Редактировать кадр', icon: 'tune', onClick: () => {
                             setAdvancedGenerateModalConfig({ mode: 'edit', frameToEdit: contextMenu.frame });
                             setIsAdvancedGenerateModalOpen(true);

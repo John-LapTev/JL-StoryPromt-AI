@@ -35,6 +35,6 @@ export interface StorySettings {
 }
 
 export interface IntegrationConfig {
-  sourceAsset: Asset | { imageUrl: string, file: File, name: string };
+  sourceAsset?: Asset | { imageUrl: string, file: File, name: string };
   targetFrame: Frame;
 }

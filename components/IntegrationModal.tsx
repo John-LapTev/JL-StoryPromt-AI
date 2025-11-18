@@ -1,6 +1,7 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import type { IntegrationConfig } from '../types';
 import { integrateAssetIntoFrame, generateIntegrationSuggestions } from '../services/geminiService';
+import { fileToBase64 } from '../utils/fileUtils';
 
 interface IntegrationModalProps {
     isOpen: boolean;
@@ -8,6 +9,8 @@ interface IntegrationModalProps {
     config: IntegrationConfig;
     onIntegrate: (result: { imageUrl: string, prompt: string }) => void;
 }
+
+type SourceAsset = IntegrationConfig['sourceAsset'];
 
 // A robust component for displaying images within a constrained, flexible container.
 const ImagePanel: React.FC<{ imageUrl: string | null, label: string, isLoading?: boolean, isResult?: boolean }> = ({ imageUrl, label, isLoading = false, isResult = false }) => (
@@ -38,38 +41,83 @@ export const IntegrationModal: React.FC<IntegrationModalProps> = ({ isOpen, onCl
     const [isIntegrating, setIsIntegrating] = useState(false);
     const [resultImageUrl, setResultImageUrl] = useState<string | null>(null);
 
+    const [sourceAsset, setSourceAsset] = useState<SourceAsset>(undefined);
+    const [isSourceDragOver, setIsSourceDragOver] = useState(false);
+    const sourceFileInputRef = useRef<HTMLInputElement>(null);
+    
+
     const fetchSuggestions = useCallback(async () => {
-        if (!config) return;
+        if (!config || !sourceAsset) return;
         setIsLoadingSuggestions(true);
         setSuggestions([]);
         try {
-            const newSuggestions = await generateIntegrationSuggestions(config.sourceAsset, config.targetFrame);
+            const newSuggestions = await generateIntegrationSuggestions(sourceAsset, config.targetFrame);
             setSuggestions(newSuggestions);
         } catch (error) {
             console.error("Failed to get integration suggestions:", error);
         } finally {
             setIsLoadingSuggestions(false);
         }
-    }, [config]);
+    }, [config, sourceAsset]);
 
     useEffect(() => {
-        if (isOpen && config) {
+        if (isOpen) {
             // Reset state on open
             setMode('auto');
             setManualPrompt('');
             setResultImageUrl(null);
             setIsIntegrating(false);
-            fetchSuggestions();
+            setSourceAsset(config.sourceAsset);
         }
-    }, [isOpen, config, fetchSuggestions]);
+    }, [isOpen, config]);
+
+    useEffect(() => {
+        if (sourceAsset) {
+            fetchSuggestions();
+        } else {
+            setSuggestions([]);
+        }
+    }, [sourceAsset, fetchSuggestions]);
 
     if (!isOpen || !config) return null;
 
+    const handleSourceFileChange = async (file: File | null) => {
+        if (!file) return;
+        try {
+            const imageUrl = await fileToBase64(file);
+            setSourceAsset({
+                // id is not needed here as it's a temporary representation
+                imageUrl,
+                file,
+                name: file.name
+            });
+        } catch (error) {
+            console.error("Error reading file:", error);
+            alert("Не удалось загрузить файл изображения.");
+        }
+    };
+
+    const handleSourcePanelDrop = (e: React.DragEvent) => {
+        e.preventDefault();
+        e.stopPropagation();
+        setIsSourceDragOver(false);
+        const file = e.dataTransfer.files?.[0];
+        if (file && file.type.startsWith('image/')) {
+            handleSourceFileChange(file);
+        }
+    };
+    
     const handleIntegrate = async () => {
+        if (!sourceAsset) {
+            alert("Пожалуйста, загрузите исходный ассет для интеграции.");
+            return;
+        }
+
         setIsIntegrating(true);
         setResultImageUrl(null);
         try {
-            let instruction = "Интегрируй исходный ассет в целевой кадр максимально реалистично и логично. Учти освещение, тени, масштаб, перспективу и стиль.";
+            let instruction = `Бесшовно и логично интегрируй «${sourceAsset.name}» в эту сцену.`;
+
             if (mode === 'manual' && manualPrompt.trim()) {
                 instruction = manualPrompt;
             } else if (mode === 'manual' && !manualPrompt.trim()) {
@@ -78,10 +126,9 @@ export const IntegrationModal: React.FC<IntegrationModalProps> = ({ isOpen, onCl
                 return;
             }
             
-            const result = await integrateAssetIntoFrame(config.sourceAsset, config.targetFrame, instruction);
+            const result = await integrateAssetIntoFrame(sourceAsset, config.targetFrame, instruction);
             setResultImageUrl(result.imageUrl);
             
-            // Wait a moment for the user to see the result before closing
             setTimeout(() => {
                 onIntegrate(result);
             }, 1500);
@@ -91,7 +138,6 @@ export const IntegrationModal: React.FC<IntegrationModalProps> = ({ isOpen, onCl
             alert(`Не удалось выполнить интеграцию: ${error instanceof Error ? error.message : String(error)}`);
              setIsIntegrating(false);
         } 
-        // No finally block for setIsIntegrating, as we want the loading state to persist until the modal closes
     };
     
     return (
@@ -105,7 +151,43 @@ export const IntegrationModal: React.FC<IntegrationModalProps> = ({ isOpen, onCl
                 
                 {/* Image Panels */}
                 <div className="grid grid-cols-3 gap-6 flex-1 min-h-0">
-                    <ImagePanel imageUrl={config.sourceAsset.imageUrl} label="Исходный ассет" />
+                    {/* Source Asset Panel */}
+                    <div className="flex flex-col gap-2 text-center h-full">
+                        <h4 className="text-sm font-bold text-white/60 shrink-0">Исходный ассет</h4>
+                        <div
+                            onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); setIsSourceDragOver(true); }}
+                            onDragLeave={(e) => { e.preventDefault(); e.stopPropagation(); setIsSourceDragOver(false); }}
+                            onDrop={handleSourcePanelDrop}
+                            className={`relative w-full flex-1 rounded-lg bg-black/30 flex items-center justify-center border transition-colors overflow-hidden min-h-0 ${isSourceDragOver ? 'border-primary bg-primary/20' : 'border-white/10'}`}
+                        >
+                            {sourceAsset ? (
+                                <>
+                                    <img src={sourceAsset.imageUrl} alt="Source Asset" className="absolute inset-0 w-full h-full object-contain" />
+                                    <div className="absolute inset-0 bg-black/70 opacity-0 hover:opacity-100 transition-opacity flex items-center justify-center group/replace">
+                                        <button onClick={() => sourceFileInputRef.current?.click()} className="flex items-center gap-2 px-4 py-2 rounded-lg bg-white/10 text-white font-bold hover:bg-white/20">
+                                            <span className="material-symbols-outlined">swap_horiz</span>
+                                            Заменить
+                                        </button>
+                                    </div>
+                                </>
+                            ) : (
+                                <div className="flex flex-col items-center justify-center p-4 text-white/50">
+                                    <span className="material-symbols-outlined text-5xl">upload_file</span>
+                                    <p className="mt-2 text-sm">Перетащите или</p>
+                                    <button onClick={() => sourceFileInputRef.current?.click()} className="mt-1 text-primary font-bold hover:underline">
+                                        загрузите ассет
+                                    </button>
+                                </div>
+                            )}
+                        </div>
+                        <input
+                            type="file"
+                            ref={sourceFileInputRef}
+                            onChange={(e) => handleSourceFileChange(e.target.files?.[0] || null)}
+                            accept="image/*"
+                            className="hidden"
+                        />
+                    </div>
                     <ImagePanel imageUrl={config.targetFrame.imageUrls[config.targetFrame.activeVersionIndex]} label="Целевой кадр" />
                     <ImagePanel imageUrl={resultImageUrl} label="Результат" isLoading={isIntegrating} isResult />
                 </div>
@@ -145,15 +227,15 @@ export const IntegrationModal: React.FC<IntegrationModalProps> = ({ isOpen, onCl
                                     id="manual-prompt-textarea"
                                     value={manualPrompt}
                                     onChange={(e) => setManualPrompt(e.target.value)}
-                                    placeholder="Например: Поставь этот крем на песок рядом с ее полотенцем..."
+                                    placeholder={sourceAsset ? `Например: ${`Бесшовно и логично интегрируй «${sourceAsset.name}» в эту сцену.`}` : "Опишите, как интегрировать ассет..."}
                                     className="w-full flex-1 bg-white/5 p-3 rounded-lg text-sm text-white/90 placeholder:text-white/40 focus:ring-2 focus:ring-primary border-none resize-none"
                                     aria-label="Manual integration instruction"
                                 />
                             </fieldset>
-                            <fieldset disabled={mode === 'auto'} className="flex flex-col gap-2 disabled:opacity-50 transition-opacity">
+                            <fieldset disabled={mode === 'auto' || !sourceAsset} className="flex flex-col gap-2 disabled:opacity-50 transition-opacity">
                                 <div className="flex items-center justify-between">
                                     <h4 className="text-sm font-bold text-white/80">Идеи от AI</h4>
-                                    <button onClick={fetchSuggestions} disabled={isLoadingSuggestions} className="text-white/60 hover:text-white disabled:text-white/30 disabled:cursor-wait p-1 rounded-full" title="Сгенерировать новые идеи">
+                                    <button onClick={fetchSuggestions} disabled={isLoadingSuggestions || !sourceAsset} className="text-white/60 hover:text-white disabled:text-white/30 disabled:cursor-wait p-1 rounded-full" title="Сгенерировать новые идеи">
                                         <span className={`material-symbols-outlined text-lg ${isLoadingSuggestions ? 'animate-spin' : ''}`}>refresh</span>
                                     </button>
                                 </div>
@@ -167,7 +249,9 @@ export const IntegrationModal: React.FC<IntegrationModalProps> = ({ isOpen, onCl
                                             </button>
                                         ))
                                     ) : (
-                                        <div className="col-span-2 text-xs text-white/50 text-center py-4 bg-white/5 rounded-lg flex items-center justify-center">Не удалось сгенерировать идеи.</div>
+                                        <div className="col-span-2 text-xs text-white/50 text-center py-4 bg-white/5 rounded-lg flex items-center justify-center">
+                                            {sourceAsset ? "Не удалось сгенерировать идеи." : "Загрузите ассет, чтобы получить идеи."}
+                                        </div>
                                     )}
                                 </div>
                             </fieldset>
@@ -182,7 +266,7 @@ export const IntegrationModal: React.FC<IntegrationModalProps> = ({ isOpen, onCl
                     </button>
                     <button 
                         onClick={handleIntegrate}
-                        disabled={isIntegrating}
+                        disabled={isIntegrating || !sourceAsset}
                         className="flex min-w-[180px] cursor-pointer items-center justify-center overflow-hidden rounded-lg h-10 px-4 bg-primary text-white text-sm font-bold hover:bg-primary/90 disabled:bg-primary/50 disabled:cursor-not-allowed"
                     >
                         {isIntegrating ? 'Интеграция...' : 'Интегрировать и применить'}
