@@ -17,7 +17,8 @@ function handleApiError(error: unknown) {
 }
 
 
-async function urlOrFileToBase64(frame: Frame | Omit<Asset, 'file'> | Omit<Frame, 'file'>): Promise<{ mimeType: string; data: string }> {
+// FIX: Widened the type to accept asset-like objects without an 'id', which are used in integration features.
+async function urlOrFileToBase64(frame: Frame | Omit<Asset, 'file'> | Omit<Frame, 'file'> | Asset | Omit<Asset, 'id'>): Promise<{ mimeType: string; data: string }> {
     let base64Data: string;
     let mimeType: string;
 
@@ -1086,6 +1087,122 @@ export async function generateStoryIdeasFromAssets(
         } catch (e) {
             console.error("Failed to parse story ideas from AI:", response.text);
             throw new Error("Could not parse story ideas from the AI.");
+        }
+    } catch (error) {
+        handleApiError(error);
+        return [];
+    }
+}
+
+export async function integrateAssetIntoFrame(
+    sourceAsset: Asset | { imageUrl: string, file: File, name: string },
+    targetFrame: Frame,
+    instruction: string
+): Promise<{ imageUrl: string; prompt: string }> {
+    try {
+        const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+
+        // Step 1: Generate the integrated image
+        const { mimeType: sourceMime, data: sourceData } = await urlOrFileToBase64(sourceAsset);
+        const { mimeType: targetMime, data: targetData } = await urlOrFileToBase64(targetFrame);
+
+        const sourcePart = { inlineData: { mimeType: sourceMime, data: sourceData } };
+        const targetPart = { inlineData: { mimeType: targetMime, data: targetData } };
+
+        const imageGenInstruction = `Ты — эксперт по композиции и цифровому искусству. Тебе даны два изображения: ИЗОБРАЖЕНИЕ 1 (ассет для интеграции) и ИЗОБРАЖЕНИЕ 2 (целевая сцена).
+    Твоя задача — бесшовно и реалистично интегрировать ИЗОБРАЖЕНИЕ 1 в ИЗОБРАЖЕНИЕ 2, следуя инструкции. Обрати особое внимание на соответствие стиля, освещения, теней, масштаба и перспективы. Финальное изображение должно выглядеть как единая, цельная сцена.
+
+    Инструкция: "${instruction}"`;
+
+        const imageGenResponse = await ai.models.generateContent({
+            model: 'gemini-2.5-flash-image',
+            contents: { parts: [{ text: imageGenInstruction }, sourcePart, targetPart] },
+            config: {
+                responseModalities: [Modality.IMAGE],
+            },
+        });
+        
+        let newImageUrl: string | null = null;
+        let newImagePartForPromptGen: any = null;
+        if (imageGenResponse.candidates?.[0]?.content?.parts) {
+            for (const part of imageGenResponse.candidates[0].content.parts) {
+                if (part.inlineData) {
+                    newImageUrl = `data:${part.inlineData.mimeType};base64,${part.inlineData.data}`;
+                    newImagePartForPromptGen = { inlineData: { mimeType: part.inlineData.mimeType, data: part.inlineData.data } };
+                    break;
+                }
+            }
+        }
+        if (!newImageUrl || !newImagePartForPromptGen) {
+            throw new Error("AI не удалось сгенерировать интегрированное изображение.");
+        }
+        
+        // Step 2: Generate a new prompt for the integrated image
+        const promptGenInstruction = `Проанализируй это новое изображение, которое является результатом интеграции одного объекта в другую сцену.
+    Оригинальный промт целевой сцены был: "${targetFrame.prompt}".
+    Инструкция по интеграции была: "${instruction}".
+    Создай новый, краткий и точный промт на русском языке, который описывает финальное, объединенное изображение. Выведи только сам текст промта.`;
+
+        const promptGenResponse = await ai.models.generateContent({
+            model: 'gemini-2.5-flash',
+            contents: { parts: [{ text: promptGenInstruction }, newImagePartForPromptGen] },
+        });
+        
+        const newPrompt = promptGenResponse.text.trim();
+        if (!newPrompt) {
+            console.warn("AI failed to generate a new prompt. Using a combined fallback.");
+            return { imageUrl: newImageUrl, prompt: `${targetFrame.prompt}, с интеграцией: ${instruction}` };
+        }
+
+        return { imageUrl: newImageUrl, prompt: newPrompt };
+    } catch (error) {
+        handleApiError(error);
+        throw error;
+    }
+}
+
+
+export async function generateIntegrationSuggestions(
+    sourceAsset: Asset | { imageUrl: string, file: File, name: string },
+    targetFrame: Frame
+): Promise<string[]> {
+    try {
+        const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+        
+        const { mimeType: sourceMime, data: sourceData } = await urlOrFileToBase64(sourceAsset);
+        const { mimeType: targetMime, data: targetData } = await urlOrFileToBase64(targetFrame);
+
+        const sourcePart = { inlineData: { mimeType: sourceMime, data: sourceData } };
+        const targetPart = { inlineData: { mimeType: targetMime, data: targetData } };
+
+        const promptText = `Ты — креативный AI-ассистент. Проанализируй два изображения: "Ассет" (объект или персонаж для интеграции) и "Целевая сцена".
+    Твоя задача — предложить 4 креативные идеи о том, как можно интегрировать Ассет в Целевую сцену. Идеи должны быть краткими, действенными инструкциями на русском языке, подходящими для AI-редактора изображений.
+
+    Примеры: "Поместить ассет на передний план", "Дать предмет в руки персонажу на сцене", "Сделать ассет частью фона", "Изменить стиль ассета, чтобы он соответствовал сцене".
+
+    Верни ТОЛЬКО валидный JSON-массив из 4 строк. Не включай markdown, объяснения или любой другой текст.`;
+        
+        const response = await ai.models.generateContent({
+            model: 'gemini-2.5-pro',
+            contents: { parts: [{ text: promptText }, sourcePart, targetPart] },
+            config: {
+                responseMimeType: "application/json",
+                responseSchema: {
+                    type: Type.ARRAY,
+                    items: { type: Type.STRING },
+                },
+            },
+        });
+        
+        try {
+            const suggestions = JSON.parse(response.text.trim());
+            if (Array.isArray(suggestions) && suggestions.every(s => typeof s === 'string') && suggestions.length > 0) {
+                return suggestions;
+            }
+            throw new Error("AI response is not a valid JSON array of strings.");
+        } catch (e) {
+            console.error("Failed to parse integration suggestions from AI:", response.text);
+            throw new Error("Could not parse integration suggestions from the AI.");
         }
     } catch (error) {
         handleApiError(error);

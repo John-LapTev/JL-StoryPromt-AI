@@ -1,5 +1,5 @@
 import React, { useRef, useState, useEffect } from 'react';
-import type { Frame } from '../types';
+import type { Frame, Asset } from '../types';
 import { FrameCard } from './FrameCard';
 import { AddFrameButton } from './AddFrameButton';
 import { GeneratingVideoState } from '../App';
@@ -41,6 +41,7 @@ interface TimelineProps {
     onOpenAssetLibrary: () => void;
     onContextMenu: (e: React.MouseEvent, frame: Frame) => void;
     onVersionChange: (frameId: string, direction: 'next' | 'prev') => void;
+    onStartIntegration: (source: File | string, targetFrameId: string) => void;
 }
 
 const aspectRatios = ['16:9', '4:3', '1:1', '9:16'];
@@ -78,6 +79,7 @@ export const Timeline: React.FC<TimelineProps> = ({
     onOpenAssetLibrary,
     onContextMenu,
     onVersionChange,
+    onStartIntegration,
 }) => {
     const timelineRef = useRef<HTMLDivElement>(null);
     const isPanning = useRef(false);
@@ -375,6 +377,7 @@ export const Timeline: React.FC<TimelineProps> = ({
                                         onVersionChange={onVersionChange}
                                         onAspectRatioChange={onFrameAspectRatioChange}
                                         onAdaptAspectRatio={onAdaptFrameAspectRatio}
+                                        onStartIntegration={onStartIntegration}
                                     />
                                 </div>
                                 <div className="frame-card-interactive">

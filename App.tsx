@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import type { Frame, Project, Asset, StorySettings } from './types';
+import type { Frame, Project, Asset, StorySettings, IntegrationConfig } from './types';
 import { initialFrames, initialAssets } from './constants';
 import { projectService } from './services/projectService';
 import { Header } from './components/Header';
@@ -16,7 +16,8 @@ import { AssetLibraryPanel } from './components/AssetLibraryPanel';
 import { ContextMenu } from './components/ContextMenu';
 import { StorySettingsModal } from './components/StorySettingsModal';
 import { AdaptationSettingsModal } from './components/AdaptationSettingsModal';
-import { analyzeStory, generateSinglePrompt, generateIntermediateFrame, generateTransitionPrompt, generateImageFromPrompt, editImage, generateVideoFromFrame, generateImageInContext, createStoryFromAssets, adaptImageToStory, adaptImageAspectRatio } from './services/geminiService';
+import { IntegrationModal } from './components/IntegrationModal';
+import { analyzeStory, generateSinglePrompt, generateIntermediateFrame, generateTransitionPrompt, generateImageFromPrompt, editImage, generateVideoFromFrame, generateImageInContext, createStoryFromAssets, adaptImageToStory, adaptImageAspectRatio, integrateAssetIntoFrame } from './services/geminiService';
 import { fileToBase64, dataUrlToFile, fetchCorsImage, getImageDimensions } from './utils/fileUtils';
 
 declare global {
@@ -78,6 +79,8 @@ export default function App() {
         insertIndex?: number;
     }>({ mode: 'generate' });
     const [adaptingFrame, setAdaptingFrame] = useState<Frame | null>(null);
+    const [isIntegrationModalOpen, setIsIntegrationModalOpen] = useState(false);
+    const [integrationConfig, setIntegrationConfig] = useState<IntegrationConfig | null>(null);
 
 
     // UI States
@@ -1070,6 +1073,55 @@ export default function App() {
         updateFrames(framesWithNewVersions);
     }, [localFrames, updateFrames]);
 
+    // --- Integration Handlers ---
+    const handleStartIntegration = useCallback(async (source: File | string, targetFrameId: string) => {
+        const targetFrame = localFrames.find(f => f.id === targetFrameId);
+        if (!targetFrame) return;
+
+        let sourceAsset: Asset | { imageUrl: string; file: File; name: string; };
+
+        if (typeof source === 'string') { // It's an asset ID from the library
+            const asset = localAssets.find(a => a.id === source);
+            if (!asset) return;
+            sourceAsset = asset;
+        } else { // It's a File from a direct drop
+            const imageUrl = await fileToBase64(source);
+            sourceAsset = { id: crypto.randomUUID(), imageUrl, file: source, name: source.name };
+        }
+
+        setIntegrationConfig({ sourceAsset, targetFrame });
+        setIsIntegrationModalOpen(true);
+    }, [localFrames, localAssets]);
+
+    const handleApplyIntegration = useCallback(async (result: { imageUrl: string, prompt: string }) => {
+        if (!integrationConfig) return;
+        const targetFrameId = integrationConfig.targetFrame.id;
+
+        try {
+            const file = dataUrlToFile(result.imageUrl, `integrated-${targetFrameId}-${Date.now()}.png`);
+            updateFrames(prev => prev.map(f => {
+                if (f.id === targetFrameId) {
+                    const newImageUrls = [...f.imageUrls, result.imageUrl];
+                    return {
+                        ...f,
+                        imageUrls: newImageUrls,
+                        activeVersionIndex: newImageUrls.length - 1,
+                        file,
+                        prompt: result.prompt,
+                        isTransition: false,
+                        isGenerating: false,
+                    };
+                }
+                return f;
+            }));
+            setIsIntegrationModalOpen(false);
+            setIntegrationConfig(null);
+        } catch (error) {
+            console.error("Error applying integration:", error);
+            alert(`Не удалось применить интеграцию: ${error instanceof Error ? error.message : String(error)}`);
+        }
+    }, [integrationConfig, updateFrames]);
+
 
     return (
         <div ref={appRef} className="relative flex h-screen w-full flex-col group/design-root overflow-hidden">
@@ -1141,6 +1193,7 @@ export default function App() {
                     onOpenAssetLibrary={() => setIsAssetLibraryOpen(true)}
                     onContextMenu={handleContextMenu}
                     onVersionChange={handleVersionChange}
+                    onStartIntegration={handleStartIntegration}
                 />
             </main>
 
@@ -1189,6 +1242,17 @@ export default function App() {
                         handleAdaptFrameToStory(frameId, instruction);
                         setAdaptingFrame(null);
                     }}
+                />
+            )}
+            {integrationConfig && (
+                <IntegrationModal
+                    isOpen={isIntegrationModalOpen}
+                    onClose={() => {
+                        setIsIntegrationModalOpen(false);
+                        setIntegrationConfig(null);
+                    }}
+                    config={integrationConfig}
+                    onIntegrate={handleApplyIntegration}
                 />
             )}
             {editingFrame && (

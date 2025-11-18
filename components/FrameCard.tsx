@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import type { Frame } from '../types';
 import { GeneratingVideoState } from '../App';
 
@@ -23,6 +23,7 @@ interface FrameCardProps {
     onVersionChange: (frameId: string, direction: 'next' | 'prev') => void;
     onAspectRatioChange: (frameId: string, newRatio: string) => void;
     onAdaptAspectRatio: (frameId: string) => void;
+    onStartIntegration: (source: File | string, targetFrameId: string) => void;
 }
 
 const aspectRatios = ['16:9', '4:3', '1:1', '9:16'];
@@ -48,11 +49,60 @@ export const FrameCard: React.FC<FrameCardProps> = ({
     onVersionChange,
     onAspectRatioChange,
     onAdaptAspectRatio,
+    onStartIntegration,
 }) => {
     const DURATION_STEP = 0.25;
+    const [isDragOver, setIsDragOver] = useState(false);
 
     const activeImageUrl = frame.imageUrls[frame.activeVersionIndex];
     const hasVersions = frame.imageUrls.length > 1;
+
+    // --- Drag and Drop for Integration ---
+    const handleDragOver = (e: React.DragEvent) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const isAsset = e.dataTransfer.types.includes('application/json;type=asset-ids');
+        const isFile = e.dataTransfer.types.includes('Files');
+        if (isAsset || isFile) {
+            e.dataTransfer.dropEffect = 'copy';
+            setIsDragOver(true);
+        }
+    };
+
+    const handleDragLeave = (e: React.DragEvent) => {
+        e.preventDefault();
+        e.stopPropagation();
+        setIsDragOver(false);
+    };
+
+    const handleDrop = (e: React.DragEvent) => {
+        e.preventDefault();
+        e.stopPropagation();
+        setIsDragOver(false);
+
+        const files = e.dataTransfer.files;
+        if (files && files.length > 0) {
+            // FIX: Explicitly type 'file' to resolve 'unknown' type error.
+            const imageFile = Array.from(files).find((file: File) => file.type.startsWith('image/'));
+            if (imageFile) {
+                onStartIntegration(imageFile, frame.id);
+                return;
+            }
+        }
+
+        const assetIdsJson = e.dataTransfer.getData('application/json;type=asset-ids');
+        if (assetIdsJson) {
+            try {
+                const assetIds = JSON.parse(assetIdsJson);
+                if (Array.isArray(assetIds) && assetIds.length > 0) {
+                    onStartIntegration(assetIds[0], frame.id);
+                    return;
+                }
+            } catch (err) {
+                console.error("Failed to parse dropped asset data for integration", err);
+            }
+        }
+    };
 
     if (frame.isGenerating) {
         return (
@@ -159,6 +209,9 @@ export const FrameCard: React.FC<FrameCardProps> = ({
         <div 
             className="flex flex-col gap-2 shrink-0 w-48"
             onContextMenu={(e) => onContextMenu(e, frame)}
+            onDragOver={handleDragOver}
+            onDragLeave={handleDragLeave}
+            onDrop={handleDrop}
         >
              {!isAspectRatioLocked && (
                 <div className="flex items-center gap-1.5 h-7" onMouseDown={e => e.stopPropagation()}>
@@ -189,6 +242,12 @@ export const FrameCard: React.FC<FrameCardProps> = ({
                 >
                      <img src={activeImageUrl} alt={`Frame ${index + 1}`} className="w-full h-full object-contain transition-transform duration-300 group-hover:scale-105" />
                 </div>
+                {isDragOver && (
+                    <div className="pointer-events-none absolute inset-0 z-10 rounded-lg bg-primary/30 ring-2 ring-primary ring-offset-2 ring-offset-background-dark flex flex-col items-center justify-center text-white">
+                        <span className="material-symbols-outlined text-4xl">add_photo_alternate</span>
+                        <p className="text-xs font-bold">Интегрировать</p>
+                    </div>
+                )}
                 <button
                     onClick={(e) => { e.stopPropagation(); onDeleteFrame(frame.id); }}
                     className="absolute top-1.5 right-1.5 z-10 size-6 rounded-full bg-red-600/80 flex items-center justify-center text-white opacity-0 group-hover:opacity-100 hover:bg-red-500 backdrop-blur-sm transition-opacity"

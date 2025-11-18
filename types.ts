@@ -33,3 +33,8 @@ export interface StorySettings {
   genre: string;
   ending: string;
 }
+
+export interface IntegrationConfig {
+  sourceAsset: Asset | { imageUrl: string, file: File, name: string };
+  targetFrame: Frame;
+}
