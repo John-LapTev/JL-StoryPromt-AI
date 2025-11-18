@@ -81,36 +81,37 @@ export const FrameCard: React.FC<FrameCardProps> = ({
 
         if (frame.prompt) {
              const promptBgClass = frame.isTransition
-                ? 'bg-gradient-to-r from-primary/20 to-black/20'
-                : 'bg-black/20';
+                ? 'bg-gradient-to-r from-primary/20 to-black/30'
+                : 'bg-black/30';
                 
             return (
                 <div 
                     onMouseDown={(e) => e.stopPropagation()}
-                    className={`relative group/prompt w-48 flex flex-col min-h-[76px] max-h-32 p-2.5 rounded-lg transition-all hover:bg-black/30 hover:ring-1 hover:ring-white/20 ${promptBgClass}`}
+                    onWheel={(e) => e.stopPropagation()}
+                    className={`relative group/prompt w-48 flex flex-col min-h-[76px] max-h-32 p-2.5 rounded-lg transition-all hover:bg-black/40 ${promptBgClass}`}
                 >
-                    <div className="flex items-start gap-2 flex-1 min-h-0">
+                    <div className="flex items-start gap-2 flex-1 min-h-0 overflow-y-auto pr-1">
                         <span 
                             className="material-symbols-outlined text-base text-primary pt-0.5"
                             title={frame.isTransition ? "Промт для перехода" : "Промт для анимации"}
                         >
                             {frame.isTransition ? 'sync_alt' : 'auto_awesome'}
                         </span>
-                        <p className="text-xs text-white/80 leading-snug w-full h-full overflow-y-auto flex-1 pr-1">
+                        <p className="text-xs text-white/80 leading-snug w-full break-words">
                             {frame.prompt}
                         </p>
                     </div>
                     <div className="absolute bottom-2 right-2 flex gap-1.5 opacity-0 group-hover/prompt:opacity-100 transition-opacity duration-200">
                         <button 
                             onClick={() => onGenerateSinglePrompt(frame.id)}
-                            className="flex size-7 items-center justify-center rounded-full bg-primary/80 text-white backdrop-blur-sm transition-all hover:bg-primary hover:scale-110"
+                            className="flex size-7 items-center justify-center rounded-full bg-white/10 text-white backdrop-blur-sm transition-all hover:bg-primary hover:scale-110"
                             title="Перегенерировать промт"
                         >
                             <span className="material-symbols-outlined text-sm">autorenew</span>
                         </button>
                         <button 
                             onClick={() => onEditPrompt(frame)} 
-                            className="flex size-7 items-center justify-center rounded-full bg-primary/80 text-white backdrop-blur-sm transition-all hover:bg-primary hover:scale-110"
+                            className="flex size-7 items-center justify-center rounded-full bg-white/10 text-white backdrop-blur-sm transition-all hover:bg-primary hover:scale-110"
                             title="Редактировать промт"
                         >
                             <span className="material-symbols-outlined text-sm">edit</span>
