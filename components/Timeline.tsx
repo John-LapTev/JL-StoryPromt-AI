@@ -202,39 +202,33 @@ export const Timeline: React.FC<TimelineProps> = ({
 
     const handleDragOver = (e: React.DragEvent, index: number) => {
         e.preventDefault();
-
-        if (e.dataTransfer.types.includes('Files')) {
+    
+        let newDropTargetIndex: number | null = null;
+    
+        if (e.dataTransfer.types.includes('Files') || e.dataTransfer.types.includes('application/json;type=asset-ids')) {
             e.dataTransfer.dropEffect = 'copy';
-            setDropTargetIndex(index);
-            return;
-        }
-        
-        // If dragging assets, highlight the drop target
-        if (e.dataTransfer.types.includes('application/json;type=asset-ids')) {
-            e.dataTransfer.dropEffect = 'copy';
-            setDropTargetIndex(index);
-            return;
-        }
-        
-        // If reordering frames
-        if (draggedIndex !== null) {
+            newDropTargetIndex = index;
+        } else if (draggedIndex !== null) {
             e.dataTransfer.dropEffect = 'move';
             if (index !== draggedIndex && index !== (draggedIndex ?? -1) + 1) {
-                 setDropTargetIndex(index);
-            } else {
-                 setDropTargetIndex(null);
+                newDropTargetIndex = index;
             }
+        }
+    
+        if (dropTargetIndex !== newDropTargetIndex) {
+            setDropTargetIndex(newDropTargetIndex);
         }
     };
 
     const handleDragLeave = () => {
-        setDropTargetIndex(null);
+        // Intentionally left blank to prevent flickering when moving between drop targets.
+        // `handleDragOver` handles setting the target to null if it's not a valid drop zone.
+        // `handleDrop` and `handleDragEnd` perform the final cleanup.
     };
 
     const handleDrop = (e: React.DragEvent) => {
         e.preventDefault();
         e.stopPropagation();
-        handleDragLeave();
         
         const assetIdsJson = e.dataTransfer.getData('application/json;type=asset-ids');
         const files = e.dataTransfer.files;
