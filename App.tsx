@@ -87,38 +87,41 @@ const initialStorySettings: StorySettings = {
     ending: '',
 };
 
-type DragState = {
-    type: 'sketch' | 'note';
+type DraggingSketchInfo = {
     id: string;
-    offset: { x: number; y: number };
-} | {
-    type: 'pan';
-    start: { x: number; y: number };
+    offset: { x: number; y: number }; // Offset of cursor within the sketch in viewport pixels
 } | null;
 
 
 // --- Sketch Card Component ---
 const SketchCard: React.FC<{
     sketch: Sketch;
-    onMouseDown: (e: React.MouseEvent, id: string) => void;
+    isDragging: boolean;
     onContextMenu: (e: React.MouseEvent, sketch: Sketch) => void;
-    onDragStart: (e: React.DragEvent, id: string) => void;
-}> = ({ sketch, onMouseDown, onContextMenu, onDragStart }) => (
+    onDragStart: (e: React.DragEvent, sketch: Sketch) => void;
+    onDragEnd: (e: React.DragEvent) => void;
+}> = ({ sketch, isDragging, onContextMenu, onDragStart, onDragEnd }) => (
     <div
-        className="absolute group bg-white p-2 pb-6 rounded-sm shadow-lg transition-transform hover:scale-105 hover:z-20 cursor-grab"
+        className={`absolute group bg-white p-2 pb-6 rounded-sm shadow-lg transition-transform hover:scale-105 hover:z-20 cursor-grab ${isDragging ? 'opacity-40' : ''}`}
         style={{
             left: sketch.position.x,
             top: sketch.position.y,
             width: sketch.size.width,
             height: sketch.size.height,
         }}
-        onMouseDown={(e) => onMouseDown(e, sketch.id)}
         onContextMenu={(e) => onContextMenu(e, sketch)}
         draggable
-        onDragStart={(e) => onDragStart(e, sketch.id)}
+        onDragStart={(e) => onDragStart(e, sketch)}
+        onDragEnd={onDragEnd}
     >
         <div className="w-full h-full bg-black">
-             <img src={sketch.imageUrl} alt={sketch.prompt} className="w-full h-full object-contain" />
+             {sketch.imageUrl ? (
+                <img src={sketch.imageUrl} alt={sketch.prompt} className="w-full h-full object-contain pointer-events-none" draggable="false" />
+            ) : (
+                <div className="w-full h-full flex items-center justify-center">
+                    <div className="w-8 h-8 border-4 border-white/50 border-t-transparent rounded-full animate-spin"></div>
+                </div>
+            )}
         </div>
         <p className="absolute bottom-1 left-2 right-2 text-center text-xs text-black truncate">{sketch.prompt}</p>
     </div>
@@ -225,7 +228,8 @@ export default function App() {
     const [boardContextMenu, setBoardContextMenu] = useState<{ x: number, y: number, boardPosition: Position } | null>(null);
     const [sketchContextMenu, setSketchContextMenu] = useState<{ x: number, y: number, sketch: Sketch } | null>(null);
     const [addFrameMenu, setAddFrameMenu] = useState<{ index: number; rect: DOMRect } | null>(null);
-    const [dragState, setDragState] = useState<DragState>(null);
+    const [isPanning, setIsPanning] = useState(false);
+    const [draggingSketchInfo, setDraggingSketchInfo] = useState<DraggingSketchInfo>(null);
     
     // Non-blocking loading states
     const [generatingStory, setGeneratingStory] = useState(false);
@@ -622,43 +626,33 @@ export default function App() {
     };
     
     // --- Pan and Zoom Handlers ---
+    const panState = useRef({ isPanning: false, startX: 0, startY: 0, lastX: 0, lastY: 0 });
     const handleMouseDown = (e: React.MouseEvent) => {
         if (e.button !== 0) return;
-        const target = e.target as HTMLElement;
-        if (target.closest('.board-interactive-item')) return;
+        if ((e.target as HTMLElement).closest('.board-interactive-item')) return;
         
         setContextMenu(null);
         setBoardContextMenu(null);
         setSketchContextMenu(null);
 
-        setDragState({ type: 'pan', start: { x: e.clientX, y: e.clientY } });
+        panState.current = { isPanning: true, startX: e.clientX, startY: e.clientY, lastX: transform.x, lastY: transform.y };
         e.currentTarget.style.cursor = 'grabbing';
     };
 
     const handleMouseMove = (e: React.MouseEvent) => {
-        if (!dragState) return;
+        if (!panState.current.isPanning) return;
         e.preventDefault();
-
-        if (dragState.type === 'pan') {
-            const dx = e.clientX - dragState.start.x;
-            const dy = e.clientY - dragState.start.y;
-            setTransform(prev => ({ ...prev, x: prev.x + dx, y: prev.y + dy }));
-            setDragState({ ...dragState, start: { x: e.clientX, y: e.clientY } });
-        } else if (dragState.type === 'sketch') {
-            const newViewportX = e.clientX - dragState.offset.x;
-            const newViewportY = e.clientY - dragState.offset.y;
-            updateSketches(prev => prev.map(s => s.id === dragState.id ? { ...s, position: { 
-                x: (newViewportX - transform.x) / transform.scale,
-                y: (newViewportY - transform.y) / transform.scale,
-            } } : s));
-        }
+        
+        const dx = e.clientX - panState.current.startX;
+        const dy = e.clientY - panState.current.startY;
+        setTransform(prev => ({ ...prev, x: panState.current.lastX + dx, y: panState.current.lastY + dy }));
     };
 
     const handleMouseUp = (e: React.MouseEvent) => {
-        if (dragState?.type === 'pan') {
+        if (panState.current.isPanning) {
+            panState.current.isPanning = false;
             e.currentTarget.style.cursor = 'grab';
         }
-        setDragState(null);
     };
 
     const handleWheel = (e: React.WheelEvent) => {
@@ -684,34 +678,116 @@ export default function App() {
         setTransform({ scale: 1, x: 0, y: 0 });
     };
 
-    const handleSketchMouseDown = (e: React.MouseEvent, id: string) => {
-        if (e.button !== 0) return; // Only allow left-click drag
-        e.stopPropagation();
-        const target = e.currentTarget as HTMLElement;
-        const boardRect = boardRef.current!.getBoundingClientRect();
-        // We need the element's position relative to the board, not the viewport
-        const sketch = localSketches.find(s => s.id === id);
-        if (!sketch) return;
+    // --- Sketch Drag & Drop (Unified) ---
+    const handleSketchDragStart = (e: React.DragEvent, sketch: Sketch) => {
+        e.stopPropagation(); // Prevents board panning
+        
+        const elRect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+        const offsetX = e.clientX - elRect.left;
+        const offsetY = e.clientY - elRect.top;
+        
+        setDraggingSketchInfo({ id: sketch.id, offset: { x: offsetX, y: offsetY } });
+        
+        e.dataTransfer.setData('application/json;type=sketch-id', sketch.id);
+        e.dataTransfer.effectAllowed = 'copyMove';
+    
+        // --- Create a custom, reasonably-sized drag preview ---
+        const preview = document.createElement('img');
+        preview.src = sketch.imageUrl;
+        // Base the preview size on the sketch size, but cap it.
+        const previewWidth = Math.min(sketch.size.width, 160);
+        const aspectRatio = sketch.size.width / sketch.size.height;
+        const previewHeight = previewWidth / aspectRatio;
+        
+        preview.style.width = `${previewWidth}px`;
+        preview.style.height = `${previewHeight}px`;
+        preview.style.position = 'absolute';
+        preview.style.top = '-10000px';
+        preview.style.left = '-10000px';
+        preview.style.objectFit = 'contain';
+        preview.style.borderRadius = '4px';
+        preview.style.opacity = '0.8';
+        preview.style.boxShadow = '0 4px 8px rgba(0,0,0,0.3)';
+        preview.style.pointerEvents = 'none';
+        document.body.appendChild(preview);
+        
+        // Use this off-screen element as the drag image, centered on the cursor
+        e.dataTransfer.setDragImage(preview, previewWidth / 2, previewHeight / 2);
+    
+        // Clean up the element after the drag operation has started
+        setTimeout(() => {
+            document.body.removeChild(preview);
+        }, 0);
+    };
 
-        // Calculate the element's top-left in viewport coordinates
-        const elementViewportX = (sketch.position.x * transform.scale) + transform.x + boardRect.left;
-        const elementViewportY = (sketch.position.y * transform.scale) + transform.y + boardRect.top;
+    const handleBoardDragOver = (e: React.DragEvent) => {
+        e.preventDefault(); // Allow drop for both sketches and frames
+        
+        const isFrame = e.dataTransfer.types.includes('application/json;type=frame-id');
 
-        setDragState({
-            type: 'sketch',
-            id,
-            offset: {
-                x: e.clientX - elementViewportX,
-                y: e.clientY - elementViewportY,
-            }
-        });
+        if (draggingSketchInfo) {
+            const boardRect = boardRef.current!.getBoundingClientRect();
+            
+            // Calculate new top-left of sketch in viewport coordinates
+            const newViewportX = e.clientX - draggingSketchInfo.offset.x;
+            const newViewportY = e.clientY - draggingSketchInfo.offset.y;
+
+            // Convert viewport coordinates to board coordinates
+            const newBoardX = (newViewportX - boardRect.left - transform.x) / transform.scale;
+            const newBoardY = (newViewportY - boardRect.top - transform.y) / transform.scale;
+            
+            // Update sketch position without causing a full re-render on every pixel move (throttling can be added if needed)
+            updateSketches(prev => 
+                prev.map(s => 
+                    s.id === draggingSketchInfo.id 
+                    ? { ...s, position: { x: newBoardX, y: newBoardY } } 
+                    : s
+                )
+            );
+        } else if (isFrame) {
+            e.dataTransfer.dropEffect = 'move';
+        }
     };
     
-    // --- Sketch Context Menu and Drag Handlers ---
+    const handleBoardDrop = (e: React.DragEvent) => {
+        e.preventDefault();
+        const frameId = e.dataTransfer.getData('application/json;type=frame-id');
+
+        if (frameId) {
+            const frame = localFrames.find(f => f.id === frameId);
+            if (!frame || !boardRef.current) return;
+    
+            const boardRect = boardRef.current.getBoundingClientRect();
+            const x = (e.clientX - boardRect.left - transform.x) / transform.scale;
+            const y = (e.clientY - boardRect.top - transform.y) / transform.scale;
+
+            const aspectRatio = frame.aspectRatio || '16:9';
+            const [w, h] = aspectRatio.split(':').map(Number);
+            const size = { width: 320, height: (320 * h) / w };
+            
+            const newSketch: Sketch = {
+                id: crypto.randomUUID(),
+                imageUrl: frame.imageUrls[frame.activeVersionIndex],
+                prompt: frame.prompt,
+                file: frame.file,
+                position: { x, y },
+                size: size,
+                aspectRatio: aspectRatio,
+            };
+            
+            updateSketches(prev => [...prev, newSketch]);
+            updateFrames(prev => prev.filter(f => f.id !== frameId));
+        }
+    };
+
+    const handleSketchDragEnd = (e: React.DragEvent) => {
+        setDraggingSketchInfo(null);
+    };
+
     const handleSketchContextMenu = (e: React.MouseEvent, sketch: Sketch) => {
         e.preventDefault();
         e.stopPropagation();
-        setBoardContextMenu(null); // Close board menu if open
+        setBoardContextMenu(null);
         setSketchContextMenu({ x: e.clientX, y: e.clientY, sketch });
     };
 
@@ -730,11 +806,6 @@ export default function App() {
         updateSketches(prev => prev.filter(s => s.id !== sketchId));
     };
 
-    const handleSketchDragStart = (e: React.DragEvent, sketchId: string) => {
-        e.dataTransfer.setData('application/json;type=sketch-id', sketchId);
-        e.dataTransfer.effectAllowed = 'copy';
-    };
-
     const handleAddFrameFromSketch = useCallback((sketchId: string, index: number) => {
         const sketch = localSketches.find(s => s.id === sketchId);
         if (!sketch || !sketch.file) return;
@@ -749,7 +820,6 @@ export default function App() {
             aspectRatio: sketch.aspectRatio,
         };
         
-        // Perform updates atomically if possible, or sequentially
         updateFrames(prev => {
             const framesCopy = [...prev];
             framesCopy.splice(index, 0, newFrame);
@@ -791,13 +861,16 @@ export default function App() {
             <main 
                 ref={boardRef}
                 className="flex-1 flex-col overflow-hidden relative grid-bg-metallic"
-                style={{ cursor: dragState?.type === 'pan' ? 'grabbing' : 'grab' }}
+                style={{ cursor: panState.current.isPanning ? 'grabbing' : 'grab' }}
                 onDoubleClick={handleBoardDoubleClick}
                 onContextMenu={handleBoardContextMenu}
                 onMouseDown={handleMouseDown}
                 onMouseMove={handleMouseMove}
                 onMouseUp={handleMouseUp}
+                onMouseLeave={handleMouseUp} // End panning if mouse leaves the area
                 onWheel={handleWheel}
+                onDragOver={handleBoardDragOver}
+                onDrop={handleBoardDrop}
             >
                 <div 
                     className="absolute top-0 left-0"
@@ -844,9 +917,10 @@ export default function App() {
                          <div key={sketch.id} className="board-interactive-item">
                             <SketchCard 
                                 sketch={sketch} 
-                                onMouseDown={handleSketchMouseDown} 
+                                isDragging={draggingSketchInfo?.id === sketch.id}
                                 onContextMenu={handleSketchContextMenu}
-                                onDragStart={handleSketchDragStart}
+                                onDragStart={(e) => handleSketchDragStart(e, sketch)}
+                                onDragEnd={handleSketchDragEnd}
                             />
                          </div>
                     ))}

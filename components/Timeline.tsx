@@ -76,8 +76,11 @@ export const Timeline: React.FC<TimelineProps> = ({
 
     // --- Drag and Drop Handlers ---
     const handleDragStart = (e: React.DragEvent, index: number) => {
+        const frame = frames[index];
+        if (!frame) return;
         setDraggedIndex(index);
-        e.dataTransfer.effectAllowed = 'move';
+        e.dataTransfer.effectAllowed = 'copyMove';
+        e.dataTransfer.setData('application/json;type=frame-id', frame.id);
     };
 
     const handleDragEnd = () => {
@@ -87,6 +90,7 @@ export const Timeline: React.FC<TimelineProps> = ({
 
     const handleDragOver = (e: React.DragEvent, index: number) => {
         e.preventDefault();
+        e.stopPropagation(); // <-- IMPORTANT: Prevents board's onDragOver from firing.
     
         let newDropTargetIndex: number | null = null;
     
