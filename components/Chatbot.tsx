@@ -75,9 +75,8 @@ export const Chatbot: React.FC<ChatbotProps> = ({ isOpen, onClose }) => {
     return (
         <div className={`fixed top-0 right-0 h-full bg-[#191C2D] border-l border-white/10 shadow-2xl z-40 transition-transform duration-300 ease-in-out ${isOpen ? 'translate-x-0' : 'translate-x-full'} w-full max-w-md flex flex-col`}>
             <div className="flex items-center justify-between p-4 border-b border-white/10 shrink-0">
-                <h3 className="text-lg font-bold text-white flex items-center gap-2">
-                    <span className="material-symbols-outlined text-primary">spark</span>
-                    AI Ассистент
+                <h3 className="text-lg font-bold text-white">
+                    JL Ассистент
                 </h3>
                 <button onClick={onClose} className="text-white/70 hover:text-white">
                     <span className="material-symbols-outlined">close</span>
