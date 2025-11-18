@@ -9,8 +9,8 @@ interface AssetLibraryPanelProps {
     selectedAssetIds: Set<string>;
     storySettings: StorySettings;
     frameCount: number;
-    isDropTarget?: boolean;
     onAddAssets: (files: File[]) => void;
+    onAddAssetFromSketch: (sketchId: string) => void;
     onDeleteAsset: (id: string) => void;
     onToggleSelectAsset: (id: string) => void;
     onSelectAllAssets: () => void;
@@ -27,8 +27,8 @@ export const AssetLibraryPanel = forwardRef<HTMLDivElement, AssetLibraryPanelPro
     selectedAssetIds, 
     storySettings,
     frameCount,
-    isDropTarget,
     onAddAssets, 
+    onAddAssetFromSketch,
     onDeleteAsset, 
     onToggleSelectAsset, 
     onSelectAllAssets,
@@ -125,7 +125,9 @@ export const AssetLibraryPanel = forwardRef<HTMLDivElement, AssetLibraryPanelPro
     const handlePanelDragOver = (e: React.DragEvent) => {
         e.preventDefault();
         e.stopPropagation();
-        if (e.dataTransfer.types.includes('Files')) {
+        const isFile = e.dataTransfer.types.includes('Files');
+        const isSketch = e.dataTransfer.types.includes('application/json;type=sketch-id');
+        if (isFile || isSketch) {
             setIsDraggingOver(true);
             e.dataTransfer.dropEffect = 'copy';
         }
@@ -141,9 +143,15 @@ export const AssetLibraryPanel = forwardRef<HTMLDivElement, AssetLibraryPanelPro
         e.preventDefault();
         e.stopPropagation();
         setIsDraggingOver(false);
+
+        const sketchId = e.dataTransfer.getData('application/json;type=sketch-id');
+        if (sketchId) {
+            onAddAssetFromSketch(sketchId);
+            return;
+        }
+
         const files = e.dataTransfer.files;
         if (files && files.length > 0) {
-            // FIX: Explicitly type the 'file' parameter in the filter to resolve 'unknown' type error.
             const imageFiles = Array.from(files).filter((file: File) => file.type.startsWith('image/'));
             if (imageFiles.length > 0) {
                 onAddAssets(imageFiles);
@@ -157,13 +165,11 @@ export const AssetLibraryPanel = forwardRef<HTMLDivElement, AssetLibraryPanelPro
         createStoryButtonText = `Создать сюжет из ${selectedAssetIds.size} ассетов (${modeText})`;
     }
 
-    const isDropActive = isDraggingOver || isDropTarget;
-
     return (
         <>
             <div 
                 ref={ref}
-                className={`absolute top-0 right-0 h-full bg-[#101322]/80 backdrop-blur-lg border-l border-white/10 shadow-2xl z-30 transition-transform duration-300 ease-in-out ${isOpen ? 'translate-x-0' : 'translate-x-full'} w-full max-w-sm flex flex-col ${isDropActive ? 'ring-2 ring-primary ring-inset' : ''}`}
+                className={`absolute top-0 right-0 h-full bg-[#101322]/80 backdrop-blur-lg border-l border-white/10 shadow-2xl z-30 transition-transform duration-300 ease-in-out ${isOpen ? 'translate-x-0' : 'translate-x-full'} w-full max-w-sm flex flex-col`}
             >
                 <div className="flex items-center justify-between p-4 border-b border-white/10 shrink-0">
                     <h3 className="text-lg font-bold text-white flex items-center gap-2">
@@ -208,7 +214,7 @@ export const AssetLibraryPanel = forwardRef<HTMLDivElement, AssetLibraryPanelPro
                     onDragOver={handlePanelDragOver}
                     onDragLeave={handlePanelDragLeave}
                     onDrop={handlePanelDrop}
-                    className={`flex-1 p-4 overflow-y-auto space-y-4 transition-colors rounded-lg m-2 -mt-0 ${isDraggingOver ? 'bg-primary/20' : ''}`}
+                    className={`flex-1 p-4 overflow-y-auto space-y-4 transition-colors rounded-lg m-2 -mt-0 ${isDraggingOver ? 'bg-primary/20 ring-2 ring-primary ring-inset' : ''}`}
                 >
                     <div className="grid grid-cols-3 gap-3">
                         {assets.map((asset, index) => (

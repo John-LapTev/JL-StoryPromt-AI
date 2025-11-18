@@ -94,7 +94,7 @@ const initialStorySettings: StorySettings = {
 };
 
 type DraggingInfo = {
-    type: 'sketch-move' | 'note-move' | 'note-resize';
+    type: 'note-move' | 'note-resize';
     id: string;
     initialMousePos: { x: number; y: number };
     initialPosition: Position;
@@ -105,18 +105,20 @@ type DraggingInfo = {
 // --- Sketch Card Component ---
 const SketchCard: React.FC<{
     sketch: Sketch;
-    isDragging: boolean;
     onContextMenu: (e: React.MouseEvent, sketch: Sketch) => void;
     onMouseDown: (e: React.MouseEvent, sketch: Sketch) => void;
-}> = ({ sketch, isDragging, onContextMenu, onMouseDown }) => (
+    onDragStart: (e: React.DragEvent) => void;
+}> = ({ sketch, onContextMenu, onMouseDown, onDragStart }) => (
     <div
-        className={`absolute group bg-white p-2 pb-6 rounded-sm shadow-lg transition-transform hover:scale-[1.025] ${isDragging ? 'opacity-80 cursor-grabbing z-30 ring-2 ring-primary' : 'hover:z-20 cursor-grab'}`}
+        className={`absolute group bg-white p-2 pb-6 rounded-sm shadow-lg transition-transform hover:scale-[1.025] hover:z-20 cursor-grab`}
         style={{
             left: sketch.position.x,
             top: sketch.position.y,
             width: sketch.size.width,
             height: sketch.size.height,
         }}
+        draggable
+        onDragStart={onDragStart}
         onContextMenu={(e) => onContextMenu(e, sketch)}
         onMouseDown={(e) => onMouseDown(e, sketch)}
     >
@@ -316,8 +318,6 @@ export default function App() {
     const [noteContextMenu, setNoteContextMenu] = useState<{ x: number, y: number, note: Note } | null>(null);
     const [addFrameMenu, setAddFrameMenu] = useState<{ index: number; rect: DOMRect } | null>(null);
     const [draggingInfo, setDraggingInfo] = useState<DraggingInfo>(null);
-    const [sketchDropTargetIndex, setSketchDropTargetIndex] = useState<number | null>(null);
-    const [isAssetLibraryDropTarget, setIsAssetLibraryDropTarget] = useState(false);
     
     // Non-blocking loading states
     const [generatingStory, setGeneratingStory] = useState(false);
@@ -772,6 +772,19 @@ export default function App() {
 
     // --- Asset Library Handlers ---
     const handleAddAssets = useCallback(async (files: File[]) => { const n: Asset[] = await Promise.all(files.map(async f => ({ id: crypto.randomUUID(), imageUrl: await fileToBase64(f), file: f, name: f.name }))); updateAssets(p => [...p, ...n]); }, [updateAssets]);
+    const handleAddAssetFromSketch = useCallback((sketchId: string) => {
+        const sketch = localSketches.find(s => s.id === sketchId);
+        if (sketch && sketch.file) {
+            const newAsset: Asset = {
+                id: crypto.randomUUID(),
+                imageUrl: sketch.imageUrl,
+                file: sketch.file,
+                name: sketch.prompt || `Набросок ${sketch.id.substring(0, 4)}`,
+            };
+            updateAssets(prev => [...prev, newAsset]);
+            updateSketches(prev => prev.filter(s => s.id !== sketchId));
+        }
+    }, [localSketches, updateAssets, updateSketches]);
     const handleDeleteAsset = useCallback((id: string) => { updateAssets(p => p.filter(a => a.id !== id)); setSelectedAssetIds(p => { const n = new Set(p); n.delete(id); return n; }); }, [updateAssets]);
     const handleSelectAllAssets = useCallback(() => { setSelectedAssetIds(new Set(localAssets.map(a => a.id))); }, [localAssets]);
     const handleDeselectAllAssets = useCallback(() => { setSelectedAssetIds(new Set()); }, []);
@@ -1046,6 +1059,37 @@ export default function App() {
     const handleStartIntegration = useCallback(async (source: File | string, targetFrameId: string) => { const t = localFrames.find(f => f.id === targetFrameId); if (!t) return; let s: Asset | { imageUrl: string; file: File; name: string; }; if (typeof source === 'string') { const a = localAssets.find(as => as.id === source); if (!a) return; s = a; } else { const i = await fileToBase64(source); s = { id: crypto.randomUUID(), imageUrl: i, file: source, name: source.name }; } setIntegrationConfig({ sourceAsset: s, targetFrame: t }); setIsIntegrationModalOpen(true); }, [localFrames, localAssets]);
     const handleStartIntegrationWithEmptySource = (targetFrame: Frame) => { setIntegrationConfig({ targetFrame }); setIsIntegrationModalOpen(true); };
     const handleApplyIntegration = useCallback(async (result: { imageUrl: string, prompt: string }) => { if (!integrationConfig) return; const t = integrationConfig.targetFrame.id; try { const f = dataUrlToFile(result.imageUrl, `integrated-${t}-${Date.now()}.png`); updateFrames(p => p.map(fr => { if (fr.id === t) { const niu = [...fr.imageUrls, result.imageUrl]; return { ...fr, imageUrls: niu, activeVersionIndex: niu.length - 1, file: f, prompt: result.prompt, isTransition: false, isGenerating: false }; } return fr; })); setIsIntegrationModalOpen(false); setIntegrationConfig(null); } catch (err) { console.error("Error applying integration:", err); alert(`Не удалось применить интеграцию: ${err instanceof Error ? err.message : String(err)}`); } }, [integrationConfig, updateFrames]);
+    const handleStartIntegrationFromSketch = useCallback((sourceSketchId: string, targetFrameId: string) => {
+        const sourceSketch = localSketches.find(s => s.id === sourceSketchId);
+        const targetFrame = localFrames.find(f => f.id === targetFrameId);
+        if (!sourceSketch || !targetFrame || !sourceSketch.file) return;
+
+        const sourceAsset = {
+            id: sourceSketch.id,
+            imageUrl: sourceSketch.imageUrl,
+            file: sourceSketch.file,
+            name: sourceSketch.prompt || 'Набросок',
+        };
+
+        setIntegrationConfig({ sourceAsset, targetFrame });
+        setIsIntegrationModalOpen(true);
+    }, [localSketches, localFrames]);
+
+    const handleStartIntegrationFromFrame = useCallback((sourceFrameId: string, targetFrameId: string) => {
+        const sourceFrame = localFrames.find(f => f.id === sourceFrameId);
+        const targetFrame = localFrames.find(f => f.id === targetFrameId);
+        if (!sourceFrame || !targetFrame || !sourceFrame.file) return;
+
+        const sourceAsset = {
+            id: sourceFrame.id,
+            imageUrl: sourceFrame.imageUrls[sourceFrame.activeVersionIndex],
+            file: sourceFrame.file,
+            name: sourceFrame.prompt || `Кадр #${sourceFrame.id.substring(0,4)}`,
+        };
+
+        setIntegrationConfig({ sourceAsset, targetFrame });
+        setIsIntegrationModalOpen(true);
+    }, [localFrames]);
 
     // --- Director's Board Handlers ---
     const handleBoardDoubleClick = (e: React.MouseEvent) => {
@@ -1158,31 +1202,6 @@ export default function App() {
             const dy = (e.clientY - draggingInfo.initialMousePos.y) / transform.scale;
 
             switch (draggingInfo.type) {
-                case 'sketch-move': {
-                    const newX = draggingInfo.initialPosition.x + dx;
-                    const newY = draggingInfo.initialPosition.y + dy;
-                    updateSketches(prev => prev.map(s => s.id === draggingInfo.id ? { ...s, position: { x: newX, y: newY } } : s));
-
-                    let timelineTargetIndex: number | null = null;
-                    for (const [index, element] of timelineDropZoneRefs.current.entries()) {
-                        const rect = element.getBoundingClientRect();
-                        if (e.clientX >= rect.left && e.clientX <= rect.right && e.clientY >= rect.top && e.clientY <= rect.bottom) {
-                            timelineTargetIndex = index;
-                            break;
-                        }
-                    }
-                    setSketchDropTargetIndex(timelineTargetIndex);
-
-                    if (assetLibraryRef.current && isAssetLibraryOpen) {
-                        const rect = assetLibraryRef.current.getBoundingClientRect();
-                        const isOver = e.clientX >= rect.left && e.clientX <= rect.right && e.clientY >= rect.top && e.clientY <= rect.bottom;
-                        setIsAssetLibraryDropTarget(isOver);
-                        if (isOver) setSketchDropTargetIndex(null);
-                    } else {
-                        setIsAssetLibraryDropTarget(false);
-                    }
-                    break;
-                }
                 case 'note-move': {
                     const newX = draggingInfo.initialPosition.x + dx;
                     const newY = draggingInfo.initialPosition.y + dy;
@@ -1207,26 +1226,7 @@ export default function App() {
             (e.currentTarget as HTMLElement).style.cursor = 'grab';
         }
         if (draggingInfo) {
-            if (draggingInfo.type === 'sketch-move') {
-                if (isAssetLibraryDropTarget) {
-                    const sketch = localSketches.find(s => s.id === draggingInfo.id);
-                    if (sketch && sketch.file) {
-                        const newAsset: Asset = {
-                            id: crypto.randomUUID(),
-                            imageUrl: sketch.imageUrl,
-                            file: sketch.file,
-                            name: sketch.prompt || `Sketch ${sketch.id.substring(0, 4)}`,
-                        };
-                        updateAssets(prev => [...prev, newAsset]);
-                        updateSketches(prev => prev.filter(s => s.id !== sketch.id));
-                    }
-                } else if (sketchDropTargetIndex !== null) {
-                    handleAddFrameFromSketch(draggingInfo.id, sketchDropTargetIndex);
-                }
-            }
             setDraggingInfo(null);
-            setSketchDropTargetIndex(null);
-            setIsAssetLibraryDropTarget(false);
         }
     };
 
@@ -1253,16 +1253,17 @@ export default function App() {
         setTransform({ scale: 1, x: 0, y: 0 });
     };
 
-    // --- Sketch & Note Drag & Drop (Manual Implementation) ---
+    // --- Sketch & Note Drag & Drop (Manual Implementation for Notes) ---
     const handleSketchMouseDown = (e: React.MouseEvent, sketch: Sketch) => {
         if (e.button !== 0) return;
+        // Native drag is handled by onDragStart, this is just to prevent board panning
         e.stopPropagation();
-        setDraggingInfo({
-            type: 'sketch-move',
-            id: sketch.id,
-            initialMousePos: { x: e.clientX, y: e.clientY },
-            initialPosition: sketch.position,
-        });
+    };
+
+    const handleSketchDragStart = (e: React.DragEvent, sketchId: string) => {
+        e.stopPropagation();
+        e.dataTransfer.effectAllowed = 'copy';
+        e.dataTransfer.setData('application/json;type=sketch-id', sketchId);
     };
     
     const handleNoteMouseDown = (e: React.MouseEvent, note: Note) => {
@@ -1541,7 +1542,6 @@ export default function App() {
                             generatingVideoState={generatingVideoState}
                             globalAspectRatio={globalAspectRatio}
                             isAspectRatioLocked={isAspectRatioLocked}
-                            sketchDropTargetIndex={sketchDropTargetIndex}
                             isAnalyzingStory={isAnalyzingStory}
                             onGlobalAspectRatioChange={handleGlobalAspectRatioChange}
                             onToggleAspectRatioLock={handleToggleAspectRatioLock}
@@ -1564,6 +1564,8 @@ export default function App() {
                             onContextMenu={handleContextMenu}
                             onVersionChange={handleVersionChange}
                             onStartIntegration={handleStartIntegration}
+                            onStartIntegrationFromSketch={handleStartIntegrationFromSketch}
+                            onStartIntegrationFromFrame={handleStartIntegrationFromFrame}
                             onOpenAddFrameMenu={handleOpenAddFrameMenu}
                             onRegisterDropZone={registerTimelineDropZone}
                         />
@@ -1573,9 +1575,9 @@ export default function App() {
                          <div key={sketch.id} className="board-interactive-item">
                             <SketchCard 
                                 sketch={sketch} 
-                                isDragging={draggingInfo?.type === 'sketch-move' && draggingInfo?.id === sketch.id}
                                 onContextMenu={handleSketchContextMenu}
                                 onMouseDown={handleSketchMouseDown}
+                                onDragStart={(e) => handleSketchDragStart(e, sketch.id)}
                             />
                          </div>
                     ))}
@@ -1601,8 +1603,8 @@ export default function App() {
                     selectedAssetIds={selectedAssetIds}
                     storySettings={storySettings}
                     frameCount={frameCount}
-                    isDropTarget={isAssetLibraryDropTarget}
                     onAddAssets={handleAddAssets}
+                    onAddAssetFromSketch={handleAddAssetFromSketch}
                     onDeleteAsset={handleDeleteAsset}
                     onToggleSelectAsset={(id) => {
                         setSelectedAssetIds(prev => { const n = new Set(prev); if (n.has(id)) { n.delete(id); } else { n.add(id); } return n; });

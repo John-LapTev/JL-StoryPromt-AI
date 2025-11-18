@@ -24,6 +24,8 @@ interface FrameCardProps {
     onAspectRatioChange: (frameId: string, newRatio: string) => void;
     onAdaptAspectRatio: (frameId: string) => void;
     onStartIntegration: (source: File | string, targetFrameId: string) => void;
+    onStartIntegrationFromSketch: (sourceSketchId: string, targetFrameId: string) => void;
+    onStartIntegrationFromFrame: (sourceFrameId: string, targetFrameId: string) => void;
 }
 
 const aspectRatios = ['16:9', '4:3', '1:1', '9:16'];
@@ -50,6 +52,8 @@ export const FrameCard: React.FC<FrameCardProps> = ({
     onAspectRatioChange,
     onAdaptAspectRatio,
     onStartIntegration,
+    onStartIntegrationFromSketch,
+    onStartIntegrationFromFrame,
 }) => {
     const DURATION_STEP = 0.25;
     const [isDragOver, setIsDragOver] = useState(false);
@@ -63,7 +67,16 @@ export const FrameCard: React.FC<FrameCardProps> = ({
         e.stopPropagation();
         const isAsset = e.dataTransfer.types.includes('application/json;type=asset-ids');
         const isFile = e.dataTransfer.types.includes('Files');
-        if (isAsset || isFile) {
+        const isSketch = e.dataTransfer.types.includes('application/json;type=sketch-id');
+        const isFrame = e.dataTransfer.types.includes('application/json;type=frame-id');
+
+        if (isAsset || isFile || isSketch || isFrame) {
+            // Prevent dropping a frame onto itself
+            if (isFrame && e.dataTransfer.getData('application/json;type=frame-id') === frame.id) {
+                e.dataTransfer.dropEffect = 'none';
+                setIsDragOver(false);
+                return;
+            }
             e.dataTransfer.dropEffect = 'copy';
             setIsDragOver(true);
         }
@@ -79,6 +92,18 @@ export const FrameCard: React.FC<FrameCardProps> = ({
         e.preventDefault();
         e.stopPropagation();
         setIsDragOver(false);
+
+        const sketchId = e.dataTransfer.getData('application/json;type=sketch-id');
+        if (sketchId) {
+            onStartIntegrationFromSketch(sketchId, frame.id);
+            return;
+        }
+
+        const sourceFrameId = e.dataTransfer.getData('application/json;type=frame-id');
+        if (sourceFrameId && sourceFrameId !== frame.id) {
+            onStartIntegrationFromFrame(sourceFrameId, frame.id);
+            return;
+        }
 
         const files = e.dataTransfer.files;
         if (files && files.length > 0) {

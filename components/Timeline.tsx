@@ -14,7 +14,6 @@ interface TimelineProps {
     generatingVideoState: GeneratingVideoState;
     globalAspectRatio: string;
     isAspectRatioLocked: boolean;
-    sketchDropTargetIndex: number | null;
     isAnalyzingStory: boolean;
     onGlobalAspectRatioChange: (newRatio: string) => void;
     onToggleAspectRatioLock: () => void;
@@ -37,6 +36,8 @@ interface TimelineProps {
     onContextMenu: (e: React.MouseEvent, frame: Frame) => void;
     onVersionChange: (frameId: string, direction: 'next' | 'prev') => void;
     onStartIntegration: (source: File | string, targetFrameId: string) => void;
+    onStartIntegrationFromSketch: (sourceSketchId: string, targetFrameId: string) => void;
+    onStartIntegrationFromFrame: (sourceFrameId: string, targetFrameId: string) => void;
     onOpenAddFrameMenu: (index: number, rect: DOMRect) => void;
     onRegisterDropZone: (index: number, element: HTMLElement | null) => void;
 }
@@ -52,7 +53,6 @@ export const Timeline: React.FC<TimelineProps> = ({
     generatingVideoState,
     globalAspectRatio,
     isAspectRatioLocked,
-    sketchDropTargetIndex,
     isAnalyzingStory,
     onGlobalAspectRatioChange,
     onToggleAspectRatioLock,
@@ -75,6 +75,8 @@ export const Timeline: React.FC<TimelineProps> = ({
     onContextMenu,
     onVersionChange,
     onStartIntegration,
+    onStartIntegrationFromSketch,
+    onStartIntegrationFromFrame,
     onOpenAddFrameMenu,
     onRegisterDropZone,
 }) => {
@@ -217,7 +219,7 @@ export const Timeline: React.FC<TimelineProps> = ({
                         onOpenMenu={onOpenAddFrameMenu}
                         onDragOver={(e) => handleDragOver(e, 0)}
                         onDrop={handleDrop}
-                        isDropTarget={dropTargetIndex === 0 || sketchDropTargetIndex === 0}
+                        isDropTarget={dropTargetIndex === 0}
                         onRegisterDropZone={onRegisterDropZone}
                     />
                     {frames.map((frame, index) => (
@@ -245,6 +247,8 @@ export const Timeline: React.FC<TimelineProps> = ({
                                     onAspectRatioChange={onFrameAspectRatioChange}
                                     onAdaptAspectRatio={onAdaptFrameAspectRatio}
                                     onStartIntegration={onStartIntegration}
+                                    onStartIntegrationFromSketch={onStartIntegrationFromSketch}
+                                    onStartIntegrationFromFrame={onStartIntegrationFromFrame}
                                 />
                             </div>
                             <AddFrameButton
@@ -252,7 +256,7 @@ export const Timeline: React.FC<TimelineProps> = ({
                                 onOpenMenu={onOpenAddFrameMenu}
                                 onDragOver={(e) => handleDragOver(e, index + 1)}
                                 onDrop={handleDrop}
-                                isDropTarget={dropTargetIndex === index + 1 || sketchDropTargetIndex === index + 1}
+                                isDropTarget={dropTargetIndex === index + 1}
                                 onRegisterDropZone={onRegisterDropZone}
                             />
                         </React.Fragment>
