@@ -1,3 +1,4 @@
+
 import React, { useRef, useState, useEffect } from 'react';
 import type { Frame } from '../types';
 import { FrameCard } from './FrameCard';
@@ -21,6 +22,7 @@ interface TimelineProps {
     onPromptChange: (id: string, newPrompt: string) => void;
     onAddFrame: (index: number, type: 'upload' | 'generate') => void;
     onAddFramesFromAssets: (assetIds: string[], index: number) => void;
+    onAddFramesFromFiles: (files: File[], index: number) => void;
     onDeleteFrame: (id: string) => void;
     onReorderFrame: (dragIndex: number, dropIndex: number) => void;
     onAnalyzeStory: () => void;
@@ -48,6 +50,7 @@ export const Timeline: React.FC<TimelineProps> = ({
     onPromptChange,
     onAddFrame,
     onAddFramesFromAssets,
+    onAddFramesFromFiles,
     onDeleteFrame,
     onReorderFrame,
     onAnalyzeStory,
@@ -199,6 +202,12 @@ export const Timeline: React.FC<TimelineProps> = ({
 
     const handleDragOver = (e: React.DragEvent, index: number) => {
         e.preventDefault();
+
+        if (e.dataTransfer.types.includes('Files')) {
+            e.dataTransfer.dropEffect = 'copy';
+            setDropTargetIndex(index);
+            return;
+        }
         
         // If dragging assets, highlight the drop target
         if (e.dataTransfer.types.includes('application/json;type=asset-ids')) {
@@ -224,9 +233,19 @@ export const Timeline: React.FC<TimelineProps> = ({
 
     const handleDrop = (e: React.DragEvent) => {
         e.preventDefault();
+        e.stopPropagation();
+        handleDragLeave();
+        
         const assetIdsJson = e.dataTransfer.getData('application/json;type=asset-ids');
+        const files = e.dataTransfer.files;
     
-        if (assetIdsJson && dropTargetIndex !== null) {
+        if (files && files.length > 0 && dropTargetIndex !== null) {
+            // FIX: Explicitly type the 'file' parameter in the filter to resolve 'unknown' type error.
+            const imageFiles = Array.from(files).filter((file: File) => file.type.startsWith('image/'));
+            if (imageFiles.length > 0) {
+                onAddFramesFromFiles(imageFiles, dropTargetIndex);
+            }
+        } else if (assetIdsJson && dropTargetIndex !== null) {
             try {
                 const assetIds = JSON.parse(assetIdsJson);
                 if (Array.isArray(assetIds) && assetIds.length > 0) {

@@ -1,4 +1,5 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import type { Frame, Project, Asset } from './types';
 import { initialFrames, initialAssets } from './constants';
 import { projectService } from './services/projectService';
@@ -78,6 +79,9 @@ export default function App() {
     const [generatingStory, setGeneratingStory] = useState(false);
     const [generatingPromptFrameId, setGeneratingPromptFrameId] = useState<string | null>(null);
     const [generatingVideoState, setGeneratingVideoState] = useState<GeneratingVideoState>(null);
+
+    // Refs
+    const appRef = useRef<HTMLDivElement>(null);
 
     // Derived state
     const currentProject = useMemo(() => projects.find(p => p.id === currentProjectId), [projects, currentProjectId]);
@@ -420,6 +424,28 @@ export default function App() {
             return framesCopy;
         });
     }, [localAssets, updateFrames]);
+
+    const handleAddFramesFromFiles = useCallback(async (files: File[], index: number) => {
+        const newFramesPromises = files.map(async (file) => {
+            const base64 = await fileToBase64(file);
+            return {
+                id: crypto.randomUUID(),
+                imageUrls: [base64],
+                activeVersionIndex: 0,
+                prompt: '',
+                duration: 3.0,
+                file: file,
+            };
+        });
+    
+        const newFrames = await Promise.all(newFramesPromises);
+    
+        updateFrames(prev => {
+            const framesCopy = [...prev];
+            framesCopy.splice(index, 0, ...newFrames);
+            return framesCopy;
+        });
+    }, [updateFrames]);
 
     const handleStartFrameGeneration = async (data: { prompt: string }) => {
         setIsAdvancedGenerateModalOpen(false);
@@ -810,7 +836,7 @@ export default function App() {
 
 
     return (
-        <div className="relative flex h-screen w-full flex-col group/design-root overflow-hidden">
+        <div ref={appRef} className="relative flex h-screen w-full flex-col group/design-root overflow-hidden">
             <Header 
                 projectName={currentProject?.name || 'Загрузка...'}
                 hasUnsavedChanges={hasUnsavedChanges}
@@ -854,6 +880,7 @@ export default function App() {
                     onPromptChange={handlePromptChange}
                     onAddFrame={handleAddFrame}
                     onAddFramesFromAssets={handleAddFramesFromAssets}
+                    onAddFramesFromFiles={handleAddFramesFromFiles}
                     onDeleteFrame={handleDeleteFrame}
                     onReorderFrame={handleReorderFrame}
                     onAnalyzeStory={handleAnalyzeStory}

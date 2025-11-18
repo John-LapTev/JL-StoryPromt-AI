@@ -31,6 +31,7 @@ export const AssetLibraryPanel: React.FC<AssetLibraryPanelProps> = ({
     const fileInputRef = useRef<HTMLInputElement>(null);
     const [isSelectionMode, setIsSelectionMode] = useState(false);
     const [viewingAssetIndex, setViewingAssetIndex] = useState<number | null>(null);
+    const [isDraggingOver, setIsDraggingOver] = useState(false);
 
     const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
         if (event.target.files) {
@@ -120,6 +121,35 @@ export const AssetLibraryPanel: React.FC<AssetLibraryPanelProps> = ({
         e.dataTransfer.effectAllowed = 'copy';
     };
 
+    const handlePanelDragOver = (e: React.DragEvent) => {
+        e.preventDefault();
+        e.stopPropagation();
+        if (e.dataTransfer.types.includes('Files')) {
+            setIsDraggingOver(true);
+            e.dataTransfer.dropEffect = 'copy';
+        }
+    };
+
+    const handlePanelDragLeave = (e: React.DragEvent) => {
+        e.preventDefault();
+        e.stopPropagation();
+        setIsDraggingOver(false);
+    };
+
+    const handlePanelDrop = (e: React.DragEvent) => {
+        e.preventDefault();
+        e.stopPropagation();
+        setIsDraggingOver(false);
+        const files = e.dataTransfer.files;
+        if (files && files.length > 0) {
+            // FIX: Explicitly type the 'file' parameter in the filter to resolve 'unknown' type error.
+            const imageFiles = Array.from(files).filter((file: File) => file.type.startsWith('image/'));
+            if (imageFiles.length > 0) {
+                onAddAssets(imageFiles);
+            }
+        }
+    };
+
     const createStoryButtonText = selectedAssetIds.size > 0
         ? `Создать сюжет (${selectedAssetIds.size})`
         : 'Создать сюжет';
@@ -168,7 +198,12 @@ export const AssetLibraryPanel: React.FC<AssetLibraryPanelProps> = ({
                     )}
                 </div>
 
-                <div className="flex-1 p-4 overflow-y-auto space-y-4">
+                <div 
+                    onDragOver={handlePanelDragOver}
+                    onDragLeave={handlePanelDragLeave}
+                    onDrop={handlePanelDrop}
+                    className={`flex-1 p-4 overflow-y-auto space-y-4 transition-colors rounded-lg m-2 -mt-0 ${isDraggingOver ? 'bg-primary/20 ring-2 ring-primary' : ''}`}
+                >
                     <div className="grid grid-cols-3 gap-3">
                         {assets.map((asset, index) => (
                             <div 
