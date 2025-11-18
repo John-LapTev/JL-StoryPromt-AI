@@ -1,3 +1,4 @@
+
 import React, { useState } from 'react';
 import type { Frame } from '../types';
 import { GeneratingVideoState } from '../App';
@@ -233,6 +234,7 @@ export const FrameCard: React.FC<FrameCardProps> = ({
     return (
         <div 
             className="flex flex-col gap-2 shrink-0 w-48"
+            data-frame-id={frame.id}
             onContextMenu={(e) => onContextMenu(e, frame)}
             onDragOver={handleDragOver}
             onDragLeave={handleDragLeave}

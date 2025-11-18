@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useCallback, useMemo, useRef, useLayoutEffect } from 'react';
 import type { Frame, Project, Asset, StorySettings, IntegrationConfig, Sketch, Note, Position, Size, AppSettings } from './types';
 import { initialFrames, initialAssets } from './constants';
@@ -94,7 +95,7 @@ const initialStorySettings: StorySettings = {
 };
 
 type DraggingInfo = {
-    type: 'note-move' | 'note-resize';
+    type: 'sketch-move' | 'note-move' | 'note-resize';
     id: string;
     initialMousePos: { x: number; y: number };
     initialPosition: Position;
@@ -105,20 +106,18 @@ type DraggingInfo = {
 // --- Sketch Card Component ---
 const SketchCard: React.FC<{
     sketch: Sketch;
+    isDragging: boolean;
     onContextMenu: (e: React.MouseEvent, sketch: Sketch) => void;
     onMouseDown: (e: React.MouseEvent, sketch: Sketch) => void;
-    onDragStart: (e: React.DragEvent) => void;
-}> = ({ sketch, onContextMenu, onMouseDown, onDragStart }) => (
+}> = ({ sketch, isDragging, onContextMenu, onMouseDown }) => (
     <div
-        className={`absolute group bg-white p-2 pb-6 rounded-sm shadow-lg transition-transform hover:scale-[1.025] hover:z-20 cursor-grab`}
+        className={`absolute group bg-white p-2 pb-6 rounded-sm shadow-lg transition-transform ${isDragging ? 'opacity-60 scale-[1.05] z-50 pointer-events-none' : 'hover:scale-[1.025] hover:z-20'} cursor-grab`}
         style={{
             left: sketch.position.x,
             top: sketch.position.y,
             width: sketch.size.width,
             height: sketch.size.height,
         }}
-        draggable
-        onDragStart={onDragStart}
         onContextMenu={(e) => onContextMenu(e, sketch)}
         onMouseDown={(e) => onMouseDown(e, sketch)}
     >
@@ -263,6 +262,18 @@ const AddFrameMenu: React.FC<AddFrameMenuProps> = ({ targetRect, actions, onClos
 
 const gcd = (a: number, b: number): number => (b ? gcd(b, a % b) : a);
 
+// Helper to convert Sketch to Frame for tools
+const sketchToFrame = (sketch: Sketch): Frame => ({
+    id: sketch.id,
+    imageUrls: [sketch.imageUrl],
+    activeVersionIndex: 0,
+    prompt: sketch.prompt,
+    duration: 3.0,
+    file: sketch.file,
+    aspectRatio: sketch.aspectRatio,
+    isGenerating: false,
+});
+
 export default function App() {
     // Project State
     const [projects, setProjects] = useState<Project[]>([]);
@@ -318,6 +329,8 @@ export default function App() {
     const [noteContextMenu, setNoteContextMenu] = useState<{ x: number, y: number, note: Note } | null>(null);
     const [addFrameMenu, setAddFrameMenu] = useState<{ index: number; rect: DOMRect } | null>(null);
     const [draggingInfo, setDraggingInfo] = useState<DraggingInfo>(null);
+    const [sketchDropTargetIndex, setSketchDropTargetIndex] = useState<number | null>(null);
+    const [isAssetLibraryDropTarget, setIsAssetLibraryDropTarget] = useState(false);
     
     // Non-blocking loading states
     const [generatingStory, setGeneratingStory] = useState(false);
@@ -700,12 +713,32 @@ export default function App() {
         }
     };
 
-    const handleApplyEdit = useCallback(async (frameId: string, newImageUrl: string, newPrompt: string) => {
-        try {
-            const newFile = dataUrlToFile(newImageUrl, `edited-${frameId}-${Date.now()}.png`);
-            
-            updateFrames(prev => prev.map(f => {
-                if (f.id === frameId) {
+    const handleApplyEdit = useCallback(async (targetId: string, newImageUrl: string, newPrompt: string) => {
+        const newFile = dataUrlToFile(newImageUrl, `edited-${targetId}-${Date.now()}.png`);
+        
+        // Check if it's a sketch
+        const sketchIndex = localSketches.findIndex(s => s.id === targetId);
+        if (sketchIndex !== -1) {
+            updateSketches(prev => prev.map(s => {
+                if (s.id === targetId) {
+                    return {
+                        ...s,
+                        imageUrl: newImageUrl,
+                        file: newFile,
+                        prompt: newPrompt,
+                    };
+                }
+                return s;
+            }));
+            setIsAdvancedGenerateModalOpen(false);
+            return;
+        }
+
+        // Check if it's a frame
+        const frameIndex = localFrames.findIndex(f => f.id === targetId);
+        if (frameIndex !== -1) {
+             updateFrames(prev => prev.map(f => {
+                if (f.id === targetId) {
                     const newImageUrls = [...f.imageUrls, newImageUrl];
                     return {
                         ...f,
@@ -718,13 +751,12 @@ export default function App() {
                 }
                 return f;
             }));
-            
             setIsAdvancedGenerateModalOpen(false);
-        } catch (error) {
-            console.error("Error applying edit:", error);
-            alert(`Не удалось применить изменения: ${error instanceof Error ? error.message : String(error)}`);
+            return;
         }
-    }, [updateFrames]);
+
+        console.warn("Target ID not found in frames or sketches for edit apply.");
+    }, [localSketches, localFrames, updateSketches, updateFrames]);
     
     const handleGenerateTransition = useCallback((index: number) => { alert('Generate Transition not implemented in this view.'); }, []);
     
@@ -772,19 +804,6 @@ export default function App() {
 
     // --- Asset Library Handlers ---
     const handleAddAssets = useCallback(async (files: File[]) => { const n: Asset[] = await Promise.all(files.map(async f => ({ id: crypto.randomUUID(), imageUrl: await fileToBase64(f), file: f, name: f.name }))); updateAssets(p => [...p, ...n]); }, [updateAssets]);
-    const handleAddAssetFromSketch = useCallback((sketchId: string) => {
-        const sketch = localSketches.find(s => s.id === sketchId);
-        if (sketch && sketch.file) {
-            const newAsset: Asset = {
-                id: crypto.randomUUID(),
-                imageUrl: sketch.imageUrl,
-                file: sketch.file,
-                name: sketch.prompt || `Набросок ${sketch.id.substring(0, 4)}`,
-            };
-            updateAssets(prev => [...prev, newAsset]);
-            updateSketches(prev => prev.filter(s => s.id !== sketchId));
-        }
-    }, [localSketches, updateAssets, updateSketches]);
     const handleDeleteAsset = useCallback((id: string) => { updateAssets(p => p.filter(a => a.id !== id)); setSelectedAssetIds(p => { const n = new Set(p); n.delete(id); return n; }); }, [updateAssets]);
     const handleSelectAllAssets = useCallback(() => { setSelectedAssetIds(new Set(localAssets.map(a => a.id))); }, [localAssets]);
     const handleDeselectAllAssets = useCallback(() => { setSelectedAssetIds(new Set()); }, []);
@@ -869,51 +888,92 @@ export default function App() {
     const handleSaveStorySettings = (newSettings: StorySettings) => { setStorySettings(newSettings); setIsStorySettingsModalOpen(false); };
     
     // --- Adaptation & Aspect Ratio Handlers ---
-    const handleAdaptFrameToStory = useCallback(async (frameId: string, instruction?: string) => {
-        const frameToAdapt = localFrames.find(f => f.id === frameId);
-        if (!frameToAdapt) {
-            alert("Не удалось найти кадр для адаптации.");
+    const handleAdaptFrameToStory = useCallback(async (targetId: string, instruction?: string) => {
+        // Check if it's a frame
+        const frameToAdapt = localFrames.find(f => f.id === targetId);
+        
+        // Check if it's a sketch
+        const sketchToAdapt = localSketches.find(s => s.id === targetId);
+
+        if (!frameToAdapt && !sketchToAdapt) {
+            alert("Не удалось найти объект для адаптации.");
             return;
         }
 
-        updateFrames(prev => prev.map(f => f.id === frameId ? { ...f, isGenerating: true, generatingMessage: 'Адаптация к сюжету...' } : f));
+        if (frameToAdapt) {
+             updateFrames(prev => prev.map(f => f.id === targetId ? { ...f, isGenerating: true, generatingMessage: 'Адаптация к сюжету...' } : f));
 
-        try {
-            const currentIndex = localFrames.findIndex(f => f.id === frameId);
-            const leftFrame = currentIndex > 0 ? localFrames[currentIndex - 1] : null;
-            const rightFrame = currentIndex < localFrames.length - 1 ? localFrames[currentIndex + 1] : null;
+            try {
+                const currentIndex = localFrames.findIndex(f => f.id === targetId);
+                const leftFrame = currentIndex > 0 ? localFrames[currentIndex - 1] : null;
+                const rightFrame = currentIndex < localFrames.length - 1 ? localFrames[currentIndex + 1] : null;
 
-            const { imageUrl: newImageUrl, prompt: newPrompt } = await adaptImageToStory(
-                frameToAdapt,
-                leftFrame,
-                rightFrame,
-                instruction
-            );
+                const { imageUrl: newImageUrl, prompt: newPrompt } = await adaptImageToStory(
+                    frameToAdapt,
+                    leftFrame,
+                    rightFrame,
+                    instruction
+                );
 
-            const newFile = dataUrlToFile(newImageUrl, `adapted-${frameId}-${Date.now()}.png`);
+                const newFile = dataUrlToFile(newImageUrl, `adapted-${targetId}-${Date.now()}.png`);
 
-            updateFrames(prev => prev.map(f => {
-                if (f.id === frameId) {
-                    const newImageUrls = [...f.imageUrls, newImageUrl];
-                    return {
-                        ...f,
-                        imageUrls: newImageUrls,
-                        activeVersionIndex: newImageUrls.length - 1,
-                        prompt: newPrompt,
-                        file: newFile,
-                        isGenerating: false,
-                        generatingMessage: undefined,
-                    };
-                }
-                return f;
-            }));
+                updateFrames(prev => prev.map(f => {
+                    if (f.id === targetId) {
+                        const newImageUrls = [...f.imageUrls, newImageUrl];
+                        return {
+                            ...f,
+                            imageUrls: newImageUrls,
+                            activeVersionIndex: newImageUrls.length - 1,
+                            prompt: newPrompt,
+                            file: newFile,
+                            isGenerating: false,
+                            generatingMessage: undefined,
+                        };
+                    }
+                    return f;
+                }));
 
-        } catch (error) {
-            console.error("Failed to adapt frame to story:", error);
-            alert(`Ошибка при адаптации кадра: ${error instanceof Error ? error.message : String(error)}`);
-            updateFrames(prev => prev.map(f => f.id === frameId ? { ...f, isGenerating: false, generatingMessage: undefined } : f));
+            } catch (error) {
+                console.error("Failed to adapt frame to story:", error);
+                alert(`Ошибка при адаптации кадра: ${error instanceof Error ? error.message : String(error)}`);
+                updateFrames(prev => prev.map(f => f.id === targetId ? { ...f, isGenerating: false, generatingMessage: undefined } : f));
+            }
+        } else if (sketchToAdapt) {
+            // For sketch adaptation, we don't have linear context (neighbors).
+            // We treat it as "style transfer" or just manual instruction application on the sketch itself.
+             try {
+                 // Temporarily convert sketch to frame-like object for the service
+                 const tempFrame = sketchToFrame(sketchToAdapt);
+                 
+                 // Since sketches are free-floating, we pass null for neighbors.
+                 // The service will rely on manual instruction or just re-styling the image itself.
+                 const { imageUrl: newImageUrl, prompt: newPrompt } = await adaptImageToStory(
+                    tempFrame,
+                    null, 
+                    null,
+                    instruction || "Улучшить качество и стиль"
+                );
+
+                const newFile = dataUrlToFile(newImageUrl, `adapted-sketch-${targetId}-${Date.now()}.png`);
+                
+                updateSketches(prev => prev.map(s => {
+                    if (s.id === targetId) {
+                         return {
+                            ...s,
+                            imageUrl: newImageUrl,
+                            file: newFile,
+                            prompt: newPrompt,
+                        };
+                    }
+                    return s;
+                }));
+
+            } catch (error) {
+                console.error("Failed to adapt sketch:", error);
+                 alert(`Ошибка при адаптации наброска: ${error instanceof Error ? error.message : String(error)}`);
+            }
         }
-    }, [localFrames, updateFrames]);
+    }, [localFrames, localSketches, updateFrames, updateSketches]);
 
     const handleGlobalAspectRatioChange = (newRatio: string) => { setGlobalAspectRatio(newRatio); if (isAspectRatioLocked) { updateFrames(prev => prev.map(f => ({ ...f, aspectRatio: newRatio }))); } };
     const handleToggleAspectRatioLock = () => { const n = !isAspectRatioLocked; setIsAspectRatioLocked(n); if (n) { updateFrames(prev => prev.map(f => ({...f, aspectRatio: globalAspectRatio }))); } };
@@ -1056,9 +1116,66 @@ export default function App() {
     }, [localFrames, updateFrames]);
     
     // --- Integration Handlers ---
-    const handleStartIntegration = useCallback(async (source: File | string, targetFrameId: string) => { const t = localFrames.find(f => f.id === targetFrameId); if (!t) return; let s: Asset | { imageUrl: string; file: File; name: string; }; if (typeof source === 'string') { const a = localAssets.find(as => as.id === source); if (!a) return; s = a; } else { const i = await fileToBase64(source); s = { id: crypto.randomUUID(), imageUrl: i, file: source, name: source.name }; } setIntegrationConfig({ sourceAsset: s, targetFrame: t }); setIsIntegrationModalOpen(true); }, [localFrames, localAssets]);
-    const handleStartIntegrationWithEmptySource = (targetFrame: Frame) => { setIntegrationConfig({ targetFrame }); setIsIntegrationModalOpen(true); };
-    const handleApplyIntegration = useCallback(async (result: { imageUrl: string, prompt: string }) => { if (!integrationConfig) return; const t = integrationConfig.targetFrame.id; try { const f = dataUrlToFile(result.imageUrl, `integrated-${t}-${Date.now()}.png`); updateFrames(p => p.map(fr => { if (fr.id === t) { const niu = [...fr.imageUrls, result.imageUrl]; return { ...fr, imageUrls: niu, activeVersionIndex: niu.length - 1, file: f, prompt: result.prompt, isTransition: false, isGenerating: false }; } return fr; })); setIsIntegrationModalOpen(false); setIntegrationConfig(null); } catch (err) { console.error("Error applying integration:", err); alert(`Не удалось применить интеграцию: ${err instanceof Error ? err.message : String(err)}`); } }, [integrationConfig, updateFrames]);
+    const handleStartIntegration = useCallback(async (source: File | string, targetFrameId: string) => { 
+        // Find target in Frames OR Sketches
+        const frameTarget = localFrames.find(f => f.id === targetFrameId);
+        const sketchTarget = localSketches.find(s => s.id === targetFrameId);
+        const target = frameTarget || (sketchTarget ? sketchToFrame(sketchTarget) : null);
+
+        if (!target) return; 
+        
+        let s: Asset | { imageUrl: string; file: File; name: string; }; 
+        if (typeof source === 'string') { 
+            const a = localAssets.find(as => as.id === source); 
+            if (!a) return; 
+            s = a; 
+        } else { 
+            const i = await fileToBase64(source); 
+            s = { id: crypto.randomUUID(), imageUrl: i, file: source, name: source.name }; 
+        } 
+        setIntegrationConfig({ sourceAsset: s, targetFrame: target }); 
+        setIsIntegrationModalOpen(true); 
+    }, [localFrames, localSketches, localAssets]);
+
+    const handleStartIntegrationWithEmptySource = (targetFrameOrSketch: Frame | Sketch) => { 
+        const target = 'imageUrls' in targetFrameOrSketch ? targetFrameOrSketch : sketchToFrame(targetFrameOrSketch);
+        setIntegrationConfig({ targetFrame: target }); 
+        setIsIntegrationModalOpen(true); 
+    };
+
+    const handleApplyIntegration = useCallback(async (result: { imageUrl: string, prompt: string }) => { 
+        if (!integrationConfig) return; 
+        const t = integrationConfig.targetFrame.id; 
+        
+        try { 
+            const f = dataUrlToFile(result.imageUrl, `integrated-${t}-${Date.now()}.png`); 
+            
+            // Try update frame
+            let updated = false;
+            const frameIndex = localFrames.findIndex(fr => fr.id === t);
+            if (frameIndex !== -1) {
+                 updateFrames(p => p.map(fr => { if (fr.id === t) { const niu = [...fr.imageUrls, result.imageUrl]; return { ...fr, imageUrls: niu, activeVersionIndex: niu.length - 1, file: f, prompt: result.prompt, isTransition: false, isGenerating: false }; } return fr; }));
+                 updated = true;
+            }
+
+            // Try update sketch if not frame
+            if (!updated) {
+                updateSketches(prev => prev.map(s => {
+                    if (s.id === t) {
+                        return { ...s, imageUrl: result.imageUrl, file: f, prompt: result.prompt };
+                    }
+                    return s;
+                }));
+            }
+
+            setIsIntegrationModalOpen(false); 
+            setIntegrationConfig(null); 
+        } catch (err) { 
+            console.error("Error applying integration:", err); 
+            alert(`Не удалось применить интеграцию: ${err instanceof Error ? err.message : String(err)}`); 
+        } 
+    }, [integrationConfig, updateFrames, updateSketches, localFrames]);
+
     const handleStartIntegrationFromSketch = useCallback((sourceSketchId: string, targetFrameId: string) => {
         const sourceSketch = localSketches.find(s => s.id === sourceSketchId);
         const targetFrame = localFrames.find(f => f.id === targetFrameId);
@@ -1202,6 +1319,34 @@ export default function App() {
             const dy = (e.clientY - draggingInfo.initialMousePos.y) / transform.scale;
 
             switch (draggingInfo.type) {
+                case 'sketch-move': {
+                    const newX = draggingInfo.initialPosition.x + dx;
+                    const newY = draggingInfo.initialPosition.y + dy;
+                    updateSketches(prev => prev.map(s => s.id === draggingInfo.id ? { ...s, position: { x: newX, y: newY } } : s));
+                    
+                    // Check for Timeline Drop Zones
+                    const mouseX = e.clientX;
+                    const mouseY = e.clientY;
+                    let foundIndex: number | null = null;
+                    for (const [index, el] of timelineDropZoneRefs.current.entries()) {
+                        const rect = el.getBoundingClientRect();
+                        if (mouseX >= rect.left && mouseX <= rect.right && mouseY >= rect.top && mouseY <= rect.bottom) {
+                            foundIndex = index;
+                            break;
+                        }
+                    }
+                    setSketchDropTargetIndex(foundIndex);
+
+                    // Check for Asset Library Drop Zone
+                    if (assetLibraryRef.current) {
+                         const rect = assetLibraryRef.current.getBoundingClientRect();
+                         const isOver = isAssetLibraryOpen && mouseX >= rect.left && mouseX <= rect.right && mouseY >= rect.top && mouseY <= rect.bottom;
+                         setIsAssetLibraryDropTarget(isOver);
+                    } else {
+                        setIsAssetLibraryDropTarget(false);
+                    }
+                    break;
+                }
                 case 'note-move': {
                     const newX = draggingInfo.initialPosition.x + dx;
                     const newY = draggingInfo.initialPosition.y + dy;
@@ -1226,7 +1371,45 @@ export default function App() {
             (e.currentTarget as HTMLElement).style.cursor = 'grab';
         }
         if (draggingInfo) {
+            if (draggingInfo.type === 'sketch-move') {
+                
+                // 1. Check for Asset Library Drop
+                if (isAssetLibraryDropTarget) {
+                    const sketch = localSketches.find(s => s.id === draggingInfo.id);
+                    if (sketch && sketch.file) {
+                        const newAsset: Asset = {
+                            id: crypto.randomUUID(),
+                            imageUrl: sketch.imageUrl,
+                            file: sketch.file,
+                            name: sketch.prompt || `Sketch ${sketch.id.substring(0, 4)}`,
+                        };
+                        updateAssets(prev => [...prev, newAsset]);
+                        updateSketches(prev => prev.filter(s => s.id !== sketch.id));
+                    }
+                } 
+                // 2. Check for Timeline Insertion (via Drop Zones)
+                else if (sketchDropTargetIndex !== null) {
+                    handleAddFrameFromSketch(draggingInfo.id, sketchDropTargetIndex);
+                } 
+                // 3. Check for Timeline Integration (Dropping ON a Frame)
+                else {
+                    // Since dragging element has pointer-events-none (set in SketchCard), 
+                    // we can detect elements beneath it.
+                    const elementsBelow = document.elementsFromPoint(e.clientX, e.clientY);
+                    // Find the closest parent with a data-frame-id attribute
+                    const frameElement = elementsBelow.find(el => el.closest('[data-frame-id]'));
+                    
+                    if (frameElement) {
+                        const targetFrameId = frameElement.closest('[data-frame-id]')?.getAttribute('data-frame-id');
+                        if (targetFrameId) {
+                            handleStartIntegrationFromSketch(draggingInfo.id, targetFrameId);
+                        }
+                    }
+                }
+            }
             setDraggingInfo(null);
+            setSketchDropTargetIndex(null);
+            setIsAssetLibraryDropTarget(false);
         }
     };
 
@@ -1256,14 +1439,14 @@ export default function App() {
     // --- Sketch & Note Drag & Drop (Manual Implementation for Notes) ---
     const handleSketchMouseDown = (e: React.MouseEvent, sketch: Sketch) => {
         if (e.button !== 0) return;
-        // Native drag is handled by onDragStart, this is just to prevent board panning
         e.stopPropagation();
-    };
-
-    const handleSketchDragStart = (e: React.DragEvent, sketchId: string) => {
-        e.stopPropagation();
-        e.dataTransfer.effectAllowed = 'copy';
-        e.dataTransfer.setData('application/json;type=sketch-id', sketchId);
+        // Prevent board panning and start custom sketch drag
+        setDraggingInfo({
+            type: 'sketch-move',
+            id: sketch.id,
+            initialMousePos: { x: e.clientX, y: e.clientY },
+            initialPosition: sketch.position,
+        });
     };
     
     const handleNoteMouseDown = (e: React.MouseEvent, note: Note) => {
@@ -1542,6 +1725,7 @@ export default function App() {
                             generatingVideoState={generatingVideoState}
                             globalAspectRatio={globalAspectRatio}
                             isAspectRatioLocked={isAspectRatioLocked}
+                            sketchDropTargetIndex={sketchDropTargetIndex}
                             isAnalyzingStory={isAnalyzingStory}
                             onGlobalAspectRatioChange={handleGlobalAspectRatioChange}
                             onToggleAspectRatioLock={handleToggleAspectRatioLock}
@@ -1575,9 +1759,9 @@ export default function App() {
                          <div key={sketch.id} className="board-interactive-item">
                             <SketchCard 
                                 sketch={sketch} 
+                                isDragging={draggingInfo?.id === sketch.id}
                                 onContextMenu={handleSketchContextMenu}
                                 onMouseDown={handleSketchMouseDown}
-                                onDragStart={(e) => handleSketchDragStart(e, sketch.id)}
                             />
                          </div>
                     ))}
@@ -1603,8 +1787,8 @@ export default function App() {
                     selectedAssetIds={selectedAssetIds}
                     storySettings={storySettings}
                     frameCount={frameCount}
+                    isDropTarget={isAssetLibraryDropTarget}
                     onAddAssets={handleAddAssets}
-                    onAddAssetFromSketch={handleAddAssetFromSketch}
                     onDeleteAsset={handleDeleteAsset}
                     onToggleSelectAsset={(id) => {
                         setSelectedAssetIds(prev => { const n = new Set(prev); if (n.has(id)) { n.delete(id); } else { n.add(id); } return n; });
@@ -1767,6 +1951,32 @@ export default function App() {
                     y={sketchContextMenu.y}
                     onClose={() => setSketchContextMenu(null)}
                     actions={[
+                        { 
+                            label: 'Отправить на таймлайн', 
+                            icon: 'view_timeline', 
+                            onClick: () => handleAddFrameFromSketch(sketchContextMenu.sketch.id, localFrames.length) 
+                        },
+                         { 
+                            label: 'Редактировать', 
+                            icon: 'tune', 
+                            onClick: () => { 
+                                setAdvancedGenerateModalConfig({ 
+                                    mode: 'edit', 
+                                    frameToEdit: sketchToFrame(sketchContextMenu.sketch) 
+                                }); 
+                                setIsAdvancedGenerateModalOpen(true); 
+                            }
+                        },
+                        { 
+                            label: 'Адаптировать', 
+                            icon: 'auto_fix', 
+                            onClick: () => setAdaptingFrame(sketchToFrame(sketchContextMenu.sketch)) 
+                        },
+                         { 
+                            label: 'Интегрировать ассет', 
+                            icon: 'add_photo_alternate', 
+                            onClick: () => handleStartIntegrationWithEmptySource(sketchContextMenu.sketch) 
+                        },
                         { label: 'Дублировать', icon: 'content_copy', onClick: () => handleDuplicateSketch(sketchContextMenu.sketch.id) },
                         { label: 'Удалить', icon: 'delete', isDestructive: true, onClick: () => handleDeleteSketch(sketchContextMenu.sketch.id) },
                     ]}

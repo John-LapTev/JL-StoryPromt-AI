@@ -14,6 +14,7 @@ interface TimelineProps {
     generatingVideoState: GeneratingVideoState;
     globalAspectRatio: string;
     isAspectRatioLocked: boolean;
+    sketchDropTargetIndex: number | null;
     isAnalyzingStory: boolean;
     onGlobalAspectRatioChange: (newRatio: string) => void;
     onToggleAspectRatioLock: () => void;
@@ -53,6 +54,7 @@ export const Timeline: React.FC<TimelineProps> = ({
     generatingVideoState,
     globalAspectRatio,
     isAspectRatioLocked,
+    sketchDropTargetIndex,
     isAnalyzingStory,
     onGlobalAspectRatioChange,
     onToggleAspectRatioLock,
@@ -219,7 +221,7 @@ export const Timeline: React.FC<TimelineProps> = ({
                         onOpenMenu={onOpenAddFrameMenu}
                         onDragOver={(e) => handleDragOver(e, 0)}
                         onDrop={handleDrop}
-                        isDropTarget={dropTargetIndex === 0}
+                        isDropTarget={dropTargetIndex === 0 || sketchDropTargetIndex === 0}
                         onRegisterDropZone={onRegisterDropZone}
                     />
                     {frames.map((frame, index) => (
@@ -256,7 +258,7 @@ export const Timeline: React.FC<TimelineProps> = ({
                                 onOpenMenu={onOpenAddFrameMenu}
                                 onDragOver={(e) => handleDragOver(e, index + 1)}
                                 onDrop={handleDrop}
-                                isDropTarget={dropTargetIndex === index + 1}
+                                isDropTarget={dropTargetIndex === index + 1 || sketchDropTargetIndex === index + 1}
                                 onRegisterDropZone={onRegisterDropZone}
                             />
                         </React.Fragment>
