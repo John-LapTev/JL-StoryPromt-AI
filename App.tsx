@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect, useCallback, useMemo, useRef, useLayoutEffect } from 'react';
-import type { Frame, Project, Asset, StorySettings, IntegrationConfig, Sketch, Note, Position } from './types';
+import type { Frame, Project, Asset, StorySettings, IntegrationConfig, Sketch, Note, Position, Size } from './types';
 import { initialFrames, initialAssets } from './constants';
 import { projectService } from './services/projectService';
 import { Header } from './components/Header';
@@ -88,10 +88,12 @@ const initialStorySettings: StorySettings = {
     ending: '',
 };
 
-type DraggingSketchInfo = {
+type DraggingInfo = {
+    type: 'sketch-move' | 'note-move' | 'note-resize';
     id: string;
     initialMousePos: { x: number; y: number };
-    initialSketchPos: Position;
+    initialPosition: Position;
+    initialSize?: Size;
 } | null;
 
 
@@ -130,6 +132,73 @@ const SketchCard: React.FC<{
         <p className="absolute bottom-1 left-2 right-2 text-center text-xs text-black truncate pointer-events-none">{sketch.prompt}</p>
     </div>
 );
+
+
+// --- Note Card Component ---
+const NoteCard: React.FC<{
+    note: Note;
+    onUpdateText: (id: string, newText: string) => void;
+    onMouseDown: (e: React.MouseEvent, note: Note) => void;
+    onResizeMouseDown: (e: React.MouseEvent, note: Note) => void;
+    onContextMenu: (e: React.MouseEvent, note: Note) => void;
+}> = ({ note, onUpdateText, onMouseDown, onResizeMouseDown, onContextMenu }) => {
+    const [isEditing, setIsEditing] = useState(false);
+    const [text, setText] = useState(note.text);
+    const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+    useEffect(() => {
+        if (isEditing && textareaRef.current) {
+            textareaRef.current.focus();
+            textareaRef.current.select();
+        }
+    }, [isEditing]);
+
+    useEffect(() => {
+        setText(note.text);
+    }, [note.text]);
+
+    const handleBlur = () => {
+        setIsEditing(false);
+        if (text.trim() !== note.text) {
+            onUpdateText(note.id, text.trim());
+        }
+    };
+    
+    return (
+        <div
+            className="absolute group bg-yellow-900/30 border border-yellow-700/50 p-3 rounded-md shadow-lg flex flex-col cursor-grab board-interactive-item"
+            style={{
+                left: note.position.x,
+                top: note.position.y,
+                width: note.size.width,
+                height: note.size.height,
+            }}
+            onMouseDown={(e) => onMouseDown(e, note)}
+            onDoubleClick={() => setIsEditing(true)}
+            onContextMenu={(e) => onContextMenu(e, note)}
+        >
+            {isEditing ? (
+                <textarea
+                    ref={textareaRef}
+                    value={text}
+                    onChange={(e) => setText(e.target.value)}
+                    onBlur={handleBlur}
+                    onKeyDown={(e) => { if (e.key === 'Escape') (e.target as HTMLTextAreaElement).blur(); }}
+                    onMouseDown={(e) => e.stopPropagation()}
+                    className="w-full h-full bg-transparent text-yellow-200/90 text-sm resize-none focus:outline-none"
+                />
+            ) : (
+                <p className="w-full h-full text-yellow-200/90 text-sm whitespace-pre-wrap break-words overflow-hidden pointer-events-none">
+                    {note.text}
+                </p>
+            )}
+            <div
+                className="absolute bottom-0 right-0 w-4 h-4 cursor-nwse-resize group-hover:bg-yellow-500 rounded-br-md transition-colors"
+                onMouseDown={(e) => onResizeMouseDown(e, note)}
+            />
+        </div>
+    );
+};
 
 
 // --- Add Frame Menu Component ---
@@ -231,8 +300,9 @@ export default function App() {
     const [contextMenu, setContextMenu] = useState<{ x: number, y: number, frame: Frame } | null>(null);
     const [boardContextMenu, setBoardContextMenu] = useState<{ x: number, y: number, boardPosition: Position } | null>(null);
     const [sketchContextMenu, setSketchContextMenu] = useState<{ x: number, y: number, sketch: Sketch } | null>(null);
+    const [noteContextMenu, setNoteContextMenu] = useState<{ x: number, y: number, note: Note } | null>(null);
     const [addFrameMenu, setAddFrameMenu] = useState<{ index: number; rect: DOMRect } | null>(null);
-    const [draggingSketchInfo, setDraggingSketchInfo] = useState<DraggingSketchInfo>(null);
+    const [draggingInfo, setDraggingInfo] = useState<DraggingInfo>(null);
     const [sketchDropTargetIndex, setSketchDropTargetIndex] = useState<number | null>(null);
     const [isAssetLibraryDropTarget, setIsAssetLibraryDropTarget] = useState(false);
     
@@ -340,6 +410,11 @@ export default function App() {
 
     const updateSketches = useCallback((updater: React.SetStateAction<Sketch[]>) => {
         setLocalSketches(updater);
+        setHasUnsavedChanges(true);
+    }, []);
+    
+    const updateNotes = useCallback((updater: React.SetStateAction<Note[]>) => {
+        setLocalNotes(updater);
         setHasUnsavedChanges(true);
     }, []);
 
@@ -575,7 +650,8 @@ export default function App() {
 
     const handleBoardContextMenu = (e: React.MouseEvent) => {
         e.preventDefault();
-        setSketchContextMenu(null); // Close sketch menu if open
+        setSketchContextMenu(null);
+        setNoteContextMenu(null);
         if ((e.target as HTMLElement).closest('.board-interactive-item')) return;
         const board = boardRef.current;
         if (!board) return;
@@ -641,6 +717,7 @@ export default function App() {
         setContextMenu(null);
         setBoardContextMenu(null);
         setSketchContextMenu(null);
+        setNoteContextMenu(null);
 
         panState.current = { isPanning: true, startX: e.clientX, startY: e.clientY, lastX: transform.x, lastY: transform.y };
         (e.currentTarget as HTMLElement).style.cursor = 'grabbing';
@@ -654,31 +731,51 @@ export default function App() {
             setTransform(prev => ({ ...prev, x: panState.current.lastX + dx, y: panState.current.lastY + dy }));
         }
         
-        if (draggingSketchInfo) {
-            const dx = e.clientX - draggingSketchInfo.initialMousePos.x;
-            const dy = e.clientY - draggingSketchInfo.initialMousePos.y;
-            const newX = draggingSketchInfo.initialSketchPos.x + (dx / transform.scale);
-            const newY = draggingSketchInfo.initialSketchPos.y + (dy / transform.scale);
-            updateSketches(prev => prev.map(s => s.id === draggingSketchInfo.id ? { ...s, position: { x: newX, y: newY } } : s));
+        if (draggingInfo) {
+            e.preventDefault();
+            const dx = (e.clientX - draggingInfo.initialMousePos.x) / transform.scale;
+            const dy = (e.clientY - draggingInfo.initialMousePos.y) / transform.scale;
 
-            let timelineTargetIndex: number | null = null;
-            for (const [index, element] of timelineDropZoneRefs.current.entries()) {
-                const rect = element.getBoundingClientRect();
-                if (e.clientX >= rect.left && e.clientX <= rect.right && e.clientY >= rect.top && e.clientY <= rect.bottom) {
-                    timelineTargetIndex = index;
+            switch (draggingInfo.type) {
+                case 'sketch-move': {
+                    const newX = draggingInfo.initialPosition.x + dx;
+                    const newY = draggingInfo.initialPosition.y + dy;
+                    updateSketches(prev => prev.map(s => s.id === draggingInfo.id ? { ...s, position: { x: newX, y: newY } } : s));
+
+                    let timelineTargetIndex: number | null = null;
+                    for (const [index, element] of timelineDropZoneRefs.current.entries()) {
+                        const rect = element.getBoundingClientRect();
+                        if (e.clientX >= rect.left && e.clientX <= rect.right && e.clientY >= rect.top && e.clientY <= rect.bottom) {
+                            timelineTargetIndex = index;
+                            break;
+                        }
+                    }
+                    setSketchDropTargetIndex(timelineTargetIndex);
+
+                    if (assetLibraryRef.current && isAssetLibraryOpen) {
+                        const rect = assetLibraryRef.current.getBoundingClientRect();
+                        const isOver = e.clientX >= rect.left && e.clientX <= rect.right && e.clientY >= rect.top && e.clientY <= rect.bottom;
+                        setIsAssetLibraryDropTarget(isOver);
+                        if (isOver) setSketchDropTargetIndex(null);
+                    } else {
+                        setIsAssetLibraryDropTarget(false);
+                    }
                     break;
                 }
-            }
-            setSketchDropTargetIndex(timelineTargetIndex);
-
-            if (assetLibraryRef.current && isAssetLibraryOpen) {
-                const rect = assetLibraryRef.current.getBoundingClientRect();
-                const isOver = e.clientX >= rect.left && e.clientX <= rect.right && e.clientY >= rect.top && e.clientY <= rect.bottom;
-                setIsAssetLibraryDropTarget(isOver);
-                // If over asset library, don't show timeline target
-                if (isOver) setSketchDropTargetIndex(null);
-            } else {
-                setIsAssetLibraryDropTarget(false);
+                case 'note-move': {
+                    const newX = draggingInfo.initialPosition.x + dx;
+                    const newY = draggingInfo.initialPosition.y + dy;
+                    updateNotes(prev => prev.map(n => n.id === draggingInfo.id ? { ...n, position: { x: newX, y: newY } } : n));
+                    break;
+                }
+                case 'note-resize': {
+                    if (draggingInfo.initialSize) {
+                        const newWidth = Math.max(120, draggingInfo.initialSize.width + dx);
+                        const newHeight = Math.max(100, draggingInfo.initialSize.height + dy);
+                        updateNotes(prev => prev.map(n => n.id === draggingInfo.id ? { ...n, size: { width: newWidth, height: newHeight } } : n));
+                    }
+                    break;
+                }
             }
         }
     };
@@ -688,23 +785,25 @@ export default function App() {
             panState.current.isPanning = false;
             (e.currentTarget as HTMLElement).style.cursor = 'grab';
         }
-        if (draggingSketchInfo) {
-            if (isAssetLibraryDropTarget) {
-                const sketch = localSketches.find(s => s.id === draggingSketchInfo!.id);
-                if (sketch && sketch.file) {
-                    const newAsset: Asset = {
-                        id: crypto.randomUUID(),
-                        imageUrl: sketch.imageUrl,
-                        file: sketch.file,
-                        name: sketch.prompt || `Sketch ${sketch.id.substring(0, 4)}`,
-                    };
-                    updateAssets(prev => [...prev, newAsset]);
-                    updateSketches(prev => prev.filter(s => s.id !== sketch.id));
+        if (draggingInfo) {
+            if (draggingInfo.type === 'sketch-move') {
+                if (isAssetLibraryDropTarget) {
+                    const sketch = localSketches.find(s => s.id === draggingInfo.id);
+                    if (sketch && sketch.file) {
+                        const newAsset: Asset = {
+                            id: crypto.randomUUID(),
+                            imageUrl: sketch.imageUrl,
+                            file: sketch.file,
+                            name: sketch.prompt || `Sketch ${sketch.id.substring(0, 4)}`,
+                        };
+                        updateAssets(prev => [...prev, newAsset]);
+                        updateSketches(prev => prev.filter(s => s.id !== sketch.id));
+                    }
+                } else if (sketchDropTargetIndex !== null) {
+                    handleAddFrameFromSketch(draggingInfo.id, sketchDropTargetIndex);
                 }
-            } else if (sketchDropTargetIndex !== null) {
-                handleAddFrameFromSketch(draggingSketchInfo.id, sketchDropTargetIndex);
             }
-            setDraggingSketchInfo(null);
+            setDraggingInfo(null);
             setSketchDropTargetIndex(null);
             setIsAssetLibraryDropTarget(false);
         }
@@ -733,15 +832,38 @@ export default function App() {
         setTransform({ scale: 1, x: 0, y: 0 });
     };
 
-    // --- Sketch Drag & Drop (Manual Implementation) ---
+    // --- Sketch & Note Drag & Drop (Manual Implementation) ---
     const handleSketchMouseDown = (e: React.MouseEvent, sketch: Sketch) => {
         if (e.button !== 0) return;
         e.stopPropagation();
-    
-        setDraggingSketchInfo({
+        setDraggingInfo({
+            type: 'sketch-move',
             id: sketch.id,
             initialMousePos: { x: e.clientX, y: e.clientY },
-            initialSketchPos: sketch.position,
+            initialPosition: sketch.position,
+        });
+    };
+    
+    const handleNoteMouseDown = (e: React.MouseEvent, note: Note) => {
+        if (e.button !== 0) return;
+        e.stopPropagation();
+        setDraggingInfo({
+            type: 'note-move',
+            id: note.id,
+            initialMousePos: { x: e.clientX, y: e.clientY },
+            initialPosition: note.position,
+        });
+    };
+    
+    const handleNoteResizeMouseDown = (e: React.MouseEvent, note: Note) => {
+        if (e.button !== 0) return;
+        e.stopPropagation();
+        setDraggingInfo({
+            type: 'note-resize',
+            id: note.id,
+            initialMousePos: { x: e.clientX, y: e.clientY },
+            initialPosition: note.position,
+            initialSize: note.size,
         });
     };
 
@@ -826,7 +948,16 @@ export default function App() {
         e.preventDefault();
         e.stopPropagation();
         setBoardContextMenu(null);
+        setNoteContextMenu(null);
         setSketchContextMenu({ x: e.clientX, y: e.clientY, sketch });
+    };
+
+    const handleNoteContextMenu = (e: React.MouseEvent, note: Note) => {
+        e.preventDefault();
+        e.stopPropagation();
+        setBoardContextMenu(null);
+        setSketchContextMenu(null);
+        setNoteContextMenu({ x: e.clientX, y: e.clientY, note });
     };
 
     const handleDuplicateSketch = (sketchId: string) => {
@@ -842,6 +973,20 @@ export default function App() {
 
     const handleDeleteSketch = (sketchId: string) => {
         updateSketches(prev => prev.filter(s => s.id !== sketchId));
+    };
+    
+    const handleAddNote = (position: Position) => {
+        const newNote: Note = {
+            id: crypto.randomUUID(),
+            text: 'Новая заметка...',
+            position,
+            size: { width: 220, height: 180 },
+        };
+        updateNotes(prev => [...prev, newNote]);
+    };
+
+    const handleDeleteNote = (noteId: string) => {
+        updateNotes(prev => prev.filter(n => n.id !== noteId));
     };
 
     const handleAddFrameFromSketch = useCallback((sketchId: string, index: number) => {
@@ -908,7 +1053,7 @@ export default function App() {
             <main 
                 ref={boardRef}
                 className="flex-1 flex-col overflow-hidden relative grid-bg-metallic"
-                style={{ cursor: panState.current.isPanning || draggingSketchInfo ? 'grabbing' : 'grab' }}
+                style={{ cursor: panState.current.isPanning || draggingInfo ? 'grabbing' : 'grab' }}
                 onDoubleClick={handleBoardDoubleClick}
                 onContextMenu={handleBoardContextMenu}
                 onMouseDown={handleBoardMouseDown}
@@ -966,11 +1111,23 @@ export default function App() {
                          <div key={sketch.id} className="board-interactive-item">
                             <SketchCard 
                                 sketch={sketch} 
-                                isDragging={draggingSketchInfo?.id === sketch.id}
+                                isDragging={draggingInfo?.type === 'sketch-move' && draggingInfo?.id === sketch.id}
                                 onContextMenu={handleSketchContextMenu}
                                 onMouseDown={handleSketchMouseDown}
                             />
                          </div>
+                    ))}
+                    
+                     {localNotes.map(note => (
+                        <div key={note.id} className="board-interactive-item">
+                            <NoteCard
+                                note={note}
+                                onUpdateText={(id, text) => updateNotes(prev => prev.map(n => n.id === id ? { ...n, text } : n))}
+                                onMouseDown={handleNoteMouseDown}
+                                onResizeMouseDown={handleNoteResizeMouseDown}
+                                onContextMenu={handleNoteContextMenu}
+                            />
+                        </div>
                     ))}
                 </div>
                 
@@ -1097,7 +1254,7 @@ export default function App() {
                     onClose={() => setBoardContextMenu(null)}
                     actions={[
                         { 
-                            label: 'Создать набросок здесь', 
+                            label: 'Новый набросок', 
                             icon: 'add_photo_alternate', 
                             onClick: () => {
                                 setAdvancedGenerateModalConfig({ 
@@ -1107,6 +1264,11 @@ export default function App() {
                                 setIsAdvancedGenerateModalOpen(true);
                             } 
                         },
+                        {
+                            label: 'Новая заметка',
+                            icon: 'note_add',
+                            onClick: () => handleAddNote(boardContextMenu.boardPosition),
+                        }
                     ]}
                 />
             )}
@@ -1118,6 +1280,16 @@ export default function App() {
                     actions={[
                         { label: 'Дублировать', icon: 'content_copy', onClick: () => handleDuplicateSketch(sketchContextMenu.sketch.id) },
                         { label: 'Удалить', icon: 'delete', isDestructive: true, onClick: () => handleDeleteSketch(sketchContextMenu.sketch.id) },
+                    ]}
+                />
+            )}
+            {noteContextMenu && (
+                <ContextMenu
+                    x={noteContextMenu.x}
+                    y={noteContextMenu.y}
+                    onClose={() => setNoteContextMenu(null)}
+                    actions={[
+                        { label: 'Удалить', icon: 'delete', isDestructive: true, onClick: () => handleDeleteNote(noteContextMenu.note.id) },
                     ]}
                 />
             )}

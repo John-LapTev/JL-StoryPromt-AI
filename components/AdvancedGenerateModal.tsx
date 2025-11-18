@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useCallback } from 'react';
 import type { Frame, Position } from '../types';
 import { generateEditSuggestions, editImage, generatePromptSuggestions } from '../services/geminiService';
@@ -140,7 +141,7 @@ export const AdvancedGenerateModal: React.FC<AdvancedGenerateModalProps> = ({ on
     };
     
     const handleUndo = () => historyIndex > 0 && setHistoryIndex(prev => prev - 1);
-    const handleRedo = () => historyIndex < editHistory.length - 1 && setHistoryIndex(prev => prev - 1);
+    const handleRedo = () => historyIndex < editHistory.length - 1 && setHistoryIndex(prev => prev + 1);
 
     const handleApply = () => {
         if (config.mode === 'edit' && config.frameToEdit && onApplyEdit && hasEdits) {
