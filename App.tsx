@@ -15,7 +15,7 @@ import { ProjectLoadModal } from './components/ProjectLoadModal';
 import { AssetLibraryPanel } from './components/AssetLibraryPanel';
 import { ContextMenu } from './components/ContextMenu';
 import { StorySettingsModal } from './components/StorySettingsModal';
-import { Toast } from './components/Toast';
+import { AdaptationSettingsModal } from './components/AdaptationSettingsModal';
 import { analyzeStory, generateSinglePrompt, generateIntermediateFrame, generateTransitionPrompt, generateImageFromPrompt, editImage, generateVideoFromFrame, generateImageInContext, createStoryFromAssets, adaptImageToStory } from './services/geminiService';
 import { fileToBase64, dataUrlToFile, fetchCorsImage } from './utils/fileUtils';
 
@@ -72,6 +72,7 @@ export default function App() {
         frameToEdit?: Frame;
         insertIndex?: number;
     }>({ mode: 'generate' });
+    const [adaptingFrame, setAdaptingFrame] = useState<Frame | null>(null);
 
 
     // UI States
@@ -84,7 +85,6 @@ export default function App() {
     const [transform, setTransform] = useState({ scale: 1, x: 0, y: 0 });
     const [isAssetLibraryOpen, setIsAssetLibraryOpen] = useState(false);
     const [contextMenu, setContextMenu] = useState<{ x: number, y: number, frame: Frame } | null>(null);
-    const [styleAdaptToast, setStyleAdaptToast] = useState<{ frameId: string } | null>(null);
     
     // Non-blocking loading states
     const [generatingStory, setGeneratingStory] = useState(false);
@@ -403,7 +403,7 @@ export default function App() {
                            setLocalFrames(currentFrames => {
                                 const newIndex = currentFrames.findIndex(f => f.id === newFrame.id);
                                 if (newIndex > -1 && (newIndex > 0 || newIndex < currentFrames.length - 1)) {
-                                    setStyleAdaptToast({ frameId: newFrame.id });
+                                    setAdaptingFrame(currentFrames[newIndex]);
                                 }
                                 return currentFrames;
                            });
@@ -446,13 +446,13 @@ export default function App() {
         });
 
         // Check context for the first new frame
-        const firstNewFrameId = newFrames[0]?.id;
-        if (firstNewFrameId) {
+        const firstNewFrame = newFrames[0];
+        if (firstNewFrame) {
             setTimeout(() => {
                 setLocalFrames(currentFrames => {
-                    const newIndex = currentFrames.findIndex(f => f.id === firstNewFrameId);
+                    const newIndex = currentFrames.findIndex(f => f.id === firstNewFrame.id);
                     if (newIndex > -1 && (newIndex > 0 || newIndex < currentFrames.length - newFrames.length)) {
-                         setStyleAdaptToast({ frameId: firstNewFrameId });
+                        setAdaptingFrame(currentFrames[newIndex]);
                     }
                     return currentFrames;
                 })
@@ -481,13 +481,13 @@ export default function App() {
             return framesCopy;
         });
 
-        const firstNewFrameId = newFrames[0]?.id;
-        if (firstNewFrameId) {
+        const firstNewFrame = newFrames[0];
+        if (firstNewFrame) {
              setTimeout(() => {
                 setLocalFrames(currentFrames => {
-                    const newIndex = currentFrames.findIndex(f => f.id === firstNewFrameId);
+                    const newIndex = currentFrames.findIndex(f => f.id === firstNewFrame.id);
                     if (newIndex > -1 && (newIndex > 0 || newIndex < currentFrames.length - newFrames.length)) {
-                         setStyleAdaptToast({ frameId: firstNewFrameId });
+                         setAdaptingFrame(currentFrames[newIndex]);
                     }
                     return currentFrames;
                 })
@@ -809,7 +809,7 @@ export default function App() {
         setIsStorySettingsModalOpen(false);
     };
 
-    const handleAdaptFrameToStory = useCallback(async (frameId: string) => {
+    const handleAdaptFrameToStory = useCallback(async (frameId: string, instruction?: string) => {
         const frameIndex = localFrames.findIndex(f => f.id === frameId);
         if (frameIndex === -1) return;
 
@@ -820,7 +820,7 @@ export default function App() {
         updateFrames(prev => prev.map(f => f.id === frameId ? { ...f, isGenerating: true, generatingMessage: 'Адаптация стиля...' } : f));
         
         try {
-            const { imageUrl, prompt } = await adaptImageToStory(frameToAdapt, leftFrame, rightFrame);
+            const { imageUrl, prompt } = await adaptImageToStory(frameToAdapt, leftFrame, rightFrame, instruction);
             const file = dataUrlToFile(imageUrl, `adapted-${frameId}.png`);
 
             updateFrames(prev => prev.map(f => {
@@ -1022,6 +1022,17 @@ export default function App() {
                     onSave={handleSaveStorySettings}
                 />
             )}
+             {adaptingFrame && (
+                <AdaptationSettingsModal
+                    frame={adaptingFrame}
+                    allFrames={localFrames}
+                    onClose={() => setAdaptingFrame(null)}
+                    onAdapt={(frameId, instruction) => {
+                        handleAdaptFrameToStory(frameId, instruction);
+                        setAdaptingFrame(null);
+                    }}
+                />
+            )}
             {editingFrame && (
                 <EditPromptModal 
                     frame={editingFrame}
@@ -1068,7 +1079,7 @@ export default function App() {
                     onClose={handleCloseContextMenu}
                     actions={[
                         { label: 'Создать видео', icon: 'movie', onClick: () => handleGenerateVideo(contextMenu.frame) },
-                        { label: 'Адаптировать к сюжету', icon: 'auto_fix', onClick: () => handleAdaptFrameToStory(contextMenu.frame.id) },
+                        { label: 'Адаптировать к сюжету', icon: 'auto_fix', onClick: () => setAdaptingFrame(contextMenu.frame) },
                         { label: 'Редактировать кадр', icon: 'tune', onClick: () => {
                             setAdvancedGenerateModalConfig({ mode: 'edit', frameToEdit: contextMenu.frame });
                             setIsAdvancedGenerateModalOpen(true);
@@ -1076,17 +1087,6 @@ export default function App() {
                         { label: 'Дублировать', icon: 'content_copy', onClick: () => handleDuplicateFrame(contextMenu.frame.id) },
                         { label: 'Заменить кадр', icon: 'swap_horiz', onClick: () => handleReplaceFrame(contextMenu.frame.id) },
                     ]}
-                />
-            )}
-            {styleAdaptToast && (
-                <Toast
-                    message="Хотите адаптировать кадр под стиль сюжета?"
-                    actionText="Адаптировать"
-                    onAction={() => {
-                        handleAdaptFrameToStory(styleAdaptToast.frameId);
-                        setStyleAdaptToast(null);
-                    }}
-                    onClose={() => setStyleAdaptToast(null)}
                 />
             )}
         </div>

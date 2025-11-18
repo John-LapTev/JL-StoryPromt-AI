@@ -213,12 +213,14 @@ export async function editImage(
     let newImageMimeType: string = 'image/png';
     let newImageBase64: string = '';
 
-    for (const part of editResponse.candidates[0].content.parts) {
-        if (part.inlineData) {
-            newImageMimeType = part.inlineData.mimeType;
-            newImageBase64 = part.inlineData.data;
-            newImageUrl = `data:${newImageMimeType};base64,${newImageBase64}`;
-            break;
+    if (editResponse.candidates && editResponse.candidates.length > 0 && editResponse.candidates[0].content && editResponse.candidates[0].content.parts) {
+        for (const part of editResponse.candidates[0].content.parts) {
+            if (part.inlineData) {
+                newImageMimeType = part.inlineData.mimeType;
+                newImageBase64 = part.inlineData.data;
+                newImageUrl = `data:${newImageMimeType};base64,${newImageBase64}`;
+                break;
+            }
         }
     }
 
@@ -270,12 +272,14 @@ export async function generateIntermediateFrame(leftFrame: Frame, rightFrame: Fr
     let newImageMimeType: string = 'image/png';
     let newImageBase64: string = '';
 
-    for (const part of imageGenResponse.candidates[0].content.parts) {
-        if (part.inlineData) {
-            newImageMimeType = part.inlineData.mimeType;
-            newImageBase64 = part.inlineData.data;
-            newImageUrl = `data:${newImageMimeType};base64,${newImageBase64}`;
-            break;
+    if (imageGenResponse.candidates && imageGenResponse.candidates.length > 0 && imageGenResponse.candidates[0].content && imageGenResponse.candidates[0].content.parts) {
+        for (const part of imageGenResponse.candidates[0].content.parts) {
+            if (part.inlineData) {
+                newImageMimeType = part.inlineData.mimeType;
+                newImageBase64 = part.inlineData.data;
+                newImageUrl = `data:${newImageMimeType};base64,${newImageBase64}`;
+                break;
+            }
         }
     }
 
@@ -388,11 +392,13 @@ export async function generateImageInContext(
     let newImageUrl: string | null = null;
     let newImagePartForPromptGen: any = null;
 
-    for (const part of imageGenResponse.candidates[0].content.parts) {
-        if (part.inlineData) {
-            newImageUrl = `data:${part.inlineData.mimeType};base64,${part.inlineData.data}`;
-            newImagePartForPromptGen = { inlineData: { mimeType: part.inlineData.mimeType, data: part.inlineData.data } };
-            break;
+    if (imageGenResponse.candidates && imageGenResponse.candidates.length > 0 && imageGenResponse.candidates[0].content && imageGenResponse.candidates[0].content.parts) {
+        for (const part of imageGenResponse.candidates[0].content.parts) {
+            if (part.inlineData) {
+                newImageUrl = `data:${part.inlineData.mimeType};base64,${part.inlineData.data}`;
+                newImagePartForPromptGen = { inlineData: { mimeType: part.inlineData.mimeType, data: part.inlineData.data } };
+                break;
+            }
         }
     }
 
@@ -523,10 +529,12 @@ export async function* createStoryFromAssets(
         });
         
         let imageUrls: string[] = [];
-        for (const part of imageGenResponse.candidates[0].content.parts) {
-            if (part.inlineData) {
-                imageUrls.push(`data:${part.inlineData.mimeType};base64,${part.inlineData.data}`);
-                break;
+        if (imageGenResponse.candidates && imageGenResponse.candidates.length > 0 && imageGenResponse.candidates[0].content && imageGenResponse.candidates[0].content.parts) {
+            for (const part of imageGenResponse.candidates[0].content.parts) {
+                if (part.inlineData) {
+                    imageUrls.push(`data:${part.inlineData.mimeType};base64,${part.inlineData.data}`);
+                    break;
+                }
             }
         }
         
@@ -553,18 +561,22 @@ export async function* createStoryFromAssets(
 export async function adaptImageToStory(
     frameToAdapt: Frame,
     leftFrame: Frame | null,
-    rightFrame: Frame | null
+    rightFrame: Frame | null,
+    manualInstruction?: string,
 ): Promise<{ imageUrl: string; prompt: string }> {
     const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
     // Step 1: Generate the new, adapted image
     const imageGenParts: any[] = [];
     let imageGenInstruction = `Ты — эксперт-художник и арт-директор. Твоя задача — взять изображение пользователя и идеально вписать его в существующую раскадровку. Ты должен(на) трансформировать изображение пользователя, чтобы оно полностью соответствовало художественному стилю, цветовой палитре, освещению и повествовательному контексту окружающих кадров.
+    
+КЛЮЧЕВАЯ ИНСТРУКЦИЯ: Сохрани основной объект, персонажей и композицию ИЗОБРАЖЕНИЯ ПОЛЬЗОВАТЕЛЯ, но полностью ПЕРЕРИСУЙ его в художественном стиле КОНТЕКСТНЫХ КАДРОВ. Новое изображение должно служить логическим визуальным и повествовательным мостом между кадрами "до" и "после".`;
+    
+    if (manualInstruction) {
+        imageGenInstruction += `\n\nВАЖНО: Пользователь предоставил конкретную инструкцию, которой ты должен следовать в первую очередь: "${manualInstruction}". Эта инструкция имеет приоритет над автоматическим анализом.`;
+    }
 
-КЛЮЧЕВАЯ ИНСТРУКЦИЯ: Сохрани основной объект, персонажей и композицию ИЗОБРАЖЕНИЯ ПОЛЬЗОВАТЕЛЯ, но полностью ПЕРЕРИСУЙ его в художественном стиле КОНТЕКСТНЫХ КАДРОВ. Новое изображение должно служить логическим визуальным и повествовательным мостом между кадрами "до" и "после".
-
-Пример: Если контекстные кадры из мультфильма "Утиные истории", а изображение пользователя — это реальная фотография человека, ты должен(на) перерисовать этого человека и его окружение в стиле мультфильма "Утиные истории". Не просто вставляй фото в сцену, а трансформируй его.
-`;
+    imageGenInstruction += `\n\nПример: Если контекстные кадры из мультфильма "Утиные истории", а изображение пользователя — это реальная фотография человека, ты должен(на) перерисовать этого человека и его окружение в стиле мультфильма "Утиные истории". Не просто вставляй фото в сцену, а трансформируй его.`;
 
     const { mimeType: adaptMime, data: adaptData } = await urlOrFileToBase64(frameToAdapt);
     imageGenParts.push({ text: "ИЗОБРАЖЕНИЕ ПОЛЬЗОВАТЕЛЯ ДЛЯ АДАПТАЦИИ:" });
@@ -574,13 +586,11 @@ export async function adaptImageToStory(
         const { mimeType, data } = await urlOrFileToBase64(leftFrame);
         imageGenParts.push({ text: "КОНТЕКСТ: КАДР ДО (СЛЕВА):" });
         imageGenParts.push({ inlineData: { mimeType, data } });
-        imageGenInstruction += `\n- Промт кадра СЛЕВА был: "${leftFrame.prompt || 'не указан'}".`;
     }
     if (rightFrame) {
         const { mimeType, data } = await urlOrFileToBase64(rightFrame);
         imageGenParts.push({ text: "КОНТЕКСТ: КАДР ПОСЛЕ (СПРАВА):" });
         imageGenParts.push({ inlineData: { mimeType, data } });
-        imageGenInstruction += `\n- Промт кадра СПРАВА будет: "${rightFrame.prompt || 'не указан'}".`;
     }
 
     imageGenParts.unshift({ text: imageGenInstruction });
@@ -595,11 +605,13 @@ export async function adaptImageToStory(
 
     let newImageUrl: string | null = null;
     let newImagePartForPromptGen: any = null;
-    for (const part of imageGenResponse.candidates[0].content.parts) {
-        if (part.inlineData) {
-            newImageUrl = `data:${part.inlineData.mimeType};base64,${part.inlineData.data}`;
-            newImagePartForPromptGen = { inlineData: { mimeType: part.inlineData.mimeType, data: part.inlineData.data } };
-            break;
+    if (imageGenResponse.candidates && imageGenResponse.candidates.length > 0 && imageGenResponse.candidates[0].content && imageGenResponse.candidates[0].content.parts) {
+        for (const part of imageGenResponse.candidates[0].content.parts) {
+            if (part.inlineData) {
+                newImageUrl = `data:${part.inlineData.mimeType};base64,${part.inlineData.data}`;
+                newImagePartForPromptGen = { inlineData: { mimeType: part.inlineData.mimeType, data: part.inlineData.data } };
+                break;
+            }
         }
     }
 
@@ -609,6 +621,9 @@ export async function adaptImageToStory(
 
     // Step 2: Generate a new prompt for the adapted image
     let promptGenText = `Ты — профессиональный художник-раскадровщик, создающий промт для генерации видео. Проанализируй предоставленное изображение, которое было стилистически адаптировано, чтобы вписаться между двумя другими кадрами.`;
+    if (manualInstruction) {
+        promptGenText += `\n- Инструкция от пользователя по адаптации была: "${manualInstruction}"`;
+    }
     if (leftFrame?.prompt) {
         promptGenText += `\n- Промт предыдущего кадра: "${leftFrame.prompt}"`;
     }
@@ -625,11 +640,78 @@ export async function adaptImageToStory(
     const newPrompt = promptGenResponse.text.trim();
     if (!newPrompt) {
         console.warn("AI failed to generate a new prompt. A default will be used.");
-        // FIX: The variable holding the URL is `newImageUrl`, not `imageUrl`.
-        return { imageUrl: newImageUrl, prompt: "Стилизованный кадр, интегрированный в сюжет." };
+        return { imageUrl: newImageUrl, prompt: manualInstruction || "Стилизованный кадр, интегрированный в сюжет." };
     }
 
     return { imageUrl: newImageUrl, prompt: newPrompt };
+}
+
+export async function generateAdaptationSuggestions(
+    frameToAdapt: Frame,
+    leftFrame: Frame | null,
+    rightFrame: Frame | null
+): Promise<string[]> {
+    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+    const parts: any[] = [];
+
+    let promptText = `Ты — креативный AI-ассистент для видео-раскадровки. Твоя задача — предложить 4 идеи для ручной адаптации кадра пользователя, чтобы он лучше вписался в существующий сюжет. Идеи должны быть краткими, действенными промтами на русском языке, подходящими для AI-редактора изображений.
+
+Анализируй основной кадр пользователя и его окружение. Предлагай как стилистические, так и повествовательные изменения.
+
+Контекст:`;
+
+    const { mimeType, data } = await urlOrFileToBase64(frameToAdapt);
+    parts.push({text: 'ОСНОВНОЙ КАДР (для адаптации):'});
+    parts.push({ inlineData: { mimeType, data } });
+
+    if (leftFrame) {
+        const { mimeType: leftMime, data: leftData } = await urlOrFileToBase64(leftFrame);
+        parts.push({text: 'ПРЕДЫДУЩИЙ КАДР (стиль-референс):'});
+        parts.push({ inlineData: { mimeType: leftMime, data: leftData } });
+        promptText += `\n- ПРЕДЫДУЩИЙ кадр предоставлен. Его промт: "${leftFrame.prompt || 'N/A'}"`;
+    } else {
+        promptText += `\n- Предыдущего кадра нет. Это начало.`;
+    }
+
+    if (rightFrame) {
+        const { mimeType: rightMime, data: rightData } = await urlOrFileToBase64(rightFrame);
+        parts.push({text: 'СЛЕДУЮЩИЙ КАДР (стиль-референс):'});
+        parts.push({ inlineData: { mimeType: rightMime, data: rightData } });
+        promptText += `\n- СЛЕДУЮЩИЙ кадр предоставлен. Его промт: "${rightFrame.prompt || 'N/A'}"`;
+    } else {
+        promptText += `\n- Следующего кадра нет. Это конец.`;
+    }
+
+     promptText += `
+
+Примеры идей: "Сделать освещение более драматичным, как в сцене слева", "Добавить персонажу обеспокоенное выражение лица, как реакцию на предыдущий кадр", "Изменить цветовую палитру на более холодную, чтобы подготовить к следующей сцене", "Слегка изменить ракурс, чтобы он соответствовал кинематографическому стилю".
+
+Верни ТОЛЬКО валидный JSON-массив из 4 строк. Не включай markdown, объяснения или любой другой текст.`;
+    
+    parts.unshift({ text: promptText });
+    
+    const response = await ai.models.generateContent({
+        model: 'gemini-2.5-pro',
+        contents: { parts },
+        config: {
+            responseMimeType: "application/json",
+            responseSchema: {
+                type: Type.ARRAY,
+                items: { type: Type.STRING },
+            },
+        },
+    });
+
+    try {
+        const suggestions = JSON.parse(response.text.trim());
+        if (Array.isArray(suggestions) && suggestions.every(s => typeof s === 'string') && suggestions.length > 0) {
+            return suggestions;
+        }
+        throw new Error("AI response is not a valid JSON array of strings.");
+    } catch (e) {
+        console.error("Failed to parse suggestions from AI:", response.text);
+        throw new Error("Could not parse suggestions from the AI.");
+    }
 }
 
 export async function generateEditSuggestions(
