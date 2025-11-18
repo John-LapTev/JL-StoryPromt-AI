@@ -667,17 +667,11 @@ export async function adaptImageAspectRatio(
     const imagePart = { inlineData: { mimeType, data } };
 
     // --- STEP 2: Generate the new image by filling in the blank areas (outpainting) ---
-    const imageGenInstruction = `Ты — эксперт по редактированию изображений, выполняющий задачу 'outpainting'.
-ЗАДАЧА: Предоставленное изображение содержит центральную картину, окруженную черными полями. Твоя задача — творчески и БЕСШОВНО заполнить черные области, расширяя оригинальное изображение.
-КЛЮЧЕВЫЕ ПРАВИЛА:
-1. Новые сгенерированные области должны ИДЕАЛЬНО СООТВЕТСТВОВАТЬ художественному стилю, освещению, цветовой палитре и контексту оригинального изображения.
-2. Переход между оригинальной и новыми частями должен быть невидимым.
-3. Финальный результат должен быть одним цельным изображением без каких-либо видимых черных полей.
-`;
+    const imageGenInstruction = `Твоя задача — дорисовать (outpainting) это изображение. Заполни черные поля, творчески расширяя сцену. Новые области должны бесшовно продолжать оригинальное изображение, полностью совпадая по стилю, освещению и содержанию. Результат должен быть единым цельным изображением без черных полей.`;
     
     const imageGenResponse = await ai.models.generateContent({
         model: 'gemini-2.5-flash-image',
-        contents: { parts: [{ text: imageGenInstruction }, imagePart] },
+        contents: { parts: [imagePart, { text: imageGenInstruction }] },
         config: {
             responseModalities: [Modality.IMAGE],
         },
