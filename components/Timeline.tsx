@@ -1,4 +1,5 @@
 
+
 import React, { useState } from 'react';
 import type { Frame } from '../types';
 import { FrameCard } from './FrameCard';
@@ -14,6 +15,7 @@ interface TimelineProps {
     globalAspectRatio: string;
     isAspectRatioLocked: boolean;
     sketchDropTargetIndex: number | null;
+    isAnalyzingStory: boolean;
     onGlobalAspectRatioChange: (newRatio: string) => void;
     onToggleAspectRatioLock: () => void;
     onFrameAspectRatioChange: (frameId: string, newRatio: string) => void;
@@ -51,6 +53,7 @@ export const Timeline: React.FC<TimelineProps> = ({
     globalAspectRatio,
     isAspectRatioLocked,
     sketchDropTargetIndex,
+    isAnalyzingStory,
     onGlobalAspectRatioChange,
     onToggleAspectRatioLock,
     onFrameAspectRatioChange,
@@ -194,13 +197,13 @@ export const Timeline: React.FC<TimelineProps> = ({
                             <span>Адаптировать все</span>
                         </button>
                     </div>
-                    <button onClick={onAnalyzeStory} disabled={generatingStory} className="flex min-w-[84px] max-w-[480px] cursor-pointer items-center justify-center overflow-hidden rounded-lg h-10 px-4 bg-primary text-white text-sm font-bold leading-normal tracking-[0.015em] gap-2 hover:bg-primary/90 disabled:bg-primary/50 disabled:cursor-not-allowed">
-                        {generatingStory ? (
+                    <button onClick={onAnalyzeStory} disabled={isAnalyzingStory} className="flex min-w-[84px] max-w-[480px] cursor-pointer items-center justify-center overflow-hidden rounded-lg h-10 px-4 bg-primary text-white text-sm font-bold leading-normal tracking-[0.015em] gap-2 hover:bg-primary/90 disabled:bg-primary/50 disabled:cursor-not-allowed">
+                        {isAnalyzingStory ? (
                              <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
                         ) : (
                              <span className="material-symbols-outlined text-base">auto_awesome</span>
                         )}
-                        <span className="truncate">{generatingStory ? 'Анализ...' : 'Анализировать сюжет и создать промты'}</span>
+                        <span className="truncate">{isAnalyzingStory ? 'Анализ...' : 'Анализировать сюжет и создать промты'}</span>
                     </button>
                 </div>
             </div>

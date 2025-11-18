@@ -1,5 +1,6 @@
 
 
+
 import React, { useState, useEffect, useCallback, useMemo, useRef, useLayoutEffect } from 'react';
 import type { Frame, Project, Asset, StorySettings, IntegrationConfig, Sketch, Note, Position, Size } from './types';
 import { initialFrames, initialAssets } from './constants';
@@ -20,7 +21,8 @@ import { StorySettingsModal } from './components/StorySettingsModal';
 import { AdaptationSettingsModal } from './components/AdaptationSettingsModal';
 import { IntegrationModal } from './components/IntegrationModal';
 import { LoadingModal } from './components/LoadingModal';
-import { generateImageFromPrompt, adaptImageToStory, adaptImageAspectRatio, createStoryFromAssets } from './services/geminiService';
+import { ConfirmationModal } from './components/ConfirmationModal';
+import { generateImageFromPrompt, adaptImageToStory, adaptImageAspectRatio, createStoryFromAssets, analyzeStory, generateSinglePrompt } from './services/geminiService';
 import { fileToBase64, dataUrlToFile, fetchCorsImage, getImageDimensions } from './utils/fileUtils';
 import { StoryGenerationUpdate } from './services/geminiService';
 
@@ -289,6 +291,11 @@ export default function App() {
     const [adaptingFrame, setAdaptingFrame] = useState<Frame | null>(null);
     const [isIntegrationModalOpen, setIsIntegrationModalOpen] = useState(false);
     const [integrationConfig, setIntegrationConfig] = useState<IntegrationConfig | null>(null);
+    const [confirmationState, setConfirmationState] = useState<{
+        title: string;
+        message: string;
+        onConfirm: () => void;
+    } | null>(null);
 
     // UI States
     const [generatedVideoUrl, setGeneratedVideoUrl] = useState<string | null>(null);
@@ -312,6 +319,7 @@ export default function App() {
     const [generatingStory, setGeneratingStory] = useState(false);
     const [generatingPromptFrameId, setGeneratingPromptFrameId] = useState<string | null>(null);
     const [generatingVideoState, setGeneratingVideoState] = useState<GeneratingVideoState>(null);
+    const [isAnalyzingStory, setIsAnalyzingStory] = useState(false);
 
     // Refs
     const boardRef = useRef<HTMLDivElement>(null);
@@ -434,14 +442,7 @@ export default function App() {
         return localFrames.reduce((acc, frame) => acc + (frame.isGenerating ? 0 : frame.duration), 0);
     }, [localFrames]);
     
-    const handleConfirmUnsaved = () => {
-        if (!hasUnsavedChanges) return true;
-        return window.confirm("У вас есть несохраненные изменения. Вы уверены, что хотите продолжить без сохранения?");
-    };
-
-    const handleNewProject = () => {
-        if (!handleConfirmUnsaved()) return;
-    
+    const executeNewProject = useCallback(() => {
         const newProject: Project = {
             id: crypto.randomUUID(),
             name: 'Новый проект',
@@ -451,7 +452,7 @@ export default function App() {
             notes: [],
             lastModified: Date.now(),
         };
-    
+
         setProjects(prevProjects => {
             const updatedProjects = [...prevProjects, newProject];
             projectService.saveProjects(updatedProjects);
@@ -462,9 +463,21 @@ export default function App() {
         setCurrentProjectId(newProject.id);
         setHasUnsavedChanges(false);
         setSelectedAssetIds(new Set());
-    
-        setIsLoadModalOpen(false);
-    };
+        setIsLoadModalOpen(false); // Close load modal if opened from there
+        setConfirmationState(null); // Close confirmation modal
+    }, []);
+
+    const handleNewProject = useCallback(() => {
+        if (hasUnsavedChanges) {
+            setConfirmationState({
+                title: 'Создать новый проект?',
+                message: 'Ваш текущий проект имеет несохраненные изменения. Все изменения будут утеряны.',
+                onConfirm: executeNewProject,
+            });
+        } else {
+            executeNewProject();
+        }
+    }, [hasUnsavedChanges, executeNewProject]);
 
     const handleSaveProject = () => {
         if (!currentProject) return;
@@ -511,14 +524,26 @@ export default function App() {
         setIsSaveModalOpen(false);
     };
 
-    const handleLoadProject = (id: string) => {
-        if (!handleConfirmUnsaved()) return;
+    const executeLoadProject = useCallback((id: string) => {
         setCurrentProjectId(id);
         projectService.setLastProjectId(id);
         setHasUnsavedChanges(false);
         setSelectedAssetIds(new Set());
         setIsLoadModalOpen(false);
-    };
+        setConfirmationState(null);
+    }, []);
+
+    const handleLoadProject = useCallback((id: string) => {
+        if (hasUnsavedChanges) {
+            setConfirmationState({
+                title: 'Загрузить проект?',
+                message: 'Ваш текущий проект имеет несохраненные изменения. Все изменения будут утеряны.',
+                onConfirm: () => executeLoadProject(id),
+            });
+        } else {
+            executeLoadProject(id);
+        }
+    }, [hasUnsavedChanges, executeLoadProject]);
 
     const handleDeleteProject = (id: string) => {
         if (id === DEMO_PROJECT_ID) {
@@ -606,6 +631,48 @@ export default function App() {
     const handleGenerateFrame = async (prompt: string, insertIndex: number) => { alert("Not implemented yet for timeline."); /* Placeholder for timeline-specific generation */ };
     const handleGenerateTransition = useCallback((index: number) => { alert('Generate Transition not implemented in this view.'); }, []);
     
+    // --- AI-powered Prompt Generation ---
+    const handleAnalyzeStory = useCallback(async () => {
+        if (localFrames.length < 2) {
+            alert("Нужно как минимум 2 кадра для анализа сюжета.");
+            return;
+        }
+        setIsAnalyzingStory(true);
+        try {
+            const newPrompts = await analyzeStory(localFrames);
+            if (newPrompts.length === localFrames.length) {
+                updateFrames(prev => prev.map((frame, index) => ({
+                    ...frame,
+                    prompt: newPrompts[index],
+                    isTransition: false,
+                })));
+            } else {
+                throw new Error("Количество сгенерированных промтов не совпадает с количеством кадров.");
+            }
+        } catch (error) {
+            console.error("Failed to analyze story:", error);
+            alert(`Ошибка при анализе сюжета: ${error instanceof Error ? error.message : String(error)}`);
+        } finally {
+            setIsAnalyzingStory(false);
+        }
+    }, [localFrames, updateFrames]);
+
+    const handleGenerateSinglePrompt = useCallback(async (frameId: string) => {
+        const frame = localFrames.find(f => f.id === frameId);
+        if (!frame) return;
+
+        setGeneratingPromptFrameId(frameId);
+        try {
+            const newPrompt = await generateSinglePrompt(frame, localFrames);
+            updateFrames(prev => prev.map(f => f.id === frameId ? { ...f, prompt: newPrompt, isTransition: false } : f));
+        } catch (error) {
+            console.error("Failed to generate single prompt:", error);
+            alert(`Ошибка при генерации промта: ${error instanceof Error ? error.message : String(error)}`);
+        } finally {
+            setGeneratingPromptFrameId(null);
+        }
+    }, [localFrames, updateFrames]);
+
     // --- Asset Library Handlers ---
     const handleAddAssets = useCallback(async (files: File[]) => { const n: Asset[] = await Promise.all(files.map(async f => ({ id: crypto.randomUUID(), imageUrl: await fileToBase64(f), file: f, name: f.name }))); updateAssets(p => [...p, ...n]); }, [updateAssets]);
     const handleDeleteAsset = useCallback((id: string) => { updateAssets(p => p.filter(a => a.id !== id)); setSelectedAssetIds(p => { const n = new Set(p); n.delete(id); return n; }); }, [updateAssets]);
@@ -1336,6 +1403,7 @@ export default function App() {
                             globalAspectRatio={globalAspectRatio}
                             isAspectRatioLocked={isAspectRatioLocked}
                             sketchDropTargetIndex={sketchDropTargetIndex}
+                            isAnalyzingStory={isAnalyzingStory}
                             onGlobalAspectRatioChange={handleGlobalAspectRatioChange}
                             onToggleAspectRatioLock={handleToggleAspectRatioLock}
                             onFrameAspectRatioChange={handleFrameAspectRatioChange}
@@ -1348,8 +1416,8 @@ export default function App() {
                             onAddFrameFromSketch={handleAddFrameFromSketch}
                             onDeleteFrame={handleDeleteFrame}
                             onReorderFrame={handleReorderFrame}
-                            onAnalyzeStory={() => alert('Analyze Story not implemented in this view.')}
-                            onGenerateSinglePrompt={(id) => alert('Generate Prompt not implemented in this view.')}
+                            onAnalyzeStory={handleAnalyzeStory}
+                            onGenerateSinglePrompt={handleGenerateSinglePrompt}
                             onGenerateVideo={handleGenerateVideo}
                             onEditPrompt={setEditingFrame}
                             onViewImage={setViewingFrameIndex}
@@ -1487,6 +1555,15 @@ export default function App() {
             {detailedFrame && ( <FrameDetailModal frame={detailedFrame} onClose={() => setDetailedFrame(null)} onSave={handleSaveFrameDetails} /> )}
             {isSaveModalOpen && ( <ProjectSaveModal onClose={() => setIsSaveModalOpen(false)} onSave={handleSaveAs} initialName={currentProject?.name} title={currentProject?.id === DEMO_PROJECT_ID ? "Сохранить демо как новый проект" : "Сохранить проект как"} /> )}
             {isLoadModalOpen && ( <ProjectLoadModal projects={projects} currentProjectId={currentProjectId} onClose={() => setIsLoadModalOpen(false)} onLoad={handleLoadProject} onDelete={handleDeleteProject} onNew={handleNewProject} /> )}
+            {confirmationState && (
+                <ConfirmationModal
+                    isOpen={!!confirmationState}
+                    title={confirmationState.title}
+                    message={confirmationState.message}
+                    onConfirm={confirmationState.onConfirm}
+                    onCancel={() => setConfirmationState(null)}
+                />
+            )}
             {contextMenu && (
                 <ContextMenu
                     x={contextMenu.x}
