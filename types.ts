@@ -18,12 +18,42 @@ export interface Asset {
   name: string;
 }
 
+export interface Position {
+  x: number;
+  y: number;
+}
+
+export interface Size {
+  width: number;
+  height: number;
+}
+
+export interface Sketch {
+  id: string;
+  imageUrl: string;
+  prompt: string;
+  position: Position;
+  size: Size;
+  aspectRatio: string;
+  file?: File;
+}
+
+export interface Note {
+  id: string;
+  text: string;
+  position: Position;
+  size: Size;
+}
+
+
 export interface Project {
   id: string;
   name: string;
   // Omit 'file' as it cannot be serialized to JSON for localStorage
   frames: Omit<Frame, 'file'>[];
   assets: Omit<Asset, 'file'>[];
+  sketches: Omit<Sketch, 'file'>[];
+  notes: Note[];
   lastModified: number; // Unix timestamp
 }
 

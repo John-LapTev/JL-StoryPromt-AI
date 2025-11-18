@@ -201,7 +201,7 @@ export async function generateVideoFromFrame(frame: Frame, setLoadingMessage: (m
     }
 }
 
-export async function generateImageFromPrompt(prompt: string): Promise<string> {
+export async function generateImageFromPrompt(prompt: string, aspectRatio: string = '16:9'): Promise<string> {
     try {
         const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
@@ -211,7 +211,7 @@ export async function generateImageFromPrompt(prompt: string): Promise<string> {
             config: {
                 numberOfImages: 1,
                 outputMimeType: 'image/png',
-                aspectRatio: '16:9',
+                aspectRatio: aspectRatio,
             },
         });
 
