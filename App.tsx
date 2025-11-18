@@ -1,4 +1,5 @@
 
+
 import React, { useState, useEffect, useCallback, useMemo, useRef, useLayoutEffect } from 'react';
 import type { Frame, Project, Asset, StorySettings, IntegrationConfig, Sketch, Note, Position, Size } from './types';
 import { initialFrames, initialAssets } from './constants';
@@ -18,8 +19,10 @@ import { ContextMenu } from './components/ContextMenu';
 import { StorySettingsModal } from './components/StorySettingsModal';
 import { AdaptationSettingsModal } from './components/AdaptationSettingsModal';
 import { IntegrationModal } from './components/IntegrationModal';
-import { generateImageFromPrompt, adaptImageToStory, adaptImageAspectRatio } from './services/geminiService';
+import { LoadingModal } from './components/LoadingModal';
+import { generateImageFromPrompt, adaptImageToStory, adaptImageAspectRatio, createStoryFromAssets } from './services/geminiService';
 import { fileToBase64, dataUrlToFile, fetchCorsImage, getImageDimensions } from './utils/fileUtils';
+import { StoryGenerationUpdate } from './services/geminiService';
 
 declare global {
     interface AIStudio {
@@ -286,7 +289,6 @@ export default function App() {
     const [adaptingFrame, setAdaptingFrame] = useState<Frame | null>(null);
     const [isIntegrationModalOpen, setIsIntegrationModalOpen] = useState(false);
     const [integrationConfig, setIntegrationConfig] = useState<IntegrationConfig | null>(null);
-
 
     // UI States
     const [generatedVideoUrl, setGeneratedVideoUrl] = useState<string | null>(null);
@@ -609,7 +611,84 @@ export default function App() {
     const handleDeleteAsset = useCallback((id: string) => { updateAssets(p => p.filter(a => a.id !== id)); setSelectedAssetIds(p => { const n = new Set(p); n.delete(id); return n; }); }, [updateAssets]);
     const handleSelectAllAssets = useCallback(() => { setSelectedAssetIds(new Set(localAssets.map(a => a.id))); }, [localAssets]);
     const handleDeselectAllAssets = useCallback(() => { setSelectedAssetIds(new Set()); }, []);
-    const handleCreateStoryFromAssets = async () => { /* Placeholder logic */ alert("Story generation from assets not fully implemented in this step."); };
+    const handleCreateStoryFromAssets = async () => {
+        const assetsToUse = selectedAssetIds.size > 0
+            ? localAssets.filter(asset => selectedAssetIds.has(asset.id))
+            : localAssets;
+    
+        if (assetsToUse.length === 0) {
+            alert("Пожалуйста, добавьте или выберите ассеты для создания сюжета.");
+            return;
+        }
+    
+        setGeneratingStory(true);
+        setIsAssetLibraryOpen(false);
+    
+        // 1. Create and add placeholder frames instantly for non-blocking UX
+        const placeholderFrames: Frame[] = Array.from({ length: frameCount }, (_, i) => ({
+            id: crypto.randomUUID(),
+            imageUrls: [],
+            activeVersionIndex: 0,
+            prompt: '',
+            duration: 3.0,
+            isGenerating: true,
+            generatingMessage: `Ожидание генерации...`,
+            aspectRatio: isAspectRatioLocked ? globalAspectRatio : '16:9',
+        }));
+    
+        const placeholderIds = placeholderFrames.map(f => f.id);
+        updateFrames(prev => [...prev, ...placeholderFrames]);
+    
+        try {
+            // 2. Start the async generation process
+            const storyGenerator = createStoryFromAssets(assetsToUse, storySettings, frameCount);
+    
+            for await (const update of storyGenerator) {
+                // FIX: Check update type before accessing properties that are not on all union members.
+                if (update.type === 'progress' || update.type === 'frame') {
+                    const targetId = placeholderIds[update.index];
+                    if (!targetId) continue;
+    
+                    if (update.type === 'progress') {
+                        // Update the message on the specific placeholder
+                        updateFrames(prev => prev.map(f => f.id === targetId ? { ...f, generatingMessage: update.message } : f));
+                    } else if (update.type === 'frame') {
+                        // When a frame is ready, replace the placeholder with the real data
+                        const newFile = dataUrlToFile(update.frame.imageUrls[0], `story-frame-${update.frame.id}.png`);
+                        const finalFrame: Frame = {
+                            ...update.frame,
+                            file: newFile,
+                            isGenerating: false,
+                            generatingMessage: undefined,
+                            aspectRatio: isAspectRatioLocked ? globalAspectRatio : (update.frame.aspectRatio || '16:9'),
+                        };
+                        updateFrames(prev => prev.map(f => f.id === targetId ? finalFrame : f));
+                    }
+                }
+            }
+    
+            // Optional: Clean up any placeholders that didn't receive a frame
+             updateFrames(prev => prev.map(f => {
+                if (placeholderIds.includes(f.id) && f.isGenerating) {
+                    return { ...f, isGenerating: false, generatingMessage: "Ошибка генерации" };
+                }
+                return f;
+            }));
+    
+        } catch (error) {
+            console.error("Story generation failed:", error);
+            alert(`Ошибка при создании сюжета: ${error instanceof Error ? error.message : String(error)}`);
+            // Mark all remaining placeholders as failed
+            updateFrames(prev => prev.map(f => {
+                if (placeholderIds.includes(f.id) && f.isGenerating) {
+                    return { ...f, isGenerating: false, generatingMessage: "Ошибка" };
+                }
+                return f;
+            }));
+        } finally {
+            setGeneratingStory(false);
+        }
+    };
     const handleSaveStorySettings = (newSettings: StorySettings) => { setStorySettings(newSettings); setIsStorySettingsModalOpen(false); };
     
     // --- Adaptation & Aspect Ratio Handlers ---
@@ -662,8 +741,99 @@ export default function App() {
     const handleGlobalAspectRatioChange = (newRatio: string) => { setGlobalAspectRatio(newRatio); if (isAspectRatioLocked) { updateFrames(prev => prev.map(f => ({ ...f, aspectRatio: newRatio }))); } };
     const handleToggleAspectRatioLock = () => { const n = !isAspectRatioLocked; setIsAspectRatioLocked(n); if (n) { updateFrames(prev => prev.map(f => ({...f, aspectRatio: globalAspectRatio }))); } };
     const handleFrameAspectRatioChange = useCallback((frameId: string, newRatio: string) => { if (!isAspectRatioLocked) { updateFrames(prev => prev.map(f => f.id === frameId ? { ...f, aspectRatio: newRatio } : f)); } }, [isAspectRatioLocked, updateFrames]);
-    const handleAdaptFrameAspectRatio = useCallback(async (frameId: string, targetRatio?: string) => { /* Placeholder */ }, [localFrames, updateFrames]);
-    const handleAdaptAllFramesAspectRatio = async () => { /* Placeholder */ };
+    
+    const handleAdaptFrameAspectRatio = useCallback(async (frameId: string) => {
+        const frameToAdapt = localFrames.find(f => f.id === frameId);
+        if (!frameToAdapt || !frameToAdapt.aspectRatio) {
+            alert("Не удалось найти кадр или для него не задано соотношение сторон.");
+            return;
+        }
+    
+        updateFrames(prev => prev.map(f => f.id === frameId ? { ...f, isGenerating: true, generatingMessage: `Адаптация к ${frameToAdapt.aspectRatio}...` } : f));
+    
+        try {
+            const { imageUrl: newImageUrl, prompt: newPrompt } = await adaptImageAspectRatio(
+                frameToAdapt,
+                frameToAdapt.aspectRatio
+            );
+    
+            const newFile = dataUrlToFile(newImageUrl, `adapted-ar-${frameId}-${Date.now()}.png`);
+    
+            updateFrames(prev => prev.map(f => {
+                if (f.id === frameId) {
+                    const newImageUrls = [...f.imageUrls, newImageUrl];
+                    return {
+                        ...f,
+                        imageUrls: newImageUrls,
+                        activeVersionIndex: newImageUrls.length - 1,
+                        prompt: newPrompt,
+                        file: newFile,
+                        isGenerating: false,
+                        generatingMessage: undefined,
+                    };
+                }
+                return f;
+            }));
+    
+        } catch (error) {
+            console.error("Failed to adapt frame aspect ratio:", error);
+            alert(`Ошибка при адаптации соотношения сторон: ${error instanceof Error ? error.message : String(error)}`);
+            updateFrames(prev => prev.map(f => f.id === frameId ? { ...f, isGenerating: false, generatingMessage: undefined } : f));
+        }
+    }, [localFrames, updateFrames]);
+
+    const handleAdaptAllFramesAspectRatio = async () => {
+        if (!window.confirm(`Вы уверены, что хотите адаптировать все ${localFrames.length} кадров к соотношению сторон ${globalAspectRatio}? Это может занять некоторое время и использует ресурсы API.`)) {
+            return;
+        }
+    
+        // Set loading state for all frames
+        updateFrames(prev => prev.map(f => ({
+            ...f,
+            isGenerating: true,
+            generatingMessage: `Ожидание адаптации к ${globalAspectRatio}...`
+        })));
+    
+        // Process frames sequentially to avoid overwhelming the API and to show progress
+        for (let i = 0; i < localFrames.length; i++) {
+            const frameId = localFrames[i].id;
+            const frameToAdapt = localFrames.find(f => f.id === frameId); // Find the latest version
+    
+            if (!frameToAdapt) continue;
+    
+            updateFrames(prev => prev.map(f => f.id === frameId ? { ...f, generatingMessage: `Адаптация к ${globalAspectRatio}...` } : f));
+    
+            try {
+                const { imageUrl: newImageUrl, prompt: newPrompt } = await adaptImageAspectRatio(
+                    frameToAdapt,
+                    globalAspectRatio
+                );
+    
+                const newFile = dataUrlToFile(newImageUrl, `adapted-ar-all-${frameId}-${Date.now()}.png`);
+    
+                updateFrames(prev => prev.map(f => {
+                    if (f.id === frameId) {
+                        const newImageUrls = [...f.imageUrls, newImageUrl];
+                        return {
+                            ...f,
+                            imageUrls: newImageUrls,
+                            activeVersionIndex: newImageUrls.length - 1,
+                            prompt: newPrompt,
+                            file: newFile,
+                            isGenerating: false,
+                            generatingMessage: undefined,
+                            aspectRatio: globalAspectRatio
+                        };
+                    }
+                    return f;
+                }));
+            } catch (error) {
+                console.error(`Failed to adapt frame ${frameId}:`, error);
+                // Mark this specific frame as failed but continue with others
+                updateFrames(prev => prev.map(f => f.id === frameId ? { ...f, isGenerating: false, generatingMessage: 'Ошибка адаптации' } : f));
+            }
+        }
+    };
 
     // --- Context Menu Handlers ---
     const handleContextMenu = (e: React.MouseEvent, frame: Frame) => { e.preventDefault(); setContextMenu({ x: e.clientX, y: e.clientY, frame }); };
@@ -672,7 +842,41 @@ export default function App() {
     const handleCloseAddFrameMenu = useCallback(() => { setAddFrameMenu(null); }, []);
     const handleDuplicateFrame = async (frameId: string) => { const i = localFrames.findIndex(f => f.id === frameId); if (i === -1) return; const d = localFrames[i]; const n: Frame = { ...d, id: crypto.randomUUID() }; updateFrames(p => { const nc = [...p]; nc.splice(i + 1, 0, n); return nc; }); };
     const handleReplaceFrame = (frameId: string) => { const i = document.createElement('input'); i.type = 'file'; i.accept = 'image/*'; i.onchange = async (e) => { const f = (e.target as HTMLInputElement).files?.[0]; if (f) { try { const b = await fileToBase64(f); updateFrames(p => p.map(fr => { if (fr.id === frameId) { const niu = [b]; return { ...fr, imageUrls: niu, activeVersionIndex: 0, file: f }; } return fr; })); } catch (err) { console.error("Error replacing file:", err); alert("Could not load image file for replacement."); } } }; i.click(); };
-    const handleVersionChange = useCallback(async (frameId: string, direction: 'next' | 'prev') => { /* Placeholder */ }, [localFrames, updateFrames]);
+    const handleVersionChange = useCallback(async (frameId: string, direction: 'next' | 'prev') => {
+        const frameIndex = localFrames.findIndex(f => f.id === frameId);
+        if (frameIndex === -1) return;
+    
+        const frame = localFrames[frameIndex];
+        const newVersionIndex = direction === 'next'
+            ? Math.min(frame.activeVersionIndex + 1, frame.imageUrls.length - 1)
+            : Math.max(frame.activeVersionIndex - 1, 0);
+    
+        if (newVersionIndex === frame.activeVersionIndex) return;
+    
+        const newImageUrl = frame.imageUrls[newVersionIndex];
+        let newFile: File;
+        try {
+            if (newImageUrl.startsWith('data:')) {
+                newFile = dataUrlToFile(newImageUrl, `frame-${frame.id}-v${newVersionIndex}.png`);
+            } else {
+                const blob = await fetchCorsImage(newImageUrl);
+                newFile = new File([blob], `frame-${frame.id}-v${newVersionIndex}.png`, { type: blob.type });
+            }
+        } catch (e) {
+            console.error(`Could not create file for frame version ${frame.id}:`, e);
+            newFile = new File([], `failed-frame-${frame.id}.txt`, { type: 'text/plain' });
+        }
+    
+        updateFrames(prev => {
+            const updatedFrames = [...prev];
+            updatedFrames[frameIndex] = {
+                ...frame,
+                activeVersionIndex: newVersionIndex,
+                file: newFile,
+            };
+            return updatedFrames;
+        });
+    }, [localFrames, updateFrames]);
     
     // --- Integration Handlers ---
     const handleStartIntegration = useCallback(async (source: File | string, targetFrameId: string) => { const t = localFrames.find(f => f.id === targetFrameId); if (!t) return; let s: Asset | { imageUrl: string; file: File; name: string; }; if (typeof source === 'string') { const a = localAssets.find(as => as.id === source); if (!a) return; s = a; } else { const i = await fileToBase64(source); s = { id: crypto.randomUUID(), imageUrl: i, file: source, name: source.name }; } setIntegrationConfig({ sourceAsset: s, targetFrame: t }); setIsIntegrationModalOpen(true); }, [localFrames, localAssets]);
@@ -756,14 +960,20 @@ export default function App() {
     // --- Pan and Zoom Handlers ---
     const panState = useRef({ isPanning: false, startX: 0, startY: 0, lastX: 0, lastY: 0 });
     const handleBoardMouseDown = (e: React.MouseEvent) => {
+        // Allow middle mouse button (1) or left mouse button (0)
         if (e.button !== 0 && e.button !== 1) return;
-        if ((e.target as HTMLElement).closest('.board-interactive-item')) return;
+    
+        // For left mouse button, block panning if over an interactive item.
+        // Middle mouse button should always be allowed to pan.
+        if (e.button === 0 && (e.target as HTMLElement).closest('.board-interactive-item')) {
+            return;
+        }
         
         setContextMenu(null);
         setBoardContextMenu(null);
         setSketchContextMenu(null);
         setNoteContextMenu(null);
-
+    
         panState.current = { isPanning: true, startX: e.clientX, startY: e.clientY, lastX: transform.x, lastY: transform.y };
         (e.currentTarget as HTMLElement).style.cursor = 'grabbing';
     };
