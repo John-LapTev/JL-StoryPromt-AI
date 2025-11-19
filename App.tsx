@@ -1511,7 +1511,7 @@ export default function App() {
         }
     };
 
-    const handleWheel = (e: React.WheelEvent) => {
+    const handleWheel = useCallback((e: WheelEvent) => {
         if (!boardRef.current) return;
         e.preventDefault();
         
@@ -1528,7 +1528,18 @@ export default function App() {
         const newY = mouseY - (mouseY - transform.y) * (newScale / transform.scale);
         
         setTransform({ scale: newScale, x: newX, y: newY });
-    };
+    }, [transform]);
+
+    useEffect(() => {
+        const board = boardRef.current;
+        if (!board) return;
+
+        board.addEventListener('wheel', handleWheel, { passive: false });
+
+        return () => {
+            board.removeEventListener('wheel', handleWheel);
+        };
+    }, [handleWheel]);
 
     const handleResetView = () => {
         setTransform({ scale: 1, x: 0, y: 0 });
@@ -1858,7 +1869,6 @@ export default function App() {
                 onMouseMove={handleBoardMouseMove}
                 onMouseUp={handleBoardMouseUp}
                 onMouseLeave={handleBoardMouseUp}
-                onWheel={handleWheel}
                 onDragOver={handleBoardDragOver}
                 onDragLeave={handleBoardDragLeave}
                 onDrop={handleBoardDrop}
