@@ -749,9 +749,11 @@ export async function adaptImageToStory(
           "storyAnalysis": "Brief summary of style and plot.",
           "subjectAnalysis": "Brief description of the subject.",
           "scenarioBridge": "Description of the invented scene logic.",
-          "videoPrompt": "Short action description for the timeline UI (e.g., 'The duck detective investigates the clue').",
+          "videoPrompt": "Short action description for the timeline UI in RUSSIAN (e.g., 'Утка-детектив рассматривает улику'). MUST BE IN RUSSIAN.",
           "imageGenerationPrompt": "Detailed prompt for the artist model."
         }
+        
+        IMPORTANT: The 'videoPrompt' field MUST be in RUSSIAN. All other fields can be in English or Russian.
         `;
 
         directorContentParts.push({ text: systemInstruction });

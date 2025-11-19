@@ -994,29 +994,54 @@ export default function App() {
                 }));
 
                 // --- DOSSIER UPDATE ---
-                if (fileHash) {
-                    const newDescriptionMatch = newPrompt.match(/^(.*?)[.,]/); // Simple extraction or use full prompt
+                // If we have a known character, ensure the NEW generated image also points to the same character description
+                if (knownCharacterRef) {
+                    const newDossier: ActorDossier = {
+                        sourceHash: newHash,
+                        characterDescription: knownCharacterRef.characterDescription,
+                        referenceImageUrl: newImageUrl,
+                        lastUsed: Date.now(),
+                    };
+                    updateDossiers(prev => [...prev, newDossier]);
+                }
+                // If it's a new character (no known ref but we want to start tracking it)
+                else if (fileHash) {
+                    // Extract a character name/description from the generated prompt or analysis if possible.
+                    // For now, we'll extract the subject from the prompt start as a heuristic, 
+                    // or rely on the fact that the *next* time this file is used, it will be "known".
+                    
+                    // NOTE: To properly start a "New" dossier, we should probably use the 'subjectAnalysis' from the Director.
+                    // But since 'adaptImageToStory' returns simplified object, let's try to extract from prompt or use a generic placeholder that the user can rename later (if we add renaming).
+                    // For now, we create a dossier for the ORIGINAL source file if it doesn't exist.
+                    
+                    const newDescriptionMatch = newPrompt.match(/^(.*?)[.,]/); 
                     const newDescription = newDescriptionMatch ? newDescriptionMatch[0] : "Character";
 
                     const newDossier: ActorDossier = {
-                        sourceHash: fileHash,
+                        sourceHash: fileHash, // Link original file
                         characterDescription: newDescription,
                         referenceImageUrl: newImageUrl,
                         lastUsed: Date.now(),
                     };
                     
-                    // Update or Add Dossier
+                    // Also link the NEW generated file to this identity
+                    const generatedDossier: ActorDossier = {
+                        sourceHash: newHash,
+                        characterDescription: newDescription,
+                        referenceImageUrl: newImageUrl,
+                        lastUsed: Date.now(),
+                    };
+
                     updateDossiers(prev => {
                         const existingIdx = prev.findIndex(d => d.sourceHash === fileHash);
                         if (existingIdx >= 0) {
-                             // Optionally update description if it's better, or keep old one.
-                             // For now, we keep the old reference to ensure stability, OR update if we want evolution.
-                             // Let's update timestamp.
                              const updated = [...prev];
                              updated[existingIdx] = { ...updated[existingIdx], lastUsed: Date.now() };
+                             // Add the new variation
+                             updated.push(generatedDossier);
                              return updated;
                         } else {
-                            return [...prev, newDossier];
+                            return [...prev, newDossier, generatedDossier];
                         }
                     });
                 }

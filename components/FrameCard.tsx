@@ -32,6 +32,19 @@ interface FrameCardProps {
 
 const aspectRatios = ['16:9', '4:3', '1:1', '9:16'];
 
+// Helper to generate a consistent color from a string
+const stringToColor = (str: string) => {
+    let hash = 0;
+    for (let i = 0; i < str.length; i++) {
+        hash = str.charCodeAt(i) + ((hash << 5) - hash);
+    }
+    const colors = [
+        'bg-blue-500', 'bg-red-500', 'bg-green-500', 'bg-purple-500', 
+        'bg-yellow-500', 'bg-pink-500', 'bg-indigo-500', 'bg-teal-500'
+    ];
+    return colors[Math.abs(hash) % colors.length];
+};
+
 export const FrameCard: React.FC<FrameCardProps> = ({ 
     frame, 
     index, 
@@ -66,6 +79,7 @@ export const FrameCard: React.FC<FrameCardProps> = ({
 
     const knownActor = dossiers?.find(d => d.sourceHash === frame.sourceHash);
     const isKnownActor = !!knownActor;
+    const badgeColor = isKnownActor ? stringToColor(knownActor.characterDescription) : 'bg-gray-500';
 
     // --- Drag and Drop for Integration ---
     const handleDragOver = (e: React.DragEvent) => {
@@ -297,9 +311,12 @@ export const FrameCard: React.FC<FrameCardProps> = ({
                 <div className="absolute top-1.5 left-1.5 bg-black/60 text-white text-xs font-bold w-6 h-6 flex items-center justify-center rounded-full">{index + 1}</div>
                 
                 {isKnownActor && (
-                    <div className="absolute bottom-1.5 right-1.5 bg-primary text-white text-[10px] font-bold px-1.5 py-0.5 rounded flex items-center gap-1 shadow-sm" title={`Персонаж опознан как: ${knownActor.characterDescription}`}>
+                    <div 
+                        className={`absolute -bottom-1 -right-1 ${badgeColor} text-white text-[10px] font-bold px-2 py-1 rounded-full flex items-center gap-1 shadow-lg z-20 ring-2 ring-background-dark`} 
+                        title={`Персонаж опознан как: ${knownActor.characterDescription}`}
+                    >
                         <span className="material-symbols-outlined text-xs">verified_user</span>
-                        <span className="max-w-[60px] truncate hidden group-hover:inline">{knownActor.characterDescription}</span>
+                        <span className="max-w-[70px] truncate">{knownActor.characterDescription}</span>
                     </div>
                 )}
                 
