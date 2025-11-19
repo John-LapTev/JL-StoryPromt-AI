@@ -28,12 +28,11 @@ interface FrameCardProps {
     onStartIntegration: (source: File | string, targetFrameId: string) => void;
     onStartIntegrationFromSketch: (sourceSketchId: string, targetFrameId: string) => void;
     onStartIntegrationFromFrame: (sourceFrameId: string, targetFrameId: string) => void;
-    onRegenerate?: (frameId: string) => void; // Added prop
+    onRegenerate?: (frameId: string) => void;
 }
 
 const aspectRatios = ['16:9', '4:3', '1:1', '9:16'];
 
-// Helper to generate a consistent color from a string
 const stringToColor = (str: string) => {
     let hash = 0;
     for (let i = 0; i < str.length; i++) {
@@ -81,9 +80,19 @@ export const FrameCard: React.FC<FrameCardProps> = ({
 
     const knownActor = dossiers?.find(d => d.sourceHash === frame.sourceHash);
     const isKnownActor = !!knownActor;
-    const badgeColor = isKnownActor ? stringToColor(knownActor.characterDescription) : 'bg-gray-500';
+    
+    // Badge logic
+    const getBadgeIcon = (type?: string) => {
+        switch(type) {
+            case 'object': return 'category';
+            case 'location': return 'landscape';
+            case 'character': default: return 'face';
+        }
+    };
+    const badgeColor = isKnownActor ? stringToColor(knownActor.roleLabel || knownActor.characterDescription) : 'bg-gray-500';
+    const badgeLabel = isKnownActor ? (knownActor.roleLabel || knownActor.characterDescription) : '';
+    const badgeIcon = isKnownActor ? getBadgeIcon(knownActor.type) : 'face';
 
-    // --- Drag and Drop for Integration ---
     const handleDragOver = (e: React.DragEvent) => {
         e.preventDefault();
         e.stopPropagation();
@@ -93,7 +102,6 @@ export const FrameCard: React.FC<FrameCardProps> = ({
         const isFrame = e.dataTransfer.types.includes('application/json;type=frame-id');
 
         if (isAsset || isFile || isSketch || isFrame) {
-            // Prevent dropping a frame onto itself
             if (isFrame && e.dataTransfer.getData('application/json;type=frame-id') === frame.id) {
                 e.dataTransfer.dropEffect = 'none';
                 setIsDragOver(false);
@@ -129,7 +137,6 @@ export const FrameCard: React.FC<FrameCardProps> = ({
 
         const files = e.dataTransfer.files;
         if (files && files.length > 0) {
-            // FIX: Explicitly type 'file' to resolve 'unknown' type error.
             const imageFile = Array.from(files).find((file: File) => file.type.startsWith('image/'));
             if (imageFile) {
                 onStartIntegration(imageFile, frame.id);
@@ -180,7 +187,7 @@ export const FrameCard: React.FC<FrameCardProps> = ({
                 id={id}
                 value={value}
                 onChange={onChange}
-                onClick={(e) => e.stopPropagation()} // Prevent card interaction
+                onClick={(e) => e.stopPropagation()}
                 onMouseDown={(e) => e.stopPropagation()}
                 className="w-full appearance-none bg-black/50 backdrop-blur-sm px-2 py-1 rounded-md text-xs font-bold text-white/90 focus:ring-2 focus:ring-primary border-none pr-6 h-7"
             >
@@ -254,7 +261,7 @@ export const FrameCard: React.FC<FrameCardProps> = ({
 
     return (
         <div 
-            className="flex flex-col gap-2 shrink-0 w-48"
+            className="flex flex-col gap-2 shrink-0 w-48 relative"
             data-frame-id={frame.id}
             onContextMenu={(e) => onContextMenu(e, frame)}
             onDragOver={handleDragOver}
@@ -325,16 +332,6 @@ export const FrameCard: React.FC<FrameCardProps> = ({
                 )}
                 <div className="absolute top-1.5 left-1.5 bg-black/60 text-white text-xs font-bold w-6 h-6 flex items-center justify-center rounded-full">{index + 1}</div>
                 
-                {isKnownActor && !frame.hasError && (
-                    <div 
-                        className={`absolute -bottom-1 -right-1 ${badgeColor} text-white text-[10px] font-bold px-2 py-1 rounded-full flex items-center gap-1 shadow-lg z-20 ring-2 ring-background-dark`} 
-                        title={`Персонаж опознан как: ${knownActor.characterDescription}`}
-                    >
-                        <span className="material-symbols-outlined text-xs">verified_user</span>
-                        <span className="max-w-[70px] truncate">{knownActor.characterDescription}</span>
-                    </div>
-                )}
-                
                  {hasVersions && !frame.hasError && (
                     <div className="absolute inset-0 flex items-center justify-between p-1 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
                         <button 
@@ -361,6 +358,18 @@ export const FrameCard: React.FC<FrameCardProps> = ({
                     </div>
                 )}
             </div>
+
+            {/* Badge moved outside image container for better stacking context and visibility */}
+            {isKnownActor && !frame.hasError && (
+                <div 
+                    className={`absolute top-[88px] -right-1 ${badgeColor} text-white text-[10px] font-bold px-2 py-1 rounded-full flex items-center gap-1 shadow-lg z-30 ring-2 ring-background-dark`} 
+                    title={`Опознан как: ${badgeLabel}`}
+                >
+                    <span className="material-symbols-outlined text-xs">{badgeIcon}</span>
+                    <span className="max-w-[70px] truncate">{badgeLabel}</span>
+                </div>
+            )}
+
              <div className="flex items-center justify-center mt-auto">
                 <div className="flex h-6 items-center rounded-full bg-white/5 px-0.5">
                     <button onMouseDown={(e) => e.stopPropagation()} onClick={handleDecrease} className="flex size-5 items-center justify-center rounded-full text-white/80 transition-colors hover:bg-white/20 hover:text-white"><span className="material-symbols-outlined text-base font-bold">remove</span></button>

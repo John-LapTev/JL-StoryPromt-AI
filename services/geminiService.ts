@@ -329,7 +329,8 @@ export async function editImage(
 export async function generateImageInContext(
     userPrompt: string,
     leftFrame: Frame | null,
-    rightFrame: Frame | null
+    rightFrame: Frame | null,
+    currentFrame: Frame | null = null
 ): Promise<{ imageUrl: string; prompt: string }>{
     try {
         const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
@@ -337,25 +338,51 @@ export async function generateImageInContext(
         // --- STEP 1: Generate the image ---
         const imageGenParts: any[] = [];
         
-        let instructionText = `Ты — эксперт-художник по раскадровке, создающий новый кадр на основе промта пользователя. Цель — сделать так, чтобы этот новый кадр без проблем вписался между двумя существующими кадрами в истории.
+        let instructionText = `Ты — эксперт-художник по раскадровке.`;
 
-    Промт пользователя для нового кадра: "${userPrompt}"
+        // Add Current Frame (Reference for regeneration/consistency)
+        if (currentFrame) {
+             try {
+                const { mimeType, data } = await urlOrFileToBase64(currentFrame);
+                imageGenParts.push({ inlineData: { mimeType, data } });
+                instructionText += `\n\n[CURRENT IMAGE REFERENCE]
+                Используй это изображение как ГЛАВНЫЙ референс.
+                ВАЖНО: Сохраняй основных персонажей, объекты и композицию из этого изображения, если только промт явно не требует их замены.
+                Задача: Перегенерируй этот кадр, улучшив качество и детали в соответствии с промтом "${userPrompt}".`;
+            } catch (e) {
+                 // Ignore missing image in current frame (it might be an empty placeholder we are trying to fill)
+                 console.warn("Current frame image missing, generating from scratch.");
+                 instructionText += `\n\nСоздай новый кадр на основе промта пользователя: "${userPrompt}"`;
+            }
+        } else {
+             instructionText += `\n\nСоздай новый кадр. Промт пользователя: "${userPrompt}"`;
+        }
 
+        instructionText += `\n\nЦель — сделать так, чтобы этот кадр без проблем вписался между двумя существующими кадрами в истории (если они есть).
+    
     Твоя задача:
-    1.  Проанализируй предоставленный контекст: изображение и промт из кадра до (СЛЕВА) и кадра после (СПРАВА). Обрати особое внимание на художественный стиль, цветовую палитру, персонажей и общее настроение.
-    2.  Сгенерируй новое изображение, которое является прямой визуальной репрезентацией промта пользователя.
-    3.  Критически важно, чтобы стиль сгенерированного изображения был идеально совместим с контекстными кадрами, чтобы оно выглядело как часть той же последовательности. Новая сцена должна логически связывать левый и правый кадры.
+    1.  Проанализируй предоставленный контекст (кадры слева и справа).
+    2.  Сгенерируй изображение, которое является прямой визуальной репрезентацией промта.
+    3.  Критически важно: стиль должен быть совместим с контекстными кадрами.
     `;
 
         if (leftFrame) {
-            const { mimeType, data } = await urlOrFileToBase64(leftFrame);
-            imageGenParts.push({ inlineData: { mimeType, data } });
-            instructionText += `\nКонтекст из ЛЕВОГО кадра: Промт был "${leftFrame.prompt || 'без промта'}". Изображение предоставлено.`;
+            try {
+                const { mimeType, data } = await urlOrFileToBase64(leftFrame);
+                imageGenParts.push({ inlineData: { mimeType, data } });
+                instructionText += `\nКонтекст из ЛЕВОГО кадра: Промт был "${leftFrame.prompt || 'без промта'}". Изображение предоставлено.`;
+            } catch (e) {
+                if (leftFrame.prompt) instructionText += `\nКонтекст из ЛЕВОГО кадра: Промт был "${leftFrame.prompt}". (Изображение недоступно).`;
+            }
         }
         if (rightFrame) {
-            const { mimeType, data } = await urlOrFileToBase64(rightFrame);
-            imageGenParts.push({ inlineData: { mimeType, data } });
-            instructionText += `\nКонтекст из ПРАВОГО кадра: Промт был "${rightFrame.prompt || 'без промта'}". Изображение предоставлено.`;
+            try {
+                const { mimeType, data } = await urlOrFileToBase64(rightFrame);
+                imageGenParts.push({ inlineData: { mimeType, data } });
+                instructionText += `\nКонтекст СПРАВА (следующий кадр): Промт был "${rightFrame.prompt || 'без промта'}". Изображение предоставлено.`;
+            } catch (e) {
+                 if (rightFrame.prompt) instructionText += `\nКонтекст из ПРАВОГО кадра: Промт был "${rightFrame.prompt}". (Изображение недоступно).`;
+            }
         }
         
         const imageGenResponse = await ai.models.generateContent({
@@ -384,7 +411,7 @@ export async function generateImageInContext(
         }
 
         // --- STEP 2: Generate a prompt for the new image ---
-        let promptGenText = `Ты — профессиональный художник-раскадровщик, создающий промт для модели генерации видео. Проанализируй предоставленное изображение, которое было создано, чтобы вписаться между двумя другими кадрами на основе запроса пользователя: "${userPrompt}".
+        let promptGenText = `Ты — профессиональный художник-раскадровщик. Проанализируй это изображение, созданное по запросу: "${userPrompt}".
 
     Контекст:`;
         if (leftFrame?.prompt) {
@@ -393,7 +420,7 @@ export async function generateImageInContext(
         if (rightFrame?.prompt) {
             promptGenText += `\n- Промт следующего кадра: "${rightFrame.prompt}"`;
         }
-        promptGenText += `\n\nОсновываясь на всем этом контексте, создай краткий, но описательный промт для нового изображения на русском языке. Этот промт будет использован для генерации видеоклипа. Сфокусируйся на действии, движении камеры и настроении, чтобы обеспечить плавный повествовательный поток. Выведи только сам текст промта.`;
+        promptGenText += `\n\nСоздай краткий, но описательный промт для нового изображения на русском языке для генерации видео. Сфокусируйся на действии, движении камеры и настроении. Выведи только текст промта.`;
         
         const promptGenResponse = await ai.models.generateContent({
             model: 'gemini-2.5-flash',
@@ -422,7 +449,8 @@ export async function regenerateFrameImage(frame: Frame, allFrames: Frame[]): Pr
         const rightFrame = currentIndex < allFrames.length - 1 ? allFrames[currentIndex + 1] : null;
 
         // Use the frame's existing prompt as the "user prompt"
-        return await generateImageInContext(frame.prompt, leftFrame, rightFrame);
+        // Pass 'frame' as the currentFrame to use it as a visual anchor/reference for refinement
+        return await generateImageInContext(frame.prompt, leftFrame, rightFrame, frame);
     } catch (error) {
         handleApiError(error);
         throw error;
@@ -578,12 +606,24 @@ export async function* createStoryFromAssets(
     }
 }
 
+// Define interface for the Director's analysis return
+interface DirectorAnalysis {
+    storyAnalysis: string;
+    subjectAnalysis: string;
+    subjectType: 'character' | 'object' | 'location';
+    roleLabel: string;
+    visualAnchorIndex: number | null;
+    scenarioBridge: string;
+    videoPrompt: string;
+    imageGenerationPrompt: string;
+}
+
 export async function adaptImageToStory(
     frameToAdapt: Frame,
     allFrames: Frame[],
     manualInstruction?: string,
     knownCharacterReference?: { originalUrl: string, adaptedUrl: string, characterDescription: string }
-): Promise<{ imageUrl: string; prompt: string }> {
+): Promise<{ imageUrl: string; prompt: string; analysis: DirectorAnalysis }> {
     try {
         const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
         
@@ -592,10 +632,14 @@ export async function adaptImageToStory(
         // ---------------------------------------------------------------------------
         const targetIndex = allFrames.findIndex(f => f.id === frameToAdapt.id);
         
-        // Simple helper to get image data
+        // Simple helper to get image data safely
         const getFrameData = async (f: Frame) => {
-            const { mimeType, data } = await urlOrFileToBase64(f);
-            return { inlineData: { mimeType, data } };
+            try {
+                const { mimeType, data } = await urlOrFileToBase64(f);
+                return { inlineData: { mimeType, data } };
+            } catch (e) {
+                return null;
+            }
         };
         
         const directorContentParts: any[] = [];
@@ -610,12 +654,10 @@ export async function adaptImageToStory(
             } else {
                 directorContentParts.push({ text: `[SCENE ${i + 1} - STORY CONTEXT]` });
                 // Only push image data if it exists, otherwise just push prompt
-                try {
-                     if (frame.imageUrls && frame.imageUrls.length > 0) {
-                        directorContentParts.push(await getFrameData(frame));
-                     }
-                } catch (e) { console.warn(`Skipping missing image for context frame ${i+1}`) }
-
+                const imageData = await getFrameData(frame);
+                if (imageData) {
+                    directorContentParts.push(imageData);
+                }
                 if (frame.prompt) {
                     directorContentParts.push({ text: `Prompt: "${frame.prompt}"` });
                 }
@@ -624,10 +666,12 @@ export async function adaptImageToStory(
 
         // 2. Add the Subject (The "Alien" Image - STEP 2)
         directorContentParts.push({ text: `[SUBJECT IMAGE TO ADAPT]` });
-        directorContentParts.push(await getFrameData(frameToAdapt));
+        const subjectImageData = await getFrameData(frameToAdapt);
+        if (subjectImageData) {
+            directorContentParts.push(subjectImageData);
+        }
 
-        // 3. Director System Instruction (Steps 1-4 Combined)
-        // STRICT NARRATIVE FLOW INSTRUCTIONS ADDED
+        // 3. Director System Instruction
         const systemInstruction = `
         You are a Visionary Film Director and Screenwriter.
         
@@ -637,20 +681,20 @@ export async function adaptImageToStory(
         
         STEP 1: ANALYZE THE STORY (Global Context & Flow)
         - Analyze the visual style and narrative arc.
-        - CRITICAL: TRACK THE LOCATION/SETTING PROGRESSION. If characters moved from Location A to Location B, Scene N MUST take place in Location B (or a new Location C). DO NOT REGRESS to Location A unless explicitly narratively justified.
         
         STEP 2: ANALYZE THE SUBJECT
-        - Identify the key object/person in the [SUBJECT IMAGE] (e.g., "A woman", "Blue Chips").
+        - Identify the MAIN subject in the [SUBJECT IMAGE].
+        - Classify it as 'character', 'object' (like chips, a car, a gun), or 'location'.
+        - Assign a 'roleLabel': A short, 2-3 word identifier for the UI badge (e.g., "Blue Chips", "Detective", "Spooky Cave").
         
         STEP 3: VISUAL ANCHORS (Consistency Check)
-        - Look at previous frames. Is the specific object/person from Step 2 already present in a previous scene?
-        - If YES, identify the exact Scene Number (index) to use as a visual reference for the artist. This prevents "morphing" objects (e.g., changing blue chips to green chips).
+        - Look at previous frames. Has this EXACT object or character appeared before?
+        - If YES, provide the 'visualAnchorIndex' (the 0-based index of that frame). This is CRITICAL for objects like chips or specific props.
         
         STEP 4: CREATE A SCENARIO BRIDGE
         - Invent a specific scene for [SCENE ${targetIndex + 1}].
         - It MUST feature the Subject from Step 2.
         - It MUST logically connect the scene Before and the scene After.
-        - It MUST respect the Location Flow from Step 1.
         ${manualInstruction ? `- USER OVERRIDE: "${manualInstruction}"` : ''}
         
         STEP 5: WRITE THE ARTIST PROMPT
@@ -663,9 +707,11 @@ export async function adaptImageToStory(
         {
           "storyAnalysis": "Brief summary of style and plot flow.",
           "subjectAnalysis": "Brief description of the subject.",
-          "visualAnchorIndex": number | null, // The 0-based index of a previous frame that contains the exact object/character to reference. Return null if none.
+          "subjectType": "character" | "object" | "location",
+          "roleLabel": "Short label (2-3 words max)",
+          "visualAnchorIndex": number | null, 
           "scenarioBridge": "Description of the invented scene logic.",
-          "videoPrompt": "Short action description for the timeline UI in RUSSIAN (e.g., 'Утка-детектив рассматривает улику'). MUST BE IN RUSSIAN.",
+          "videoPrompt": "Short action description for the timeline UI in RUSSIAN. MUST BE IN RUSSIAN.",
           "imageGenerationPrompt": "Detailed prompt for the artist model."
         }
         `;
@@ -683,17 +729,19 @@ export async function adaptImageToStory(
                     properties: {
                         storyAnalysis: { type: Type.STRING },
                         subjectAnalysis: { type: Type.STRING },
+                        subjectType: { type: Type.STRING, enum: ["character", "object", "location"] },
+                        roleLabel: { type: Type.STRING },
                         visualAnchorIndex: { type: Type.INTEGER, nullable: true },
                         scenarioBridge: { type: Type.STRING },
                         videoPrompt: { type: Type.STRING },
                         imageGenerationPrompt: { type: Type.STRING },
                     },
-                    required: ["storyAnalysis", "subjectAnalysis", "scenarioBridge", "videoPrompt", "imageGenerationPrompt"],
+                    required: ["storyAnalysis", "subjectAnalysis", "subjectType", "roleLabel", "scenarioBridge", "videoPrompt", "imageGenerationPrompt"],
                 },
             },
         });
 
-        const directorOutput = JSON.parse(directorResponse.text.trim());
+        const directorOutput: DirectorAnalysis = JSON.parse(directorResponse.text.trim());
         const { imageGenerationPrompt, videoPrompt, visualAnchorIndex } = directorOutput;
 
         console.log("Director Analysis:", directorOutput);
@@ -706,28 +754,41 @@ export async function adaptImageToStory(
         // 1. The Prompt (from Director)
         // 2. Style Reference (The Left Frame, or Right if Left is missing)
         // 3. Subject Reference (The Original Image)
-        // 4. Visual Anchor Reference (If Director found one)
+        // 4. Visual Anchor Reference (If Director found one - VERY IMPORTANT for chips consistency)
 
         const artistContentParts: any[] = [];
         
+        // Prompt is paramount
         artistContentParts.push({ text: imageGenerationPrompt });
 
         // Style Reference (Priority: Previous frame -> Next frame)
         const styleRefFrame = targetIndex > 0 ? allFrames[targetIndex - 1] : (allFrames.length > 1 ? allFrames[targetIndex + 1] : null);
         if (styleRefFrame && styleRefFrame.id !== frameToAdapt.id) {
-            artistContentParts.push(await getFrameData(styleRefFrame));
+            const styleData = await getFrameData(styleRefFrame);
+            if (styleData) {
+                 artistContentParts.push({ text: "[STYLE REFERENCE IMAGE]\nUse the art style, lighting, and rendering technique from this image. Ignore its subject."});
+                 artistContentParts.push(styleData);
+            }
         }
 
-        // Subject Reference (The thing being adapted)
-        artistContentParts.push(await getFrameData(frameToAdapt));
+        // Subject Reference (The thing being adapted) - Treat as "Alien" that needs to be painted in
+        const subjectData = await getFrameData(frameToAdapt);
+        if (subjectData) {
+             artistContentParts.push({ text: "[SUBJECT STRUCTURE REFERENCE]\nUse the structure, composition, and subject identity from this image. ADAPT it to the style above. Do NOT copy the realistic photo style."});
+             artistContentParts.push(subjectData);
+        }
 
         // Visual Anchor Reference (Object consistency)
-        if (visualAnchorIndex !== null && visualAnchorIndex >= 0 && visualAnchorIndex < allFrames.length) {
+        if (visualAnchorIndex !== null && visualAnchorIndex !== undefined && visualAnchorIndex >= 0 && visualAnchorIndex < allFrames.length) {
              const anchorFrame = allFrames[visualAnchorIndex];
              // Only add if it's not the same as the style ref (to avoid duplicates/token waste)
              if (anchorFrame.id !== styleRefFrame?.id && anchorFrame.id !== frameToAdapt.id) {
                  console.log("Adding Visual Anchor Frame:", visualAnchorIndex);
-                 artistContentParts.push(await getFrameData(anchorFrame));
+                 const anchorData = await getFrameData(anchorFrame);
+                 if (anchorData) {
+                     artistContentParts.push({ text: "MUST LOOK EXACTLY LIKE THIS [VISUAL ANCHOR]:" });
+                     artistContentParts.push(anchorData);
+                 }
              }
         }
 
@@ -754,7 +815,7 @@ export async function adaptImageToStory(
             throw new Error("Artist AI failed to generate the adapted image.");
         }
 
-        return { imageUrl: newImageUrl, prompt: videoPrompt };
+        return { imageUrl: newImageUrl, prompt: videoPrompt, analysis: directorOutput };
 
     } catch (error) {
         handleApiError(error);
@@ -841,14 +902,22 @@ export async function generatePromptSuggestions(
         let promptText = `Предложи 4 варианта промта для генерации нового кадра.`;
         
         if (leftFrame) {
-            const { mimeType, data } = await urlOrFileToBase64(leftFrame);
-            parts.push({ inlineData: { mimeType, data } });
-            promptText += `\nКонтекст СЛЕВА (предыдущий кадр): "${leftFrame.prompt}". Изображение предоставлено.`;
+            try {
+                const { mimeType, data } = await urlOrFileToBase64(leftFrame);
+                parts.push({ inlineData: { mimeType, data } });
+                promptText += `\nКонтекст СЛЕВА (предыдущий кадр): "${leftFrame.prompt}". Изображение предоставлено.`;
+            } catch (e) {
+                if (leftFrame.prompt) promptText += `\nКонтекст СЛЕВА: "${leftFrame.prompt}".`;
+            }
         }
         if (rightFrame) {
-             const { mimeType, data } = await urlOrFileToBase64(rightFrame);
-             parts.push({ inlineData: { mimeType, data } });
-             promptText += `\nКонтекст СПРАВА (следующий кадр): "${rightFrame.prompt}". Изображение предоставлено.`;
+            try {
+                const { mimeType, data } = await urlOrFileToBase64(rightFrame);
+                parts.push({ inlineData: { mimeType, data } });
+                promptText += `\nКонтекст СПРАВА (следующий кадр): "${rightFrame.prompt}". Изображение предоставлено.`;
+            } catch (e) {
+                if (rightFrame.prompt) promptText += `\nКонтекст СПРАВА: "${rightFrame.prompt}".`;
+            }
         }
 
         promptText += `\nВерни ответ как JSON-массив из 4 строк (вариантов промта на русском). Промты должны быть описательными и готовыми к использованию.`;
@@ -889,14 +958,18 @@ export async function generateEditSuggestions(
         parts.push({ inlineData: { mimeType, data } });
         
         if (leftFrame) {
-            const { mimeType: lMime, data: lData } = await urlOrFileToBase64(leftFrame);
-            parts.push({ inlineData: { mimeType: lMime, data: lData } });
-            promptText += `\nКонтекст СЛЕВА (предыдущий кадр): изображение предоставлено.`;
+            try {
+                const { mimeType: lMime, data: lData } = await urlOrFileToBase64(leftFrame);
+                parts.push({ inlineData: { mimeType: lMime, data: lData } });
+                promptText += `\nКонтекст СЛЕВА (предыдущий кадр): изображение предоставлено.`;
+            } catch(e) {}
         }
         if (rightFrame) {
-             const { mimeType: rMime, data: rData } = await urlOrFileToBase64(rightFrame);
-             parts.push({ inlineData: { mimeType: rMime, data: rData } });
-             promptText += `\nКонтекст СПРАВА (следующий кадр): изображение предоставлено.`;
+            try {
+                const { mimeType: rMime, data: rData } = await urlOrFileToBase64(rightFrame);
+                parts.push({ inlineData: { mimeType: rMime, data: rData } });
+                promptText += `\nКонтекст СПРАВА (следующий кадр): изображение предоставлено.`;
+            } catch(e) {}
         }
 
         promptText += `\nВерни ответ как JSON-массив из 4 строк (инструкции на русском).`;
@@ -990,14 +1063,18 @@ export async function generateAdaptationSuggestions(
         parts.push({ inlineData: { mimeType, data } });
         
         if (leftFrame) {
-            const { mimeType: lMime, data: lData } = await urlOrFileToBase64(leftFrame);
-            parts.push({ inlineData: { mimeType: lMime, data: lData } });
-            promptText += `\nКонтекст СЛЕВА (стиль/сюжет): изображение предоставлено.`;
+            try {
+                const { mimeType: lMime, data: lData } = await urlOrFileToBase64(leftFrame);
+                parts.push({ inlineData: { mimeType: lMime, data: lData } });
+                promptText += `\nКонтекст СЛЕВА (стиль/сюжет): изображение предоставлено.`;
+            } catch(e) {}
         }
         if (rightFrame) {
-             const { mimeType: rMime, data: rData } = await urlOrFileToBase64(rightFrame);
-             parts.push({ inlineData: { mimeType: rMime, data: rData } });
-             promptText += `\nКонтекст СПРАВА (стиль/сюжет): изображение предоставлено.`;
+            try {
+                 const { mimeType: rMime, data: rData } = await urlOrFileToBase64(rightFrame);
+                 parts.push({ inlineData: { mimeType: rMime, data: rData } });
+                 promptText += `\nКонтекст СПРАВА (стиль/сюжет): изображение предоставлено.`;
+            } catch(e) {}
         }
 
         promptText += `\nВерни ответ как JSON-массив из 4 строк (инструкции на русском).`;

@@ -50,7 +50,9 @@ export interface Note {
 
 export interface ActorDossier {
     sourceHash: string; // SHA-256 of the original uploaded file
-    characterDescription: string; // The "role" description (e.g. "Duck detective")
+    characterDescription: string; // Full description
+    roleLabel?: string; // Short label for UI (e.g. "Blue Chips")
+    type?: 'character' | 'object' | 'location'; // Entity type
     referenceImageUrl: string; // The best adapted image URL to use as a style anchor
     lastUsed: number; // Timestamp
 }

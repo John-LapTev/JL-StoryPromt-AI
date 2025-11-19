@@ -697,7 +697,8 @@ export default function App() {
         try {
             const { imageUrl, prompt: newPrompt } = await regenerateFrameImage(frame, localFrames);
             const newFile = dataUrlToFile(imageUrl, `regenerated-${frameId}-${Date.now()}.png`);
-            const hash = await calculateFileHash(newFile);
+            // IMPORTANT: Do NOT update sourceHash here. The regenerated frame is a visual iteration of the existing one.
+            // const hash = await calculateFileHash(newFile);
 
             updateFrames(prev => prev.map(f => {
                 if (f.id === frameId) {
@@ -710,7 +711,7 @@ export default function App() {
                         file: newFile,
                         isGenerating: false,
                         generatingMessage: undefined,
-                        sourceHash: hash,
+                        // sourceHash: hash, // KEEP ORIGINAL HASH
                         hasError: false
                     };
                 }
@@ -788,7 +789,8 @@ export default function App() {
 
     const handleApplyEdit = useCallback(async (targetId: string, newImageUrl: string, newPrompt: string) => {
         const newFile = dataUrlToFile(newImageUrl, `edited-${targetId}-${Date.now()}.png`);
-        const hash = await calculateFileHash(newFile);
+        // IMPORTANT: We preserve the sourceHash if it exists, assuming editing preserves identity.
+        // const hash = await calculateFileHash(newFile);
 
         // Check if it's a sketch
         const sketchIndex = localSketches.findIndex(s => s.id === targetId);
@@ -821,7 +823,7 @@ export default function App() {
                         file: newFile,
                         prompt: newPrompt,
                         isTransition: false,
-                        sourceHash: hash,
+                        // sourceHash: hash, // Preserving original hash
                         hasError: false
                     };
                 }
@@ -1012,23 +1014,27 @@ export default function App() {
                             adaptedUrl: dossier.referenceImageUrl,
                             characterDescription: dossier.characterDescription,
                         };
-                        updateFrames(prev => prev.map(f => f.id === targetId ? { ...f, generatingMessage: `Персонаж опознан: ${dossier.characterDescription}. Адаптация...` } : f));
+                        updateFrames(prev => prev.map(f => f.id === targetId ? { ...f, generatingMessage: `${dossier.roleLabel || 'Персонаж'} опознан. Адаптация...` } : f));
                      } else {
-                        updateFrames(prev => prev.map(f => f.id === targetId ? { ...f, generatingMessage: 'Новый персонаж. Адаптация...' } : f));
+                        updateFrames(prev => prev.map(f => f.id === targetId ? { ...f, generatingMessage: 'Интеграция в сюжет...' } : f));
                      }
                 }
 
                 // Pass ALL frames to the service to understand the full story context
                 // Pass the dossier reference if found
-                const { imageUrl: newImageUrl, prompt: newPrompt } = await adaptImageToStory(
+                const adaptationResult = await adaptImageToStory(
                     frameToAdapt,
                     localFrames,
                     instruction,
                     knownCharacterRef
                 );
-
+                
+                const { imageUrl: newImageUrl, prompt: newPrompt, analysis } = adaptationResult;
+                
                 const newFile = dataUrlToFile(newImageUrl, `adapted-${targetId}-${Date.now()}.png`);
-                const newHash = await calculateFileHash(newFile);
+                // CRITICAL FIX: Do NOT overwrite the sourceHash with the new file's hash.
+                // We must preserve the original file hash so the dossier link remains valid.
+                // const newHash = await calculateFileHash(newFile); 
 
                 updateFrames(prev => prev.map(f => {
                     if (f.id === targetId) {
@@ -1041,56 +1047,33 @@ export default function App() {
                             file: newFile,
                             isGenerating: false,
                             generatingMessage: undefined,
-                            sourceHash: newHash,
+                            sourceHash: f.sourceHash, // PERSIST ORIGINAL HASH
                             hasError: false
                         };
                     }
                     return f;
                 }));
 
-                // --- DOSSIER UPDATE ---
-                // If we have a known character, ensure the NEW generated image also points to the same character description
-                if (knownCharacterRef) {
-                    const newDossier: ActorDossier = {
-                        sourceHash: newHash,
-                        characterDescription: knownCharacterRef.characterDescription,
-                        referenceImageUrl: newImageUrl,
-                        lastUsed: Date.now(),
-                    };
-                    updateDossiers(prev => [...prev, newDossier]);
-                }
-                // If it's a new character (no known ref but we want to start tracking it)
-                else if (fileHash) {
-                    // Extract a character name/description from the generated prompt or analysis if possible.
-                    const newDescriptionMatch = newPrompt.match(/^(.*?)[.,]/); 
-                    const newDescription = newDescriptionMatch ? newDescriptionMatch[0] : "Character";
-
-                    const newDossier: ActorDossier = {
-                        sourceHash: fileHash, // Link original file
-                        characterDescription: newDescription,
-                        referenceImageUrl: newImageUrl,
+                // Create or update dossier with detailed analysis from Director
+                if (fileHash && analysis) {
+                     const newDossier: ActorDossier = {
+                        sourceHash: fileHash,
+                        characterDescription: analysis.subjectAnalysis, // Detailed description
+                        roleLabel: analysis.roleLabel, // Short label
+                        type: analysis.subjectType, // Character/Object/Location
+                        referenceImageUrl: newImageUrl, // Use the adapted one as the "Canon" look
                         lastUsed: Date.now(),
                     };
                     
-                    // Also link the NEW generated file to this identity
-                    const generatedDossier: ActorDossier = {
-                        sourceHash: newHash,
-                        characterDescription: newDescription,
-                        referenceImageUrl: newImageUrl,
-                        lastUsed: Date.now(),
-                    };
-
+                    // Check if exists and merge or add
                     updateDossiers(prev => {
-                        const existingIdx = prev.findIndex(d => d.sourceHash === fileHash);
-                        if (existingIdx >= 0) {
-                             const updated = [...prev];
-                             updated[existingIdx] = { ...updated[existingIdx], lastUsed: Date.now() };
-                             // Add the new variation
-                             updated.push(generatedDossier);
-                             return updated;
-                        } else {
-                            return [...prev, newDossier, generatedDossier];
+                        const existingIndex = prev.findIndex(d => d.sourceHash === fileHash);
+                        if (existingIndex !== -1) {
+                            const updated = [...prev];
+                            updated[existingIndex] = { ...updated[existingIndex], ...newDossier };
+                            return updated;
                         }
+                        return [...prev, newDossier];
                     });
                 }
 
@@ -1154,7 +1137,7 @@ export default function App() {
             );
     
             const newFile = dataUrlToFile(newImageUrl, `adapted-ar-${frameId}-${Date.now()}.png`);
-            const hash = await calculateFileHash(newFile);
+            // const hash = await calculateFileHash(newFile); // Keep old hash
     
             updateFrames(prev => prev.map(f => {
                 if (f.id === frameId) {
@@ -1167,7 +1150,7 @@ export default function App() {
                         file: newFile,
                         isGenerating: false,
                         generatingMessage: undefined,
-                        sourceHash: hash,
+                        sourceHash: f.sourceHash, // Preserve
                         hasError: false
                     };
                 }
@@ -1210,7 +1193,7 @@ export default function App() {
                 );
     
                 const newFile = dataUrlToFile(newImageUrl, `adapted-ar-all-${frameId}-${Date.now()}.png`);
-                const hash = await calculateFileHash(newFile);
+                // const hash = await calculateFileHash(newFile);
     
                 updateFrames(prev => prev.map(f => {
                     if (f.id === frameId) {
@@ -1224,7 +1207,7 @@ export default function App() {
                             isGenerating: false,
                             generatingMessage: undefined,
                             aspectRatio: globalAspectRatio,
-                            sourceHash: hash,
+                            sourceHash: f.sourceHash, // Preserve
                             hasError: false
                         };
                     }
@@ -1258,7 +1241,7 @@ export default function App() {
     
         const newImageUrl = frame.imageUrls[newVersionIndex];
         let newFile: File;
-        let sourceHash = frame.sourceHash;
+        // let sourceHash = frame.sourceHash; // Keep existing hash by default
         try {
             if (newImageUrl.startsWith('data:')) {
                 newFile = dataUrlToFile(newImageUrl, `frame-${frame.id}-v${newVersionIndex}.png`);
@@ -1266,7 +1249,8 @@ export default function App() {
                 const blob = await fetchCorsImage(newImageUrl);
                 newFile = new File([blob], `frame-${frame.id}-v${newVersionIndex}.png`, { type: blob.type });
             }
-             sourceHash = await calculateFileHash(newFile);
+            // Only recalculate hash if it was missing or we want to strictly track file content changes,
+            // but for version switching of adapted frames, we want to keep identity.
         } catch (e) {
             console.error(`Could not create file for frame version ${frame.id}:`, e);
             newFile = new File([], `failed-frame-${frame.id}.txt`, { type: 'text/plain' });
@@ -1278,7 +1262,7 @@ export default function App() {
                 ...frame,
                 activeVersionIndex: newVersionIndex,
                 file: newFile,
-                sourceHash: sourceHash
+                // sourceHash: sourceHash // Keep existing
             };
             return updatedFrames;
         });
@@ -1318,13 +1302,13 @@ export default function App() {
         
         try { 
             const f = dataUrlToFile(result.imageUrl, `integrated-${t}-${Date.now()}.png`); 
-            const hash = await calculateFileHash(f);
+            // const hash = await calculateFileHash(f); // Keep existing identity
             
             // Try update frame
             let updated = false;
             const frameIndex = localFrames.findIndex(fr => fr.id === t);
             if (frameIndex !== -1) {
-                 updateFrames(p => p.map(fr => { if (fr.id === t) { const niu = [...fr.imageUrls, result.imageUrl]; return { ...fr, imageUrls: niu, activeVersionIndex: niu.length - 1, file: f, prompt: result.prompt, isTransition: false, isGenerating: false, sourceHash: hash, hasError: false }; } return fr; }));
+                 updateFrames(p => p.map(fr => { if (fr.id === t) { const niu = [...fr.imageUrls, result.imageUrl]; return { ...fr, imageUrls: niu, activeVersionIndex: niu.length - 1, file: f, prompt: result.prompt, isTransition: false, isGenerating: false, sourceHash: fr.sourceHash, hasError: false }; } return fr; }));
                  updated = true;
             }
 
