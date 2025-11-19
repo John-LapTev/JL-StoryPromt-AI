@@ -1,7 +1,6 @@
 
-
 import React, { useState } from 'react';
-import type { Frame } from '../types';
+import type { Frame, ActorDossier } from '../types';
 import { FrameCard } from './FrameCard';
 import { AddFrameButton } from './AddFrameButton';
 import { GeneratingVideoState } from '../App';
@@ -16,6 +15,7 @@ interface TimelineProps {
     isAspectRatioLocked: boolean;
     sketchDropTargetIndex: number | null;
     isAnalyzingStory: boolean;
+    dossiers?: ActorDossier[];
     onGlobalAspectRatioChange: (newRatio: string) => void;
     onToggleAspectRatioLock: () => void;
     onFrameAspectRatioChange: (frameId: string, newRatio: string) => void;
@@ -56,6 +56,7 @@ export const Timeline: React.FC<TimelineProps> = ({
     isAspectRatioLocked,
     sketchDropTargetIndex,
     isAnalyzingStory,
+    dossiers,
     onGlobalAspectRatioChange,
     onToggleAspectRatioLock,
     onFrameAspectRatioChange,
@@ -234,6 +235,7 @@ export const Timeline: React.FC<TimelineProps> = ({
                                     generatingVideoState={generatingVideoState?.frameId === frame.id ? generatingVideoState : null}
                                     isDragging={draggedIndex === index}
                                     isAspectRatioLocked={isAspectRatioLocked}
+                                    dossiers={dossiers}
                                     onDurationChange={onDurationChange}
                                     onPromptChange={onPromptChange}
                                     onDeleteFrame={onDeleteFrame}

@@ -1,6 +1,6 @@
 
 import React, { useState } from 'react';
-import type { Frame } from '../types';
+import type { Frame, ActorDossier } from '../types';
 import { GeneratingVideoState } from '../App';
 
 interface FrameCardProps {
@@ -10,6 +10,7 @@ interface FrameCardProps {
     generatingVideoState: GeneratingVideoState;
     isDragging: boolean;
     isAspectRatioLocked: boolean;
+    dossiers?: ActorDossier[];
     onDurationChange: (id: string, newDuration: number) => void;
     onPromptChange: (id: string, newPrompt: string) => void;
     onDeleteFrame: (id: string) => void;
@@ -38,6 +39,7 @@ export const FrameCard: React.FC<FrameCardProps> = ({
     generatingVideoState,
     isDragging,
     isAspectRatioLocked,
+    dossiers,
     onDurationChange, 
     onPromptChange, 
     onDeleteFrame, 
@@ -61,6 +63,9 @@ export const FrameCard: React.FC<FrameCardProps> = ({
 
     const activeImageUrl = frame.imageUrls[frame.activeVersionIndex];
     const hasVersions = frame.imageUrls.length > 1;
+
+    const knownActor = dossiers?.find(d => d.sourceHash === frame.sourceHash);
+    const isKnownActor = !!knownActor;
 
     // --- Drag and Drop for Integration ---
     const handleDragOver = (e: React.DragEvent) => {
@@ -290,6 +295,13 @@ export const FrameCard: React.FC<FrameCardProps> = ({
                     </div>
                 )}
                 <div className="absolute top-1.5 left-1.5 bg-black/60 text-white text-xs font-bold w-6 h-6 flex items-center justify-center rounded-full">{index + 1}</div>
+                
+                {isKnownActor && (
+                    <div className="absolute bottom-1.5 right-1.5 bg-primary text-white text-[10px] font-bold px-1.5 py-0.5 rounded flex items-center gap-1 shadow-sm" title={`Персонаж опознан как: ${knownActor.characterDescription}`}>
+                        <span className="material-symbols-outlined text-xs">verified_user</span>
+                        <span className="max-w-[60px] truncate hidden group-hover:inline">{knownActor.characterDescription}</span>
+                    </div>
+                )}
                 
                  {hasVersions && (
                     <div className="absolute inset-0 flex items-center justify-between p-1 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">

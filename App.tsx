@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect, useCallback, useMemo, useRef, useLayoutEffect } from 'react';
-import type { Frame, Project, Asset, StorySettings, IntegrationConfig, Sketch, Note, Position, Size, AppSettings } from './types';
+import type { Frame, Project, Asset, StorySettings, IntegrationConfig, Sketch, Note, Position, Size, AppSettings, ActorDossier } from './types';
 import { initialFrames, initialAssets } from './constants';
 import { projectService } from './services/projectService';
 import { settingsService } from './services/settingsService';
@@ -24,7 +24,7 @@ import { ConfirmationModal } from './components/ConfirmationModal';
 import { SettingsModal } from './components/SettingsModal';
 import { SimpleImageViewerModal } from './components/SimpleImageViewerModal';
 import { generateImageFromPrompt, adaptImageToStory, adaptImageAspectRatio, createStoryFromAssets, analyzeStory, generateSinglePrompt, generateImageInContext, editImage } from './services/geminiService';
-import { fileToBase64, dataUrlToFile, fetchCorsImage, getImageDimensions } from './utils/fileUtils';
+import { fileToBase64, dataUrlToFile, fetchCorsImage, getImageDimensions, calculateFileHash } from './utils/fileUtils';
 import { StoryGenerationUpdate } from './services/geminiService';
 
 declare global {
@@ -52,6 +52,8 @@ const hydrateFrame = async (frameData: Omit<Frame, 'file'>): Promise<Frame> => {
     const activeImageUrl = frameWithVersions.imageUrls[frameWithVersions.activeVersionIndex];
     
     let file: File;
+    let sourceHash = frameData.sourceHash;
+
     try {
         if (activeImageUrl.startsWith('data:')) {
             file = dataUrlToFile(activeImageUrl, `story-frame-${frameData.id}.png`);
@@ -59,13 +61,17 @@ const hydrateFrame = async (frameData: Omit<Frame, 'file'>): Promise<Frame> => {
             const blob = await fetchCorsImage(activeImageUrl);
             file = new File([blob], `story-frame-${frameData.id}.png`, { type: blob.type });
         }
+        // Calculate hash if missing (e.g. loaded from old project or hydration needs refresh)
+        if (!sourceHash) {
+            sourceHash = await calculateFileHash(file);
+        }
     } catch (e) {
         console.error(`Could not create file for frame image ${frameData.id}:`, e);
         // Create an empty placeholder file on failure
         file = new File([], `failed-frame-${frameData.id}.txt`, {type: 'text/plain'});
     }
 
-    return { ...frameWithVersions, file };
+    return { ...frameWithVersions, file, sourceHash };
 };
 
 
@@ -287,6 +293,8 @@ export default function App() {
     const [localAssets, setLocalAssets] = useState<Asset[]>([]);
     const [localSketches, setLocalSketches] = useState<Sketch[]>([]);
     const [localNotes, setLocalNotes] = useState<Note[]>([]);
+    const [localDossiers, setLocalDossiers] = useState<ActorDossier[]>([]);
+
 
     const [selectedAssetIds, setSelectedAssetIds] = useState<Set<string>>(new Set());
     const [storySettings, setStorySettings] = useState<StorySettings>(initialStorySettings);
@@ -402,6 +410,7 @@ export default function App() {
                 setLocalSketches(hydratedSketches);
 
                 setLocalNotes(currentProject.notes || []);
+                setLocalDossiers(currentProject.dossiers || []);
 
                 const hydratedAssets: Asset[] = await Promise.all(
                     (currentProject.assets || []).map(async (asset) => {
@@ -430,6 +439,7 @@ export default function App() {
             setLocalAssets([]);
             setLocalSketches([]);
             setLocalNotes([]);
+            setLocalDossiers([]);
         }
     }, [currentProject]);
 
@@ -450,6 +460,11 @@ export default function App() {
     
     const updateNotes = useCallback((updater: React.SetStateAction<Note[]>) => {
         setLocalNotes(updater);
+        setHasUnsavedChanges(true);
+    }, []);
+
+    const updateDossiers = useCallback((updater: React.SetStateAction<ActorDossier[]>) => {
+        setLocalDossiers(updater);
         setHasUnsavedChanges(true);
     }, []);
     
@@ -480,6 +495,7 @@ export default function App() {
             assets: [],
             sketches: [],
             notes: [],
+            dossiers: [],
             lastModified: Date.now(),
         };
 
@@ -519,7 +535,15 @@ export default function App() {
         const framesToSave = localFrames.map(({ file, ...rest }) => ({ ...rest, isGenerating: undefined, generatingMessage: undefined }));
         const assetsToSave = localAssets.map(({ file, ...rest }) => rest);
         const sketchesToSave = localSketches.map(({ file, ...rest }) => rest);
-        const updatedProject = { ...currentProject, frames: framesToSave, assets: assetsToSave, sketches: sketchesToSave, notes: localNotes, lastModified: Date.now() };
+        const updatedProject = { 
+            ...currentProject, 
+            frames: framesToSave, 
+            assets: assetsToSave, 
+            sketches: sketchesToSave, 
+            notes: localNotes, 
+            dossiers: localDossiers,
+            lastModified: Date.now() 
+        };
         const updatedProjects = projects.map(p => p.id === currentProject.id ? updatedProject : p);
         
         setProjects(updatedProjects);
@@ -539,6 +563,7 @@ export default function App() {
             assets: localAssets.map(({ file, ...rest }) => rest),
             sketches: localSketches.map(({ file, ...rest}) => rest),
             notes: localNotes,
+            dossiers: localDossiers,
             lastModified: Date.now(),
         };
         
@@ -655,9 +680,9 @@ export default function App() {
     const handleSaveFrameDetails = useCallback((id: string, newPrompt: string, newDuration: number) => { updateFrames(prev => prev.map(f => f.id === id ? { ...f, prompt: newPrompt, duration: Math.max(0.25, newDuration), isTransition: false } : f)); if (detailedFrame?.id === id) { setDetailedFrame(prev => prev ? { ...prev, prompt: newPrompt, duration: newDuration } : null); } }, [detailedFrame, updateFrames]);
     const handleDeleteFrame = useCallback((id: string) => { updateFrames(prev => prev.filter(f => f.id !== id)); }, [updateFrames]);
     const handleReorderFrame = useCallback((dragIndex: number, dropIndex: number) => { updateFrames(prev => { const c = [...prev]; const [d] = c.splice(dragIndex, 1); const e = dragIndex < dropIndex ? dropIndex - 1 : dropIndex; c.splice(e, 0, d); return c; }); }, [updateFrames]);
-    const handleAddFrame = useCallback(async (index: number, type: 'upload' | 'generate') => { if (type === 'upload') { const i = document.createElement('input'); i.type = 'file'; i.accept = 'image/*'; i.onchange = async (e) => { const f = (e.target as HTMLInputElement).files?.[0]; if (f) { try { const b = await fileToBase64(f); const n: Frame = { id: crypto.randomUUID(), imageUrls: [b], activeVersionIndex: 0, prompt: '', duration: 3.0, file: f, aspectRatio: isAspectRatioLocked ? globalAspectRatio : '16:9' }; updateFrames(p => { const nc = [...p]; nc.splice(index, 0, n); return nc; }); setTimeout(() => { setLocalFrames(c => { const ni = c.findIndex(fr => fr.id === n.id); if (ni > -1 && (ni > 0 || ni < c.length - 1)) { setAdaptingFrame(c[ni]); } return c; }); }, 0); } catch (err) { console.error("Error reading file:", err); alert("Could not load image file."); } } }; i.click(); } else if (type === 'generate') { setAdvancedGenerateModalConfig({ mode: 'generate', insertIndex: index }); setIsAdvancedGenerateModalOpen(true); } }, [updateFrames, isAspectRatioLocked, globalAspectRatio]);
-    const handleAddFramesFromAssets = useCallback((assetIds: string[], index: number) => { const a = localAssets.filter(as => assetIds.includes(as.id)); if (a.length === 0) return; const o = assetIds.map(id => a.find(as => as.id === id)).filter((as): as is Asset => !!as); const n: Frame[] = o.map(as => ({ id: crypto.randomUUID(), imageUrls: [as.imageUrl], activeVersionIndex: 0, prompt: '', duration: 3.0, file: as.file, aspectRatio: isAspectRatioLocked ? globalAspectRatio : '16:9' })); updateFrames(p => { const c = [...p]; c.splice(index, 0, ...n); return c; }); const f = n[0]; if (f) { setTimeout(() => { setLocalFrames(c => { const ni = c.findIndex(fr => fr.id === f.id); if (ni > -1 && (ni > 0 || ni < c.length - n.length)) { setAdaptingFrame(c[ni]); } return c; }); }, 0); } }, [localAssets, updateFrames, isAspectRatioLocked, globalAspectRatio]);
-    const handleAddFramesFromFiles = useCallback(async (files: File[], index: number) => { const n = await Promise.all(files.map(async f => ({ id: crypto.randomUUID(), imageUrls: [await fileToBase64(f)], activeVersionIndex: 0, prompt: '', duration: 3.0, file: f, aspectRatio: isAspectRatioLocked ? globalAspectRatio : '16:9' }))); updateFrames(p => { const c = [...p]; c.splice(index, 0, ...n); return c; }); const fi = n[0]; if (fi) { setTimeout(() => { setLocalFrames(c => { const ni = c.findIndex(fr => fr.id === fi.id); if (ni > -1 && (ni > 0 || ni < c.length - n.length)) { setAdaptingFrame(c[ni]); } return c; }); }, 0); } }, [updateFrames, isAspectRatioLocked, globalAspectRatio]);
+    const handleAddFrame = useCallback(async (index: number, type: 'upload' | 'generate') => { if (type === 'upload') { const i = document.createElement('input'); i.type = 'file'; i.accept = 'image/*'; i.onchange = async (e) => { const f = (e.target as HTMLInputElement).files?.[0]; if (f) { try { const b = await fileToBase64(f); const hash = await calculateFileHash(f); const n: Frame = { id: crypto.randomUUID(), imageUrls: [b], activeVersionIndex: 0, prompt: '', duration: 3.0, file: f, aspectRatio: isAspectRatioLocked ? globalAspectRatio : '16:9', sourceHash: hash }; updateFrames(p => { const nc = [...p]; nc.splice(index, 0, n); return nc; }); setTimeout(() => { setLocalFrames(c => { const ni = c.findIndex(fr => fr.id === n.id); if (ni > -1 && (ni > 0 || ni < c.length - 1)) { setAdaptingFrame(c[ni]); } return c; }); }, 0); } catch (err) { console.error("Error reading file:", err); alert("Could not load image file."); } } }; i.click(); } else if (type === 'generate') { setAdvancedGenerateModalConfig({ mode: 'generate', insertIndex: index }); setIsAdvancedGenerateModalOpen(true); } }, [updateFrames, isAspectRatioLocked, globalAspectRatio]);
+    const handleAddFramesFromAssets = useCallback((assetIds: string[], index: number) => { const a = localAssets.filter(as => assetIds.includes(as.id)); if (a.length === 0) return; const o = assetIds.map(id => a.find(as => as.id === id)).filter((as): as is Asset => !!as); const nPromise = o.map(async as => { const hash = await calculateFileHash(as.file); return { id: crypto.randomUUID(), imageUrls: [as.imageUrl], activeVersionIndex: 0, prompt: '', duration: 3.0, file: as.file, aspectRatio: isAspectRatioLocked ? globalAspectRatio : '16:9', sourceHash: hash }; }); Promise.all(nPromise).then(n => { updateFrames(p => { const c = [...p]; c.splice(index, 0, ...n); return c; }); const f = n[0]; if (f) { setTimeout(() => { setLocalFrames(c => { const ni = c.findIndex(fr => fr.id === f.id); if (ni > -1 && (ni > 0 || ni < c.length - n.length)) { setAdaptingFrame(c[ni]); } return c; }); }, 0); } }); }, [localAssets, updateFrames, isAspectRatioLocked, globalAspectRatio]);
+    const handleAddFramesFromFiles = useCallback(async (files: File[], index: number) => { const n = await Promise.all(files.map(async f => { const hash = await calculateFileHash(f); return { id: crypto.randomUUID(), imageUrls: [await fileToBase64(f)], activeVersionIndex: 0, prompt: '', duration: 3.0, file: f, aspectRatio: isAspectRatioLocked ? globalAspectRatio : '16:9', sourceHash: hash } })); updateFrames(p => { const c = [...p]; c.splice(index, 0, ...n); return c; }); const fi = n[0]; if (fi) { setTimeout(() => { setLocalFrames(c => { const ni = c.findIndex(fr => fr.id === fi.id); if (ni > -1 && (ni > 0 || ni < c.length - n.length)) { setAdaptingFrame(c[ni]); } return c; }); }, 0); } }, [updateFrames, isAspectRatioLocked, globalAspectRatio]);
     
     const handleGenerateFrame = async (prompt: string, insertIndex: number) => {
         setIsAdvancedGenerateModalOpen(false);
@@ -691,7 +716,8 @@ export default function App() {
             );
             
             const newFile = dataUrlToFile(imageUrl, `generated-frame-${Date.now()}.png`);
-            
+            const hash = await calculateFileHash(newFile);
+
             updateFrames(prev => prev.map(f => {
                 if (f.id === placeholderId) {
                     return {
@@ -702,6 +728,7 @@ export default function App() {
                         file: newFile,
                         isGenerating: false,
                         generatingMessage: undefined,
+                        sourceHash: hash
                     };
                 }
                 return f;
@@ -721,7 +748,8 @@ export default function App() {
 
     const handleApplyEdit = useCallback(async (targetId: string, newImageUrl: string, newPrompt: string) => {
         const newFile = dataUrlToFile(newImageUrl, `edited-${targetId}-${Date.now()}.png`);
-        
+        const hash = await calculateFileHash(newFile);
+
         // Check if it's a sketch
         const sketchIndex = localSketches.findIndex(s => s.id === targetId);
         if (sketchIndex !== -1) {
@@ -753,6 +781,7 @@ export default function App() {
                         file: newFile,
                         prompt: newPrompt,
                         isTransition: false,
+                        sourceHash: hash
                     };
                 }
                 return f;
@@ -857,12 +886,14 @@ export default function App() {
                     } else if (update.type === 'frame') {
                         // When a frame is ready, replace the placeholder with the real data
                         const newFile = dataUrlToFile(update.frame.imageUrls[0], `story-frame-${update.frame.id}.png`);
+                        const hash = await calculateFileHash(newFile);
                         const finalFrame: Frame = {
                             ...update.frame,
                             file: newFile,
                             isGenerating: false,
                             generatingMessage: undefined,
                             aspectRatio: isAspectRatioLocked ? globalAspectRatio : (update.frame.aspectRatio || '16:9'),
+                            sourceHash: hash
                         };
                         updateFrames(prev => prev.map(f => f.id === targetId ? finalFrame : f));
                     }
@@ -907,21 +938,43 @@ export default function App() {
         }
 
         if (frameToAdapt) {
-             updateFrames(prev => prev.map(f => f.id === targetId ? { ...f, isGenerating: true, generatingMessage: 'Адаптация к сюжету...' } : f));
+             updateFrames(prev => prev.map(f => f.id === targetId ? { ...f, isGenerating: true, generatingMessage: 'Поиск в картотеке...' } : f));
 
             try {
-                const currentIndex = localFrames.findIndex(f => f.id === targetId);
-                const leftFrame = currentIndex > 0 ? localFrames[currentIndex - 1] : null;
-                const rightFrame = currentIndex < localFrames.length - 1 ? localFrames[currentIndex + 1] : null;
+                // --- IDENTITY CHECK LOGIC ---
+                let knownCharacterRef: { originalUrl: string, adaptedUrl: string, characterDescription: string } | undefined = undefined;
+                let fileHash = frameToAdapt.sourceHash || '';
 
+                if (frameToAdapt.file && !fileHash) {
+                     fileHash = await calculateFileHash(frameToAdapt.file);
+                }
+                
+                if (fileHash) {
+                     const dossier = localDossiers.find(d => d.sourceHash === fileHash);
+                     if (dossier) {
+                        console.log("Dossier found for this character!", dossier);
+                        knownCharacterRef = {
+                            originalUrl: '', // Not needed for strict ref, dossier hash is enough
+                            adaptedUrl: dossier.referenceImageUrl,
+                            characterDescription: dossier.characterDescription,
+                        };
+                        updateFrames(prev => prev.map(f => f.id === targetId ? { ...f, generatingMessage: `Персонаж опознан: ${dossier.characterDescription}. Адаптация...` } : f));
+                     } else {
+                        updateFrames(prev => prev.map(f => f.id === targetId ? { ...f, generatingMessage: 'Новый персонаж. Адаптация...' } : f));
+                     }
+                }
+
+                // Pass ALL frames to the service to understand the full story context
+                // Pass the dossier reference if found
                 const { imageUrl: newImageUrl, prompt: newPrompt } = await adaptImageToStory(
                     frameToAdapt,
-                    leftFrame,
-                    rightFrame,
-                    instruction
+                    localFrames,
+                    instruction,
+                    knownCharacterRef
                 );
 
                 const newFile = dataUrlToFile(newImageUrl, `adapted-${targetId}-${Date.now()}.png`);
+                const newHash = await calculateFileHash(newFile);
 
                 updateFrames(prev => prev.map(f => {
                     if (f.id === targetId) {
@@ -934,10 +987,39 @@ export default function App() {
                             file: newFile,
                             isGenerating: false,
                             generatingMessage: undefined,
+                            sourceHash: newHash
                         };
                     }
                     return f;
                 }));
+
+                // --- DOSSIER UPDATE ---
+                if (fileHash) {
+                    const newDescriptionMatch = newPrompt.match(/^(.*?)[.,]/); // Simple extraction or use full prompt
+                    const newDescription = newDescriptionMatch ? newDescriptionMatch[0] : "Character";
+
+                    const newDossier: ActorDossier = {
+                        sourceHash: fileHash,
+                        characterDescription: newDescription,
+                        referenceImageUrl: newImageUrl,
+                        lastUsed: Date.now(),
+                    };
+                    
+                    // Update or Add Dossier
+                    updateDossiers(prev => {
+                        const existingIdx = prev.findIndex(d => d.sourceHash === fileHash);
+                        if (existingIdx >= 0) {
+                             // Optionally update description if it's better, or keep old one.
+                             // For now, we keep the old reference to ensure stability, OR update if we want evolution.
+                             // Let's update timestamp.
+                             const updated = [...prev];
+                             updated[existingIdx] = { ...updated[existingIdx], lastUsed: Date.now() };
+                             return updated;
+                        } else {
+                            return [...prev, newDossier];
+                        }
+                    });
+                }
 
             } catch (error) {
                 console.error("Failed to adapt frame to story:", error);
@@ -951,12 +1033,10 @@ export default function App() {
                  // Temporarily convert sketch to frame-like object for the service
                  const tempFrame = sketchToFrame(sketchToAdapt);
                  
-                 // Since sketches are free-floating, we pass null for neighbors.
-                 // The service will rely on manual instruction or just re-styling the image itself.
+                 // For sketches, we pass an empty array as context since they are not on the timeline yet.
                  const { imageUrl: newImageUrl, prompt: newPrompt } = await adaptImageToStory(
                     tempFrame,
-                    null, 
-                    null,
+                    [], 
                     instruction || "Улучшить качество и стиль"
                 );
 
@@ -979,7 +1059,7 @@ export default function App() {
                  alert(`Ошибка при адаптации наброска: ${error instanceof Error ? error.message : String(error)}`);
             }
         }
-    }, [localFrames, localSketches, updateFrames, updateSketches]);
+    }, [localFrames, localSketches, updateFrames, updateSketches, localDossiers, updateDossiers]);
 
     const handleGlobalAspectRatioChange = (newRatio: string) => { setGlobalAspectRatio(newRatio); if (isAspectRatioLocked) { updateFrames(prev => prev.map(f => ({ ...f, aspectRatio: newRatio }))); } };
     const handleToggleAspectRatioLock = () => { const n = !isAspectRatioLocked; setIsAspectRatioLocked(n); if (n) { updateFrames(prev => prev.map(f => ({...f, aspectRatio: globalAspectRatio }))); } };
@@ -1001,6 +1081,7 @@ export default function App() {
             );
     
             const newFile = dataUrlToFile(newImageUrl, `adapted-ar-${frameId}-${Date.now()}.png`);
+            const hash = await calculateFileHash(newFile);
     
             updateFrames(prev => prev.map(f => {
                 if (f.id === frameId) {
@@ -1013,6 +1094,7 @@ export default function App() {
                         file: newFile,
                         isGenerating: false,
                         generatingMessage: undefined,
+                        sourceHash: hash
                     };
                 }
                 return f;
@@ -1053,6 +1135,7 @@ export default function App() {
                 );
     
                 const newFile = dataUrlToFile(newImageUrl, `adapted-ar-all-${frameId}-${Date.now()}.png`);
+                const hash = await calculateFileHash(newFile);
     
                 updateFrames(prev => prev.map(f => {
                     if (f.id === frameId) {
@@ -1065,7 +1148,8 @@ export default function App() {
                             file: newFile,
                             isGenerating: false,
                             generatingMessage: undefined,
-                            aspectRatio: globalAspectRatio
+                            aspectRatio: globalAspectRatio,
+                            sourceHash: hash
                         };
                     }
                     return f;
@@ -1084,7 +1168,7 @@ export default function App() {
     const handleOpenAddFrameMenu = useCallback((index: number, rect: DOMRect) => { setAddFrameMenu({ index, rect }); }, []);
     const handleCloseAddFrameMenu = useCallback(() => { setAddFrameMenu(null); }, []);
     const handleDuplicateFrame = async (frameId: string) => { const i = localFrames.findIndex(f => f.id === frameId); if (i === -1) return; const d = localFrames[i]; const n: Frame = { ...d, id: crypto.randomUUID() }; updateFrames(p => { const nc = [...p]; nc.splice(i + 1, 0, n); return nc; }); };
-    const handleReplaceFrame = (frameId: string) => { const i = document.createElement('input'); i.type = 'file'; i.accept = 'image/*'; i.onchange = async (e) => { const f = (e.target as HTMLInputElement).files?.[0]; if (f) { try { const b = await fileToBase64(f); updateFrames(p => p.map(fr => { if (fr.id === frameId) { const niu = [b]; return { ...fr, imageUrls: niu, activeVersionIndex: 0, file: f }; } return fr; })); } catch (err) { console.error("Error replacing file:", err); alert("Could not load image file for replacement."); } } }; i.click(); };
+    const handleReplaceFrame = (frameId: string) => { const i = document.createElement('input'); i.type = 'file'; i.accept = 'image/*'; i.onchange = async (e) => { const f = (e.target as HTMLInputElement).files?.[0]; if (f) { try { const b = await fileToBase64(f); const hash = await calculateFileHash(f); updateFrames(p => p.map(fr => { if (fr.id === frameId) { const niu = [b]; return { ...fr, imageUrls: niu, activeVersionIndex: 0, file: f, sourceHash: hash }; } return fr; })); } catch (err) { console.error("Error replacing file:", err); alert("Could not load image file for replacement."); } } }; i.click(); };
     const handleVersionChange = useCallback(async (frameId: string, direction: 'next' | 'prev') => {
         const frameIndex = localFrames.findIndex(f => f.id === frameId);
         if (frameIndex === -1) return;
@@ -1098,6 +1182,7 @@ export default function App() {
     
         const newImageUrl = frame.imageUrls[newVersionIndex];
         let newFile: File;
+        let sourceHash = frame.sourceHash;
         try {
             if (newImageUrl.startsWith('data:')) {
                 newFile = dataUrlToFile(newImageUrl, `frame-${frame.id}-v${newVersionIndex}.png`);
@@ -1105,6 +1190,7 @@ export default function App() {
                 const blob = await fetchCorsImage(newImageUrl);
                 newFile = new File([blob], `frame-${frame.id}-v${newVersionIndex}.png`, { type: blob.type });
             }
+             sourceHash = await calculateFileHash(newFile);
         } catch (e) {
             console.error(`Could not create file for frame version ${frame.id}:`, e);
             newFile = new File([], `failed-frame-${frame.id}.txt`, { type: 'text/plain' });
@@ -1116,6 +1202,7 @@ export default function App() {
                 ...frame,
                 activeVersionIndex: newVersionIndex,
                 file: newFile,
+                sourceHash: sourceHash
             };
             return updatedFrames;
         });
@@ -1155,12 +1242,13 @@ export default function App() {
         
         try { 
             const f = dataUrlToFile(result.imageUrl, `integrated-${t}-${Date.now()}.png`); 
+            const hash = await calculateFileHash(f);
             
             // Try update frame
             let updated = false;
             const frameIndex = localFrames.findIndex(fr => fr.id === t);
             if (frameIndex !== -1) {
-                 updateFrames(p => p.map(fr => { if (fr.id === t) { const niu = [...fr.imageUrls, result.imageUrl]; return { ...fr, imageUrls: niu, activeVersionIndex: niu.length - 1, file: f, prompt: result.prompt, isTransition: false, isGenerating: false }; } return fr; }));
+                 updateFrames(p => p.map(fr => { if (fr.id === t) { const niu = [...fr.imageUrls, result.imageUrl]; return { ...fr, imageUrls: niu, activeVersionIndex: niu.length - 1, file: f, prompt: result.prompt, isTransition: false, isGenerating: false, sourceHash: hash }; } return fr; }));
                  updated = true;
             }
 
@@ -1611,9 +1699,11 @@ export default function App() {
         updateNotes(prev => prev.filter(n => n.id !== noteId));
     };
 
-    const handleAddFrameFromSketch = useCallback((sketchId: string, index: number) => {
+    const handleAddFrameFromSketch = useCallback(async (sketchId: string, index: number) => {
         const sketch = localSketches.find(s => s.id === sketchId);
         if (!sketch || !sketch.file) return;
+
+        const hash = await calculateFileHash(sketch.file);
 
         const newFrame: Frame = {
             id: crypto.randomUUID(),
@@ -1623,6 +1713,7 @@ export default function App() {
             duration: 3.0,
             file: sketch.file,
             aspectRatio: sketch.aspectRatio,
+            sourceHash: hash
         };
         
         updateFrames(prev => {
@@ -1721,6 +1812,7 @@ export default function App() {
                             isAspectRatioLocked={isAspectRatioLocked}
                             sketchDropTargetIndex={sketchDropTargetIndex}
                             isAnalyzingStory={isAnalyzingStory}
+                            dossiers={localDossiers}
                             onGlobalAspectRatioChange={handleGlobalAspectRatioChange}
                             onToggleAspectRatioLock={handleToggleAspectRatioLock}
                             onFrameAspectRatioChange={handleFrameAspectRatioChange}

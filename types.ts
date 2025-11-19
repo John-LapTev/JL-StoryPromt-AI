@@ -1,3 +1,4 @@
+
 export interface Frame {
   id: string;
   imageUrls: string[]; // Can be a URL or a base64 string
@@ -9,6 +10,7 @@ export interface Frame {
   isGenerating?: boolean;
   generatingMessage?: string;
   aspectRatio?: string; // e.g., '16:9', '4:3'
+  sourceHash?: string; // Unique digital fingerprint of the source file
 }
 
 export interface Asset {
@@ -45,6 +47,12 @@ export interface Note {
   size: Size;
 }
 
+export interface ActorDossier {
+    sourceHash: string; // SHA-256 of the original uploaded file
+    characterDescription: string; // The "role" description (e.g. "Duck detective")
+    referenceImageUrl: string; // The best adapted image URL to use as a style anchor
+    lastUsed: number; // Timestamp
+}
 
 export interface Project {
   id: string;
@@ -54,6 +62,7 @@ export interface Project {
   assets: Omit<Asset, 'file'>[];
   sketches: Omit<Sketch, 'file'>[];
   notes: Note[];
+  dossiers?: ActorDossier[]; // The "Director's Folder" for character consistency
   lastModified: number; // Unix timestamp
 }
 
