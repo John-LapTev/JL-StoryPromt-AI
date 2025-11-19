@@ -338,53 +338,42 @@ export async function generateImageInContext(
         // --- STEP 1: Generate the image ---
         const imageGenParts: any[] = [];
         
-        let instructionText = `Ты — эксперт-художник по раскадровке.`;
+        let instructionText = `You are a storyboard artist. Create a new image based on the prompt and context.`;
 
-        // Add Current Frame (Reference for regeneration/consistency)
+        // Add Current Frame (IDENTITY REFERENCE for regeneration)
         if (currentFrame) {
              try {
                 const { mimeType, data } = await urlOrFileToBase64(currentFrame);
                 imageGenParts.push({ inlineData: { mimeType, data } });
-                instructionText += `\n\n[CURRENT IMAGE REFERENCE]
-                Используй это изображение как ГЛАВНЫЙ референс.
-                ВАЖНО: Сохраняй основных персонажей, объекты и композицию из этого изображения, если только промт явно не требует их замены.
-                Задача: Перегенерируй этот кадр, улучшив качество и детали в соответствии с промтом "${userPrompt}".`;
+                instructionText += `\n\n[IDENTITY REFERENCE]
+                This is the SUBJECT of the scene.
+                Use the recognizable features (face, clothes, shape) from this image.
+                Do NOT just interpolate between neighbors. Refine THIS subject based on the prompt: "${userPrompt}".`;
             } catch (e) {
-                 // Ignore missing image in current frame (it might be an empty placeholder we are trying to fill)
                  console.warn("Current frame image missing, generating from scratch.");
-                 instructionText += `\n\nСоздай новый кадр на основе промта пользователя: "${userPrompt}"`;
             }
-        } else {
-             instructionText += `\n\nСоздай новый кадр. Промт пользователя: "${userPrompt}"`;
         }
-
-        instructionText += `\n\nЦель — сделать так, чтобы этот кадр без проблем вписался между двумя существующими кадрами в истории (если они есть).
-    
-    Твоя задача:
-    1.  Проанализируй предоставленный контекст (кадры слева и справа).
-    2.  Сгенерируй изображение, которое является прямой визуальной репрезентацией промта.
-    3.  Критически важно: стиль должен быть совместим с контекстными кадрами.
-    `;
+        
+        instructionText += `\n\n[STYLE REFERENCE]
+        The new image must match the visual style (lighting, rendering technique) of the neighboring frames below (if provided).`;
 
         if (leftFrame) {
             try {
                 const { mimeType, data } = await urlOrFileToBase64(leftFrame);
                 imageGenParts.push({ inlineData: { mimeType, data } });
-                instructionText += `\nКонтекст из ЛЕВОГО кадра: Промт был "${leftFrame.prompt || 'без промта'}". Изображение предоставлено.`;
-            } catch (e) {
-                if (leftFrame.prompt) instructionText += `\nКонтекст из ЛЕВОГО кадра: Промт был "${leftFrame.prompt}". (Изображение недоступно).`;
-            }
+                instructionText += `\n[CONTEXT LEFT]: Previous frame (Style Ref).`;
+            } catch (e) {}
         }
         if (rightFrame) {
             try {
                 const { mimeType, data } = await urlOrFileToBase64(rightFrame);
                 imageGenParts.push({ inlineData: { mimeType, data } });
-                instructionText += `\nКонтекст СПРАВА (следующий кадр): Промт был "${rightFrame.prompt || 'без промта'}". Изображение предоставлено.`;
-            } catch (e) {
-                 if (rightFrame.prompt) instructionText += `\nКонтекст из ПРАВОГО кадра: Промт был "${rightFrame.prompt}". (Изображение недоступно).`;
-            }
+                instructionText += `\n[CONTEXT RIGHT]: Next frame (Style Ref).`;
+            } catch (e) {}
         }
         
+        instructionText += `\n\n[TASK]: Generate a high-quality storyboard frame for prompt: "${userPrompt}".`;
+
         const imageGenResponse = await ai.models.generateContent({
             model: 'gemini-2.5-flash-image',
             contents: { parts: [{ text: instructionText }, ...imageGenParts] },
@@ -412,15 +401,7 @@ export async function generateImageInContext(
 
         // --- STEP 2: Generate a prompt for the new image ---
         let promptGenText = `Ты — профессиональный художник-раскадровщик. Проанализируй это изображение, созданное по запросу: "${userPrompt}".
-
-    Контекст:`;
-        if (leftFrame?.prompt) {
-            promptGenText += `\n- Промт предыдущего кадра: "${leftFrame.prompt}"`;
-        }
-        if (rightFrame?.prompt) {
-            promptGenText += `\n- Промт следующего кадра: "${rightFrame.prompt}"`;
-        }
-        promptGenText += `\n\nСоздай краткий, но описательный промт для нового изображения на русском языке для генерации видео. Сфокусируйся на действии, движении камеры и настроении. Выведи только текст промта.`;
+        Создай краткий, но описательный промт для нового изображения на русском языке для генерации видео. Сфокусируйся на действии, движении камеры и настроении. Выведи только текст промта.`;
         
         const promptGenResponse = await ai.models.generateContent({
             model: 'gemini-2.5-flash',
@@ -430,7 +411,6 @@ export async function generateImageInContext(
         const newPrompt = promptGenResponse.text.trim();
         
         if (!newPrompt) {
-            console.warn("AI failed to generate a descriptive prompt. Falling back to user input.");
             return { imageUrl: newImageUrl, prompt: userPrompt };
         }
 
@@ -443,13 +423,11 @@ export async function generateImageInContext(
 
 export async function regenerateFrameImage(frame: Frame, allFrames: Frame[]): Promise<{ imageUrl: string; prompt: string }> {
     try {
-        // Reuse existing logic to generate image based on current prompt and neighbors
+        // Reuse existing logic but pass 'frame' as currentFrame/IdentityReference
         const currentIndex = allFrames.findIndex(f => f.id === frame.id);
         const leftFrame = currentIndex > 0 ? allFrames[currentIndex - 1] : null;
         const rightFrame = currentIndex < allFrames.length - 1 ? allFrames[currentIndex + 1] : null;
 
-        // Use the frame's existing prompt as the "user prompt"
-        // Pass 'frame' as the currentFrame to use it as a visual anchor/reference for refinement
         return await generateImageInContext(frame.prompt, leftFrame, rightFrame, frame);
     } catch (error) {
         handleApiError(error);
@@ -606,16 +584,19 @@ export async function* createStoryFromAssets(
     }
 }
 
-// Define interface for the Director's analysis return
+// Define interface for the Director's analysis return matching the user's schema
 interface DirectorAnalysis {
-    storyAnalysis: string;
-    subjectAnalysis: string;
+    storyStyle: string;
+    worldRules: string;
     subjectType: 'character' | 'object' | 'location';
-    roleLabel: string;
+    roleLabel: string; // Short label
+    subjectIdentity: string;
+    transformation: string;
+    narrativePosition: string;
+    sceneAction: string;
     visualAnchorIndex: number | null;
-    scenarioBridge: string;
+    visualDescription: string;
     videoPrompt: string;
-    imageGenerationPrompt: string;
 }
 
 export async function adaptImageToStory(
@@ -632,8 +613,7 @@ export async function adaptImageToStory(
         // ---------------------------------------------------------------------------
         const targetIndex = allFrames.findIndex(f => f.id === frameToAdapt.id);
         
-        // Simple helper to get image data safely
-        const getFrameData = async (f: Frame) => {
+        const getFrameData = async (f: Frame | { imageUrl: string }) => {
             try {
                 const { mimeType, data } = await urlOrFileToBase64(f);
                 return { inlineData: { mimeType, data } };
@@ -645,80 +625,78 @@ export async function adaptImageToStory(
         const directorContentParts: any[] = [];
         
         // 1. Add Story Context Frames (excluding the target one)
-        // We iterate through ALL frames to give the AI the full "Story Arc".
         for (let i = 0; i < allFrames.length; i++) {
             const frame = allFrames[i];
             if (frame.id === frameToAdapt.id) {
-                directorContentParts.push({ text: `[SCENE ${i + 1} - TARGET INSERTION POINT]` });
-                directorContentParts.push({ text: "(This is where the new subject needs to be inserted)" });
+                directorContentParts.push({ text: `[FRAME ${i + 1} - TARGET INSERTION POINT]` });
             } else {
-                directorContentParts.push({ text: `[SCENE ${i + 1} - STORY CONTEXT]` });
-                // Only push image data if it exists, otherwise just push prompt
+                directorContentParts.push({ text: `[FRAME ${i + 1}]` });
                 const imageData = await getFrameData(frame);
-                if (imageData) {
-                    directorContentParts.push(imageData);
-                }
-                if (frame.prompt) {
-                    directorContentParts.push({ text: `Prompt: "${frame.prompt}"` });
-                }
+                if (imageData) directorContentParts.push(imageData);
+                if (frame.prompt) directorContentParts.push({ text: `Prompt: "${frame.prompt}"` });
             }
         }
 
-        // 2. Add the Subject (The "Alien" Image - STEP 2)
+        // 2. Add the Subject (The "Alien" Image)
         directorContentParts.push({ text: `[SUBJECT IMAGE TO ADAPT]` });
         const subjectImageData = await getFrameData(frameToAdapt);
         if (subjectImageData) {
             directorContentParts.push(subjectImageData);
         }
 
-        // 3. Director System Instruction
+        // 3. Director System Instruction (Following User's Algorithm)
         const systemInstruction = `
-        You are a Visionary Film Director and Screenwriter.
-        
-        YOUR GOAL: Seamlessly integrate the [SUBJECT IMAGE] into the [STORY CONTEXT] at the [TARGET INSERTION POINT].
-        
-        EXECUTE THE FOLLOWING 5-STEP PROCESS:
-        
-        STEP 1: ANALYZE THE STORY (Global Context & Flow)
-        - Analyze the visual style and narrative arc.
-        
-        STEP 2: ANALYZE THE SUBJECT
-        - Identify the MAIN subject in the [SUBJECT IMAGE].
-        - Classify it as 'character', 'object' (like chips, a car, a gun), or 'location'.
-        - Assign a 'roleLabel': A short, 2-3 word identifier for the UI badge (e.g., "Blue Chips", "Detective", "Spooky Cave").
-        
-        STEP 3: VISUAL ANCHORS (Consistency Check)
-        - Look at previous frames. Has this EXACT object or character appeared before?
-        - If YES, provide the 'visualAnchorIndex' (the 0-based index of that frame). This is CRITICAL for objects like chips or specific props.
-        
-        STEP 4: CREATE A SCENARIO BRIDGE
-        - Invent a specific scene for [SCENE ${targetIndex + 1}].
-        - It MUST feature the Subject from Step 2.
-        - It MUST logically connect the scene Before and the scene After.
+        You are the DIRECTOR. Your goal is a seamless integration of the [SUBJECT IMAGE] into the story storyboard.
+
+        EXECUTE THE FOLLOWING TASKS:
+
+        TASK 1: WORLD ANALYSIS
+        - Review ALL frames. Determine the visual style (2D/3D, cartoon/realism), ontology (who inhabits it?), and physical rules.
+
+        TASK 2: SUBJECT CLASSIFICATION
+        - Analyze the [SUBJECT IMAGE].
+        - Type: 'character', 'object', or 'location'.
+        - Extract 'subjectIdentity': Key recognizable features (face, colors, clothes, branding).
+        - Generate 'roleLabel': Short 2-3 word tag (e.g., "Blue Chips", "Detective").
+
+        TASK 3: ONTOLOGICAL TRANSFORMATION (CRITICAL)
+        - Rule: IF world laws differ from subject, TRANSFORM the subject's form but KEEP features.
+        - Example: Realistic Photo of Cat -> World of Geometric Shapes -> Geometric Cat.
+        - Example: Cartoon Character -> Realistic World -> Realistic Human with cartoon's color palette.
+
+        TASK 4: NARRATIVE POSITION
+        - Analyze what happens BEFORE (Frames 1...N) and AFTER.
+        - Rule: Do not regress narrative flow (e.g., don't go back to a left location without transition).
+
+        TASK 5: SCENE ACTION
+        - Invent a logical action for this new frame at [TARGET INSERTION POINT].
+        - It MUST link the previous and next frames.
+        - The subject must perform an action fitting the story, NOT copying the photo's pose.
         ${manualInstruction ? `- USER OVERRIDE: "${manualInstruction}"` : ''}
-        
-        STEP 5: WRITE THE ARTIST PROMPT
-        - Write a highly descriptive prompt for an Image Generator.
-        - Explicitly describe the Subject (features, clothes) but in the Story's Style.
-        - Describe the Action defined in Step 4.
-        - Describe the Lighting/Mood of the Story.
-        
-        OUTPUT FORMAT (JSON):
+
+        TASK 6: VISUAL ANCHORS (CONSISTENCY CHECK)
+        - Scan previous frames. Is this exact object/character already there?
+        - IF YES: Return 'visualAnchorIndex' (0-based index).
+        ${knownCharacterReference ? `- NOTE: System indicates this subject matches a Dossier. Treat this as a Visual Anchor match.` : ''}
+
+        OUTPUT JSON:
         {
-          "storyAnalysis": "Brief summary of style and plot flow.",
-          "subjectAnalysis": "Brief description of the subject.",
+          "storyStyle": "Description of visual style",
+          "worldRules": "Ontological laws",
           "subjectType": "character" | "object" | "location",
-          "roleLabel": "Short label (2-3 words max)",
-          "visualAnchorIndex": number | null, 
-          "scenarioBridge": "Description of the invented scene logic.",
-          "videoPrompt": "Short action description for the timeline UI in RUSSIAN. MUST BE IN RUSSIAN.",
-          "imageGenerationPrompt": "Detailed prompt for the artist model."
+          "roleLabel": "Short tag (Russian)",
+          "subjectIdentity": "Recognizable features to keep",
+          "transformation": "How subject adapts to world",
+          "narrativePosition": "Context of insertion",
+          "sceneAction": "Invented action",
+          "visualAnchorIndex": number | null,
+          "visualDescription": "Technical prompt for the Artist (English)",
+          "videoPrompt": "Video prompt for UI (Russian)"
         }
         `;
 
         directorContentParts.push({ text: systemInstruction });
 
-        // Call Gemini Pro (The Director)
         const directorResponse = await ai.models.generateContent({
             model: 'gemini-3-pro-preview', 
             contents: { parts: directorContentParts },
@@ -727,70 +705,84 @@ export async function adaptImageToStory(
                 responseSchema: {
                     type: Type.OBJECT,
                     properties: {
-                        storyAnalysis: { type: Type.STRING },
-                        subjectAnalysis: { type: Type.STRING },
+                        storyStyle: { type: Type.STRING },
+                        worldRules: { type: Type.STRING },
                         subjectType: { type: Type.STRING, enum: ["character", "object", "location"] },
                         roleLabel: { type: Type.STRING },
+                        subjectIdentity: { type: Type.STRING },
+                        transformation: { type: Type.STRING },
+                        narrativePosition: { type: Type.STRING },
+                        sceneAction: { type: Type.STRING },
                         visualAnchorIndex: { type: Type.INTEGER, nullable: true },
-                        scenarioBridge: { type: Type.STRING },
+                        visualDescription: { type: Type.STRING },
                         videoPrompt: { type: Type.STRING },
-                        imageGenerationPrompt: { type: Type.STRING },
                     },
-                    required: ["storyAnalysis", "subjectAnalysis", "subjectType", "roleLabel", "scenarioBridge", "videoPrompt", "imageGenerationPrompt"],
+                    required: ["storyStyle", "subjectType", "roleLabel", "sceneAction", "visualDescription", "videoPrompt"],
                 },
             },
         });
 
         const directorOutput: DirectorAnalysis = JSON.parse(directorResponse.text.trim());
-        const { imageGenerationPrompt, videoPrompt, visualAnchorIndex } = directorOutput;
-
-        console.log("Director Analysis:", directorOutput);
-
+        const { visualDescription, videoPrompt, visualAnchorIndex } = directorOutput;
 
         // ---------------------------------------------------------------------------
-        // STEP 5: THE ARTIST (GENERATION)
+        // STEP 2: THE ARTIST (GENERATION)
         // ---------------------------------------------------------------------------
-        // We provide the Artist with:
-        // 1. The Prompt (from Director)
-        // 2. Style Reference (The Left Frame, or Right if Left is missing)
-        // 3. Subject Reference (The Original Image)
-        // 4. Visual Anchor Reference (If Director found one - VERY IMPORTANT for chips consistency)
+        // Strictly separating inputs as per "Three Categories" rule.
 
         const artistContentParts: any[] = [];
         
-        // Prompt is paramount
-        artistContentParts.push({ text: imageGenerationPrompt });
+        // 1. PROMPT (The generated visual description from Director)
+        artistContentParts.push({ text: `[TASK] Generate this scene: ${visualDescription}` });
 
-        // Style Reference (Priority: Previous frame -> Next frame)
+        // 2. STYLE REFERENCE (Neighboring frames)
+        // Ignore content, copy rendering.
         const styleRefFrame = targetIndex > 0 ? allFrames[targetIndex - 1] : (allFrames.length > 1 ? allFrames[targetIndex + 1] : null);
         if (styleRefFrame && styleRefFrame.id !== frameToAdapt.id) {
             const styleData = await getFrameData(styleRefFrame);
             if (styleData) {
-                 artistContentParts.push({ text: "[STYLE REFERENCE IMAGE]\nUse the art style, lighting, and rendering technique from this image. Ignore its subject."});
+                 artistContentParts.push({ text: `[STYLE REFERENCE]\nCOPY: Rendering technique, hatching, lighting, color palette.\nIGNORE: The characters and objects in this image.`});
                  artistContentParts.push(styleData);
             }
         }
 
-        // Subject Reference (The thing being adapted) - Treat as "Alien" that needs to be painted in
+        // 3. IDENTITY REFERENCE (The Uploaded Photo)
+        // Ignore style/pose, copy features.
         const subjectData = await getFrameData(frameToAdapt);
         if (subjectData) {
-             artistContentParts.push({ text: "[SUBJECT STRUCTURE REFERENCE]\nUse the structure, composition, and subject identity from this image. ADAPT it to the style above. Do NOT copy the realistic photo style."});
+             artistContentParts.push({ text: `[IDENTITY REFERENCE]\nEXTRACT: Recognizable features, face/shape, clothes, colors, branding.\nIGNORE: Realism, photo style, lighting, original pose.`});
              artistContentParts.push(subjectData);
         }
 
-        // Visual Anchor Reference (Object consistency)
-        if (visualAnchorIndex !== null && visualAnchorIndex !== undefined && visualAnchorIndex >= 0 && visualAnchorIndex < allFrames.length) {
+        // 4. VISUAL ANCHOR (The Consistency Guarantee)
+        // Copy 1:1
+        let anchorData = null;
+        if (knownCharacterReference) {
+             // Priority 1: Dossier reference (Already adapted version)
+             anchorData = await getFrameData({ imageUrl: knownCharacterReference.adaptedUrl });
+        } else if (visualAnchorIndex !== null && visualAnchorIndex !== undefined && visualAnchorIndex >= 0 && visualAnchorIndex < allFrames.length) {
+             // Priority 2: Found in timeline by Director
              const anchorFrame = allFrames[visualAnchorIndex];
-             // Only add if it's not the same as the style ref (to avoid duplicates/token waste)
              if (anchorFrame.id !== styleRefFrame?.id && anchorFrame.id !== frameToAdapt.id) {
-                 console.log("Adding Visual Anchor Frame:", visualAnchorIndex);
-                 const anchorData = await getFrameData(anchorFrame);
-                 if (anchorData) {
-                     artistContentParts.push({ text: "MUST LOOK EXACTLY LIKE THIS [VISUAL ANCHOR]:" });
-                     artistContentParts.push(anchorData);
-                 }
+                 anchorData = await getFrameData(anchorFrame);
              }
         }
+
+        if (anchorData) {
+            artistContentParts.push({ text: `[VISUAL ANCHOR]\nCRITICAL RULE: The subject MUST look EXACTLY like this image.\nCOPY: 1:1 features, colors, style details.` });
+            artistContentParts.push(anchorData);
+        }
+
+        // Final System Instruction to Artist
+        const artistInstruction = `
+        You are the ARTIST.
+        1. Take STYLE from [Style Reference].
+        2. Take IDENTITY from [Identity Reference].
+        3. IF [Visual Anchor] exists, copy subject appearance exactly from it.
+        4. RENDER the scene described in the TASK using the new Action/Pose.
+        5. DO NOT just filter the original photo. RE-DRAW it in the story's style.
+        `;
+        artistContentParts.push({ text: artistInstruction });
 
         const artistResponse = await ai.models.generateContent({
             model: 'gemini-2.5-flash-image',
@@ -801,8 +793,7 @@ export async function adaptImageToStory(
         });
 
         let newImageUrl: string | null = null;
-        
-        if (artistResponse.candidates && artistResponse.candidates.length > 0 && artistResponse.candidates[0].content && artistResponse.candidates[0].content.parts) {
+        if (artistResponse.candidates?.[0]?.content?.parts) {
             for (const part of artistResponse.candidates[0].content.parts) {
                 if (part.inlineData) {
                     newImageUrl = `data:${part.inlineData.mimeType};base64,${part.inlineData.data}`;

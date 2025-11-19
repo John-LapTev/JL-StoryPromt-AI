@@ -1058,7 +1058,7 @@ export default function App() {
                 if (fileHash && analysis) {
                      const newDossier: ActorDossier = {
                         sourceHash: fileHash,
-                        characterDescription: analysis.subjectAnalysis, // Detailed description
+                        characterDescription: analysis.subjectIdentity, // Detailed description
                         roleLabel: analysis.roleLabel, // Short label
                         type: analysis.subjectType, // Character/Object/Location
                         referenceImageUrl: newImageUrl, // Use the adapted one as the "Canon" look
