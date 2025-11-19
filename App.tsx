@@ -1165,10 +1165,10 @@ export default function App() {
     }, [localFrames, updateFrames]);
 
     const handleAdaptAllFramesAspectRatio = async () => {
-        if (!window.confirm(`Вы уверены, что хотите адаптировать все ${localFrames.length} кадров к соотношению сторон ${globalAspectRatio}? Это может занять некоторое время и использует ресурсы API.`)) {
-            return;
-        }
-    
+        console.log("[App] handleAdaptAllFramesAspectRatio triggered. frames:", localFrames.length, "ratio:", globalAspectRatio);
+        
+        // Removed blocked window.confirm
+
         // Set loading state for all frames
         updateFrames(prev => prev.map(f => ({
             ...f,
@@ -1180,10 +1180,15 @@ export default function App() {
         // Process frames sequentially to avoid overwhelming the API and to show progress
         for (let i = 0; i < localFrames.length; i++) {
             const frameId = localFrames[i].id;
-            const frameToAdapt = localFrames.find(f => f.id === frameId); // Find the latest version
+            // Note: localFrames is captured from the closure when the function started.
+            // If the user modifies the timeline while this is running, indices might shift.
+            // However, since we block the UI with "isGenerating" on all frames, user interaction is limited.
+            const frameToAdapt = localFrames[i];
     
             if (!frameToAdapt) continue;
-    
+            
+            console.log(`[App] Adapting frame ${frameId} to ${globalAspectRatio}`);
+
             updateFrames(prev => prev.map(f => f.id === frameId ? { ...f, generatingMessage: `Адаптация к ${globalAspectRatio}...` } : f));
     
             try {
@@ -1191,7 +1196,9 @@ export default function App() {
                     frameToAdapt,
                     globalAspectRatio
                 );
-    
+                
+                console.log(`[App] Adaptation successful for ${frameId}`);
+
                 const newFile = dataUrlToFile(newImageUrl, `adapted-ar-all-${frameId}-${Date.now()}.png`);
                 // const hash = await calculateFileHash(newFile);
     
@@ -1219,6 +1226,7 @@ export default function App() {
                 updateFrames(prev => prev.map(f => f.id === frameId ? { ...f, isGenerating: false, generatingMessage: 'Ошибка адаптации', hasError: true } : f));
             }
         }
+        console.log("[App] All aspect ratio adaptations completed.");
     };
 
     // --- Context Menu Handlers ---
