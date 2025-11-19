@@ -123,6 +123,7 @@ const SketchCard: React.FC<{
         onDragStart={(e) => onDragStart(e, sketch)}
         onDragEnd={onDragEnd}
         onContextMenu={(e) => onContextMenu(e, sketch)}
+        onMouseDown={(e) => e.stopPropagation()} // Prevent board pan
     >
         <div className="w-full h-full bg-black pointer-events-none">
             {sketch.imageUrl ? (
@@ -1395,34 +1396,8 @@ export default function App() {
         e.dataTransfer.setData('application/json;type=sketch-id', sketch.id);
         e.dataTransfer.effectAllowed = 'copyMove';
         
-        // Create custom transparent ghost image to avoid "Zoom" effect
-        try {
-            const ghost = document.createElement('div');
-            ghost.style.position = 'absolute';
-            ghost.style.top = '-1000px';
-            ghost.style.left = '-1000px';
-            ghost.style.width = '160px'; // Fixed width for consistency
-            ghost.style.height = `${160 / (rect.width / rect.height)}px`;
-            ghost.style.backgroundImage = `url(${sketch.imageUrl})`;
-            ghost.style.backgroundSize = 'contain';
-            ghost.style.backgroundRepeat = 'no-repeat';
-            ghost.style.opacity = '0.6'; // Transparency
-            ghost.style.pointerEvents = 'none';
-            ghost.style.borderRadius = '4px';
-            ghost.style.zIndex = '-1';
-            
-            document.body.appendChild(ghost);
-            e.dataTransfer.setDragImage(ghost, 80, 80 * (rect.height / rect.width)); 
-            
-            // Cleanup ghost element after drag starts
-            setTimeout(() => {
-                if (document.body.contains(ghost)) {
-                    document.body.removeChild(ghost);
-                }
-            }, 0);
-        } catch (err) {
-            console.warn("Failed to set custom drag image", err);
-        }
+        // Use default drag image behavior or a simple clone if needed.
+        // The browser will handle the visual snapshot.
     };
     
     const handleSketchDragEnd = () => {
