@@ -28,6 +28,7 @@ interface FrameCardProps {
     onStartIntegration: (source: File | string, targetFrameId: string) => void;
     onStartIntegrationFromSketch: (sourceSketchId: string, targetFrameId: string) => void;
     onStartIntegrationFromFrame: (sourceFrameId: string, targetFrameId: string) => void;
+    onRegenerate?: (frameId: string) => void; // Added prop
 }
 
 const aspectRatios = ['16:9', '4:3', '1:1', '9:16'];
@@ -70,6 +71,7 @@ export const FrameCard: React.FC<FrameCardProps> = ({
     onStartIntegration,
     onStartIntegrationFromSketch,
     onStartIntegrationFromFrame,
+    onRegenerate
 }) => {
     const DURATION_STEP = 0.25;
     const [isDragOver, setIsDragOver] = useState(false);
@@ -276,7 +278,7 @@ export const FrameCard: React.FC<FrameCardProps> = ({
             )}
             <div 
                 className={`relative group transition-opacity ${isDragging ? 'opacity-40' : 'opacity-100'}`}
-                onDoubleClick={() => onOpenDetailView(frame)}
+                onDoubleClick={() => !frame.hasError && onOpenDetailView(frame)}
                 draggable
                 onMouseDown={(e) => { if (e.button === 0) e.stopPropagation(); }}
                 onDragStart={onDragStart}
@@ -284,12 +286,25 @@ export const FrameCard: React.FC<FrameCardProps> = ({
                 style={{ cursor: 'grab' }}
             >
                 <div 
-                    className="w-full h-28 rounded-lg bg-black/20 border-2 border-primary cursor-zoom-in overflow-hidden flex items-center justify-center" 
-                    onClick={() => onViewImage(index)}
+                    className={`w-full h-28 rounded-lg bg-black/20 border-2 ${frame.hasError ? 'border-red-500 bg-red-500/10' : 'border-primary'} cursor-zoom-in overflow-hidden flex items-center justify-center relative`} 
+                    onClick={() => !frame.hasError && onViewImage(index)}
                 >
-                     <img src={activeImageUrl} alt={`Frame ${index + 1}`} className="w-full h-full object-contain transition-transform duration-300 group-hover:scale-105" />
+                     {frame.hasError ? (
+                        <div className="flex flex-col items-center gap-2">
+                             <span className="material-symbols-outlined text-3xl text-red-400">broken_image</span>
+                             <button 
+                                onClick={(e) => { e.stopPropagation(); onRegenerate && onRegenerate(frame.id); }}
+                                className="flex items-center gap-1 px-2 py-1 rounded-md bg-red-500/20 text-red-200 hover:bg-red-500/40 text-xs font-bold transition-colors"
+                             >
+                                <span className="material-symbols-outlined text-sm">refresh</span>
+                                Повторить
+                             </button>
+                        </div>
+                     ) : (
+                        <img src={activeImageUrl} alt={`Frame ${index + 1}`} className="w-full h-full object-contain transition-transform duration-300 group-hover:scale-105" />
+                     )}
                 </div>
-                {isDragOver && (
+                {isDragOver && !frame.hasError && (
                     <div className="pointer-events-none absolute inset-0 z-10 rounded-lg bg-primary/30 ring-2 ring-primary ring-offset-2 ring-offset-background-dark flex flex-col items-center justify-center text-white">
                         <span className="material-symbols-outlined text-4xl">add_photo_alternate</span>
                         <p className="text-xs font-bold">Интегрировать</p>
@@ -310,7 +325,7 @@ export const FrameCard: React.FC<FrameCardProps> = ({
                 )}
                 <div className="absolute top-1.5 left-1.5 bg-black/60 text-white text-xs font-bold w-6 h-6 flex items-center justify-center rounded-full">{index + 1}</div>
                 
-                {isKnownActor && (
+                {isKnownActor && !frame.hasError && (
                     <div 
                         className={`absolute -bottom-1 -right-1 ${badgeColor} text-white text-[10px] font-bold px-2 py-1 rounded-full flex items-center gap-1 shadow-lg z-20 ring-2 ring-background-dark`} 
                         title={`Персонаж опознан как: ${knownActor.characterDescription}`}
@@ -320,7 +335,7 @@ export const FrameCard: React.FC<FrameCardProps> = ({
                     </div>
                 )}
                 
-                 {hasVersions && (
+                 {hasVersions && !frame.hasError && (
                     <div className="absolute inset-0 flex items-center justify-between p-1 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
                         <button 
                             onClick={(e) => { e.stopPropagation(); onVersionChange(frame.id, 'prev'); }}
@@ -340,7 +355,7 @@ export const FrameCard: React.FC<FrameCardProps> = ({
                         </button>
                     </div>
                 )}
-                 {hasVersions && (
+                 {hasVersions && !frame.hasError && (
                     <div className="absolute bottom-1.5 left-1/2 -translate-x-1/2 bg-black/60 text-white text-xs font-bold px-2 py-0.5 rounded-full opacity-40 group-hover:opacity-100 transition-opacity duration-300">
                         {frame.activeVersionIndex + 1} / {frame.imageUrls.length}
                     </div>

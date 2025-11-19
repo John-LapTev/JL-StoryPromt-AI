@@ -23,7 +23,7 @@ import { LoadingModal } from './components/LoadingModal';
 import { ConfirmationModal } from './components/ConfirmationModal';
 import { SettingsModal } from './components/SettingsModal';
 import { SimpleImageViewerModal } from './components/SimpleImageViewerModal';
-import { generateImageFromPrompt, adaptImageToStory, adaptImageAspectRatio, createStoryFromAssets, analyzeStory, generateSinglePrompt, generateImageInContext, editImage } from './services/geminiService';
+import { generateImageFromPrompt, adaptImageToStory, adaptImageAspectRatio, createStoryFromAssets, analyzeStory, generateSinglePrompt, generateImageInContext, editImage, regenerateFrameImage } from './services/geminiService';
 import { fileToBase64, dataUrlToFile, fetchCorsImage, getImageDimensions, calculateFileHash } from './utils/fileUtils';
 import { StoryGenerationUpdate } from './services/geminiService';
 
@@ -48,6 +48,7 @@ const hydrateFrame = async (frameData: Omit<Frame, 'file'>): Promise<Frame> => {
       imageUrls: frameData.imageUrls || [(frameData as any).imageUrl],
       activeVersionIndex: frameData.activeVersionIndex || 0,
       aspectRatio: frameData.aspectRatio || '16:9',
+      hasError: frameData.hasError || false,
     };
     const activeImageUrl = frameWithVersions.imageUrls[frameWithVersions.activeVersionIndex];
     
@@ -55,14 +56,17 @@ const hydrateFrame = async (frameData: Omit<Frame, 'file'>): Promise<Frame> => {
     let sourceHash = frameData.sourceHash;
 
     try {
-        if (activeImageUrl.startsWith('data:')) {
+        if (activeImageUrl && activeImageUrl.startsWith('data:')) {
             file = dataUrlToFile(activeImageUrl, `story-frame-${frameData.id}.png`);
-        } else {
+        } else if (activeImageUrl) {
             const blob = await fetchCorsImage(activeImageUrl);
             file = new File([blob], `story-frame-${frameData.id}.png`, { type: blob.type });
+        } else {
+            // Handle missing image URL (e.g. error state persistence)
+             file = new File([], `empty-frame-${frameData.id}.txt`, {type: 'text/plain'});
         }
         // Calculate hash if missing (e.g. loaded from old project or hydration needs refresh)
-        if (!sourceHash) {
+        if (!sourceHash && file.size > 0) {
             sourceHash = await calculateFileHash(file);
         }
     } catch (e) {
@@ -684,6 +688,42 @@ export default function App() {
     const handleAddFramesFromAssets = useCallback((assetIds: string[], index: number) => { const a = localAssets.filter(as => assetIds.includes(as.id)); if (a.length === 0) return; const o = assetIds.map(id => a.find(as => as.id === id)).filter((as): as is Asset => !!as); const nPromise = o.map(async as => { const hash = await calculateFileHash(as.file); return { id: crypto.randomUUID(), imageUrls: [as.imageUrl], activeVersionIndex: 0, prompt: '', duration: 3.0, file: as.file, aspectRatio: isAspectRatioLocked ? globalAspectRatio : '16:9', sourceHash: hash }; }); Promise.all(nPromise).then(n => { updateFrames(p => { const c = [...p]; c.splice(index, 0, ...n); return c; }); const f = n[0]; if (f) { setTimeout(() => { setLocalFrames(c => { const ni = c.findIndex(fr => fr.id === f.id); if (ni > -1 && (ni > 0 || ni < c.length - n.length)) { setAdaptingFrame(c[ni]); } return c; }); }, 0); } }); }, [localAssets, updateFrames, isAspectRatioLocked, globalAspectRatio]);
     const handleAddFramesFromFiles = useCallback(async (files: File[], index: number) => { const n = await Promise.all(files.map(async f => { const hash = await calculateFileHash(f); return { id: crypto.randomUUID(), imageUrls: [await fileToBase64(f)], activeVersionIndex: 0, prompt: '', duration: 3.0, file: f, aspectRatio: isAspectRatioLocked ? globalAspectRatio : '16:9', sourceHash: hash } })); updateFrames(p => { const c = [...p]; c.splice(index, 0, ...n); return c; }); const fi = n[0]; if (fi) { setTimeout(() => { setLocalFrames(c => { const ni = c.findIndex(fr => fr.id === fi.id); if (ni > -1 && (ni > 0 || ni < c.length - n.length)) { setAdaptingFrame(c[ni]); } return c; }); }, 0); } }, [updateFrames, isAspectRatioLocked, globalAspectRatio]);
     
+    const handleRegenerateFrame = useCallback(async (frameId: string) => {
+        const frame = localFrames.find(f => f.id === frameId);
+        if (!frame) return;
+
+        updateFrames(prev => prev.map(f => f.id === frameId ? { ...f, isGenerating: true, generatingMessage: 'Перегенерация...', hasError: false } : f));
+
+        try {
+            const { imageUrl, prompt: newPrompt } = await regenerateFrameImage(frame, localFrames);
+            const newFile = dataUrlToFile(imageUrl, `regenerated-${frameId}-${Date.now()}.png`);
+            const hash = await calculateFileHash(newFile);
+
+            updateFrames(prev => prev.map(f => {
+                if (f.id === frameId) {
+                    const newImageUrls = [...f.imageUrls, imageUrl];
+                    return {
+                        ...f,
+                        imageUrls: newImageUrls,
+                        activeVersionIndex: newImageUrls.length - 1,
+                        prompt: newPrompt,
+                        file: newFile,
+                        isGenerating: false,
+                        generatingMessage: undefined,
+                        sourceHash: hash,
+                        hasError: false
+                    };
+                }
+                return f;
+            }));
+        } catch (error) {
+            console.error("Failed to regenerate frame:", error);
+             updateFrames(prev => prev.map(f => f.id === frameId ? { ...f, isGenerating: false, generatingMessage: 'Ошибка', hasError: true } : f));
+             alert(`Не удалось перегенерировать кадр: ${error instanceof Error ? error.message : String(error)}`);
+        }
+    }, [localFrames, updateFrames]);
+
+
     const handleGenerateFrame = async (prompt: string, insertIndex: number) => {
         setIsAdvancedGenerateModalOpen(false);
     
@@ -739,7 +779,7 @@ export default function App() {
             alert(`Не удалось создать кадр: ${error instanceof Error ? error.message : String(error)}`);
             updateFrames(prev => prev.map(f => {
                 if (f.id === placeholderId) {
-                    return { ...f, isGenerating: false, generatingMessage: 'Ошибка генерации' };
+                    return { ...f, isGenerating: false, generatingMessage: 'Ошибка генерации', hasError: true };
                 }
                 return f;
             }));
@@ -781,7 +821,8 @@ export default function App() {
                         file: newFile,
                         prompt: newPrompt,
                         isTransition: false,
-                        sourceHash: hash
+                        sourceHash: hash,
+                        hasError: false
                     };
                 }
                 return f;
@@ -885,15 +926,28 @@ export default function App() {
                         updateFrames(prev => prev.map(f => f.id === targetId ? { ...f, generatingMessage: update.message } : f));
                     } else if (update.type === 'frame') {
                         // When a frame is ready, replace the placeholder with the real data
-                        const newFile = dataUrlToFile(update.frame.imageUrls[0], `story-frame-${update.frame.id}.png`);
-                        const hash = await calculateFileHash(newFile);
+                        
+                        // We need to check if image data is present, otherwise create empty placeholder file
+                        let newFile: File;
+                        let hash = '';
+                        let imageUrls = update.frame.imageUrls;
+                        const hasError = !imageUrls || imageUrls.length === 0;
+
+                        if (hasError) {
+                             newFile = new File([], `failed-frame-${update.frame.id}.txt`, {type: 'text/plain'});
+                        } else {
+                             newFile = dataUrlToFile(imageUrls[0], `story-frame-${update.frame.id}.png`);
+                             hash = await calculateFileHash(newFile);
+                        }
+
                         const finalFrame: Frame = {
                             ...update.frame,
                             file: newFile,
                             isGenerating: false,
                             generatingMessage: undefined,
                             aspectRatio: isAspectRatioLocked ? globalAspectRatio : (update.frame.aspectRatio || '16:9'),
-                            sourceHash: hash
+                            sourceHash: hash,
+                            hasError
                         };
                         updateFrames(prev => prev.map(f => f.id === targetId ? finalFrame : f));
                     }
@@ -903,7 +957,7 @@ export default function App() {
             // Optional: Clean up any placeholders that didn't receive a frame
              updateFrames(prev => prev.map(f => {
                 if (placeholderIds.includes(f.id) && f.isGenerating) {
-                    return { ...f, isGenerating: false, generatingMessage: "Ошибка генерации" };
+                    return { ...f, isGenerating: false, generatingMessage: "Ошибка генерации", hasError: true };
                 }
                 return f;
             }));
@@ -914,7 +968,7 @@ export default function App() {
             // Mark all remaining placeholders as failed
             updateFrames(prev => prev.map(f => {
                 if (placeholderIds.includes(f.id) && f.isGenerating) {
-                    return { ...f, isGenerating: false, generatingMessage: "Ошибка" };
+                    return { ...f, isGenerating: false, generatingMessage: "Ошибка", hasError: true };
                 }
                 return f;
             }));
@@ -938,7 +992,7 @@ export default function App() {
         }
 
         if (frameToAdapt) {
-             updateFrames(prev => prev.map(f => f.id === targetId ? { ...f, isGenerating: true, generatingMessage: 'Поиск в картотеке...' } : f));
+             updateFrames(prev => prev.map(f => f.id === targetId ? { ...f, isGenerating: true, generatingMessage: 'Поиск в картотеке...', hasError: false } : f));
 
             try {
                 // --- IDENTITY CHECK LOGIC ---
@@ -987,7 +1041,8 @@ export default function App() {
                             file: newFile,
                             isGenerating: false,
                             generatingMessage: undefined,
-                            sourceHash: newHash
+                            sourceHash: newHash,
+                            hasError: false
                         };
                     }
                     return f;
@@ -1007,13 +1062,6 @@ export default function App() {
                 // If it's a new character (no known ref but we want to start tracking it)
                 else if (fileHash) {
                     // Extract a character name/description from the generated prompt or analysis if possible.
-                    // For now, we'll extract the subject from the prompt start as a heuristic, 
-                    // or rely on the fact that the *next* time this file is used, it will be "known".
-                    
-                    // NOTE: To properly start a "New" dossier, we should probably use the 'subjectAnalysis' from the Director.
-                    // But since 'adaptImageToStory' returns simplified object, let's try to extract from prompt or use a generic placeholder that the user can rename later (if we add renaming).
-                    // For now, we create a dossier for the ORIGINAL source file if it doesn't exist.
-                    
                     const newDescriptionMatch = newPrompt.match(/^(.*?)[.,]/); 
                     const newDescription = newDescriptionMatch ? newDescriptionMatch[0] : "Character";
 
@@ -1049,7 +1097,7 @@ export default function App() {
             } catch (error) {
                 console.error("Failed to adapt frame to story:", error);
                 alert(`Ошибка при адаптации кадра: ${error instanceof Error ? error.message : String(error)}`);
-                updateFrames(prev => prev.map(f => f.id === targetId ? { ...f, isGenerating: false, generatingMessage: undefined } : f));
+                updateFrames(prev => prev.map(f => f.id === targetId ? { ...f, isGenerating: false, generatingMessage: 'Ошибка', hasError: true } : f));
             }
         } else if (sketchToAdapt) {
             // For sketch adaptation, we don't have linear context (neighbors).
@@ -1097,7 +1145,7 @@ export default function App() {
             return;
         }
     
-        updateFrames(prev => prev.map(f => f.id === frameId ? { ...f, isGenerating: true, generatingMessage: `Адаптация к ${frameToAdapt.aspectRatio}...` } : f));
+        updateFrames(prev => prev.map(f => f.id === frameId ? { ...f, isGenerating: true, generatingMessage: `Адаптация к ${frameToAdapt.aspectRatio}...`, hasError: false } : f));
     
         try {
             const { imageUrl: newImageUrl, prompt: newPrompt } = await adaptImageAspectRatio(
@@ -1119,7 +1167,8 @@ export default function App() {
                         file: newFile,
                         isGenerating: false,
                         generatingMessage: undefined,
-                        sourceHash: hash
+                        sourceHash: hash,
+                        hasError: false
                     };
                 }
                 return f;
@@ -1128,7 +1177,7 @@ export default function App() {
         } catch (error) {
             console.error("Failed to adapt frame aspect ratio:", error);
             alert(`Ошибка при адаптации соотношения сторон: ${error instanceof Error ? error.message : String(error)}`);
-            updateFrames(prev => prev.map(f => f.id === frameId ? { ...f, isGenerating: false, generatingMessage: undefined } : f));
+            updateFrames(prev => prev.map(f => f.id === frameId ? { ...f, isGenerating: false, generatingMessage: 'Ошибка', hasError: true } : f));
         }
     }, [localFrames, updateFrames]);
 
@@ -1141,7 +1190,8 @@ export default function App() {
         updateFrames(prev => prev.map(f => ({
             ...f,
             isGenerating: true,
-            generatingMessage: `Ожидание адаптации к ${globalAspectRatio}...`
+            generatingMessage: `Ожидание адаптации к ${globalAspectRatio}...`,
+            hasError: false
         })));
     
         // Process frames sequentially to avoid overwhelming the API and to show progress
@@ -1174,7 +1224,8 @@ export default function App() {
                             isGenerating: false,
                             generatingMessage: undefined,
                             aspectRatio: globalAspectRatio,
-                            sourceHash: hash
+                            sourceHash: hash,
+                            hasError: false
                         };
                     }
                     return f;
@@ -1182,7 +1233,7 @@ export default function App() {
             } catch (error) {
                 console.error(`Failed to adapt frame ${frameId}:`, error);
                 // Mark this specific frame as failed but continue with others
-                updateFrames(prev => prev.map(f => f.id === frameId ? { ...f, isGenerating: false, generatingMessage: 'Ошибка адаптации' } : f));
+                updateFrames(prev => prev.map(f => f.id === frameId ? { ...f, isGenerating: false, generatingMessage: 'Ошибка адаптации', hasError: true } : f));
             }
         }
     };
@@ -1193,7 +1244,7 @@ export default function App() {
     const handleOpenAddFrameMenu = useCallback((index: number, rect: DOMRect) => { setAddFrameMenu({ index, rect }); }, []);
     const handleCloseAddFrameMenu = useCallback(() => { setAddFrameMenu(null); }, []);
     const handleDuplicateFrame = async (frameId: string) => { const i = localFrames.findIndex(f => f.id === frameId); if (i === -1) return; const d = localFrames[i]; const n: Frame = { ...d, id: crypto.randomUUID() }; updateFrames(p => { const nc = [...p]; nc.splice(i + 1, 0, n); return nc; }); };
-    const handleReplaceFrame = (frameId: string) => { const i = document.createElement('input'); i.type = 'file'; i.accept = 'image/*'; i.onchange = async (e) => { const f = (e.target as HTMLInputElement).files?.[0]; if (f) { try { const b = await fileToBase64(f); const hash = await calculateFileHash(f); updateFrames(p => p.map(fr => { if (fr.id === frameId) { const niu = [b]; return { ...fr, imageUrls: niu, activeVersionIndex: 0, file: f, sourceHash: hash }; } return fr; })); } catch (err) { console.error("Error replacing file:", err); alert("Could not load image file for replacement."); } } }; i.click(); };
+    const handleReplaceFrame = (frameId: string) => { const i = document.createElement('input'); i.type = 'file'; i.accept = 'image/*'; i.onchange = async (e) => { const f = (e.target as HTMLInputElement).files?.[0]; if (f) { try { const b = await fileToBase64(f); const hash = await calculateFileHash(f); updateFrames(p => p.map(fr => { if (fr.id === frameId) { const niu = [b]; return { ...fr, imageUrls: niu, activeVersionIndex: 0, file: f, sourceHash: hash, hasError: false }; } return fr; })); } catch (err) { console.error("Error replacing file:", err); alert("Could not load image file for replacement."); } } }; i.click(); };
     const handleVersionChange = useCallback(async (frameId: string, direction: 'next' | 'prev') => {
         const frameIndex = localFrames.findIndex(f => f.id === frameId);
         if (frameIndex === -1) return;
@@ -1273,7 +1324,7 @@ export default function App() {
             let updated = false;
             const frameIndex = localFrames.findIndex(fr => fr.id === t);
             if (frameIndex !== -1) {
-                 updateFrames(p => p.map(fr => { if (fr.id === t) { const niu = [...fr.imageUrls, result.imageUrl]; return { ...fr, imageUrls: niu, activeVersionIndex: niu.length - 1, file: f, prompt: result.prompt, isTransition: false, isGenerating: false, sourceHash: hash }; } return fr; }));
+                 updateFrames(p => p.map(fr => { if (fr.id === t) { const niu = [...fr.imageUrls, result.imageUrl]; return { ...fr, imageUrls: niu, activeVersionIndex: niu.length - 1, file: f, prompt: result.prompt, isTransition: false, isGenerating: false, sourceHash: hash, hasError: false }; } return fr; }));
                  updated = true;
             }
 
@@ -1738,7 +1789,8 @@ export default function App() {
             duration: 3.0,
             file: sketch.file,
             aspectRatio: sketch.aspectRatio,
-            sourceHash: hash
+            sourceHash: hash,
+            hasError: false
         };
         
         updateFrames(prev => {
@@ -1863,6 +1915,7 @@ export default function App() {
                             onStartIntegrationFromFrame={handleStartIntegrationFromFrame}
                             onOpenAddFrameMenu={handleOpenAddFrameMenu}
                             onRegisterDropZone={registerTimelineDropZone}
+                            onRegenerateFrame={handleRegenerateFrame}
                         />
                     </div>
 
@@ -2026,6 +2079,7 @@ export default function App() {
                     actions={[
                         { label: 'Создать видео', icon: 'movie', onClick: () => handleGenerateVideo(contextMenu.frame) },
                         { label: 'Адаптировать к сюжету', icon: 'auto_fix', onClick: () => setAdaptingFrame(contextMenu.frame) },
+                        { label: 'Перегенерировать', icon: 'refresh', onClick: () => handleRegenerateFrame(contextMenu.frame.id) },
                         { label: 'Интегрировать ассет', icon: 'add_photo_alternate', onClick: () => handleStartIntegrationWithEmptySource(contextMenu.frame) },
                         { label: 'Редактировать кадр', icon: 'tune', onClick: () => { setAdvancedGenerateModalConfig({ mode: 'edit', frameToEdit: contextMenu.frame }); setIsAdvancedGenerateModalOpen(true); }},
                         { label: 'Дублировать', icon: 'content_copy', onClick: () => handleDuplicateFrame(contextMenu.frame.id) },

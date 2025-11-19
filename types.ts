@@ -9,6 +9,7 @@ export interface Frame {
   isTransition?: boolean;
   isGenerating?: boolean;
   generatingMessage?: string;
+  hasError?: boolean; // Indicates if the last generation attempt failed
   aspectRatio?: string; // e.g., '16:9', '4:3'
   sourceHash?: string; // Unique digital fingerprint of the source file
 }

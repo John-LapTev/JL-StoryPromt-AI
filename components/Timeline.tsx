@@ -41,6 +41,7 @@ interface TimelineProps {
     onStartIntegrationFromFrame: (sourceFrameId: string, targetFrameId: string) => void;
     onOpenAddFrameMenu: (index: number, rect: DOMRect) => void;
     onRegisterDropZone: (index: number, element: HTMLElement | null) => void;
+    onRegenerateFrame: (frameId: string) => void;
 }
 
 const aspectRatios = ['16:9', '4:3', '1:1', '9:16'];
@@ -82,6 +83,7 @@ export const Timeline: React.FC<TimelineProps> = ({
     onStartIntegrationFromFrame,
     onOpenAddFrameMenu,
     onRegisterDropZone,
+    onRegenerateFrame
 }) => {
     const [draggedIndex, setDraggedIndex] = useState<number | null>(null);
     const [dropTargetIndex, setDropTargetIndex] = useState<number | null>(null);
@@ -253,6 +255,7 @@ export const Timeline: React.FC<TimelineProps> = ({
                                     onStartIntegration={onStartIntegration}
                                     onStartIntegrationFromSketch={onStartIntegrationFromSketch}
                                     onStartIntegrationFromFrame={onStartIntegrationFromFrame}
+                                    onRegenerate={onRegenerateFrame}
                                 />
                             </div>
                             <AddFrameButton
