@@ -12,6 +12,12 @@ function handleApiError(error: unknown) {
                 "Квота API исчерпана. Пожалуйста, проверьте ваш тарифный план или выберите другой ключ в меню пользователя (иконка в правом верхнем углу)."
             );
         }
+        // Check for API not enabled or model not found
+        if (error.message.includes("404") || error.message.includes("NOT_FOUND")) {
+             throw new Error(
+                "Ошибка 404: Модель не найдена или API выключен. Пожалуйста, зайдите в Google Cloud Console, найдите 'Generative Language API' и нажмите 'Enable'."
+            );
+        }
     }
     // Re-throw the original or a generic error if it's not a known type
     throw error;
