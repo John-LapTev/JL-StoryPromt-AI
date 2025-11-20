@@ -84,3 +84,17 @@ export interface IntegrationConfig {
 export interface AppSettings {
     doubleClickToGenerate: boolean;
 }
+
+export interface DirectorAnalysisResult {
+    storyStyle: string;
+    worldRules: string;
+    subjectType: 'character' | 'object' | 'location';
+    roleLabel: string;
+    subjectIdentity: string;
+    transformation: string;
+    narrativePosition: string;
+    sceneAction: string;
+    visualAnchorIndex?: number | null;
+    visualDescription: string;
+    videoPrompt: string;
+}

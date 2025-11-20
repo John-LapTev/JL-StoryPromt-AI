@@ -77,15 +77,15 @@ export const AdvancedGenerateModal: React.FC<AdvancedGenerateModalProps> = ({ on
             setEditHistory([{ imageUrl: initialUrl, prompt: initialPrompt }]);
             setHistoryIndex(0);
             setEditInstruction('');
-            fetchEditSuggestions();
+            setSuggestions([]); // Clear previous
         } else if (config.mode === 'generate' || config.mode === 'generate-sketch') {
             setGenerateModePrompt('');
-            fetchGenerateSuggestions();
+            setSuggestions([]); // Clear previous
         } else {
             setEditHistory([]);
             setHistoryIndex(0);
         }
-    }, [config, fetchEditSuggestions, fetchGenerateSuggestions]);
+    }, [config]);
 
     const handleGenerateClick = () => {
         if (!generateModePrompt.trim() || !onGenerate) {
@@ -167,8 +167,8 @@ export const AdvancedGenerateModal: React.FC<AdvancedGenerateModalProps> = ({ on
                     <div className="flex flex-col gap-3">
                         <div className="flex items-center justify-between">
                             <h4 className="text-xs font-bold text-white/60 uppercase tracking-wider">Идеи от AI</h4>
-                            <button onClick={fetchGenerateSuggestions} disabled={isLoadingSuggestions} className="text-white/50 hover:text-white disabled:text-white/20 transition-colors" title="Обновить">
-                                <span className={`material-symbols-outlined text-sm ${isLoadingSuggestions ? 'animate-spin' : ''}`}>refresh</span>
+                            <button onClick={fetchGenerateSuggestions} disabled={isLoadingSuggestions} className="text-white/50 hover:text-white disabled:text-white/20 transition-colors" title="Сгенерировать идеи">
+                                <span className={`material-symbols-outlined text-sm ${isLoadingSuggestions ? 'animate-spin' : ''}`}>lightbulb</span>
                             </button>
                         </div>
                         {isLoadingSuggestions ? (
@@ -184,7 +184,7 @@ export const AdvancedGenerateModal: React.FC<AdvancedGenerateModalProps> = ({ on
                                 ))}
                             </div>
                         ) : (
-                            <div className="text-xs text-white/30 text-center py-4 border-2 border-dashed border-white/5 rounded-lg">Нет идей</div>
+                            <div className="text-xs text-white/30 text-center py-4 border-2 border-dashed border-white/5 rounded-lg">Нажмите лампочку для идей</div>
                         )}
                     </div>
                 </div>
@@ -287,7 +287,7 @@ export const AdvancedGenerateModal: React.FC<AdvancedGenerateModalProps> = ({ on
                         <div className="flex items-center justify-between">
                             <h4 className="text-xs font-bold text-white/60 uppercase tracking-wider">Подсказки</h4>
                             <button onClick={fetchEditSuggestions} disabled={isLoadingSuggestions} className="text-white/50 hover:text-white disabled:text-white/20 transition-colors">
-                                <span className={`material-symbols-outlined text-sm ${isLoadingSuggestions ? 'animate-spin' : ''}`}>refresh</span>
+                                <span className={`material-symbols-outlined text-sm ${isLoadingSuggestions ? 'animate-spin' : ''}`}>lightbulb</span>
                             </button>
                         </div>
                         <div className="flex-1 overflow-y-auto custom-scrollbar space-y-2 pr-1">
@@ -302,7 +302,7 @@ export const AdvancedGenerateModal: React.FC<AdvancedGenerateModalProps> = ({ on
                                     </button>
                                 ))
                             ) : (
-                                 <div className="text-xs text-white/30 text-center py-8 border-2 border-dashed border-white/5 rounded-lg">Нет подсказок</div>
+                                 <div className="text-xs text-white/30 text-center py-8 border-2 border-dashed border-white/5 rounded-lg">Нажмите лампочку</div>
                             )}
                         </div>
                     </div>

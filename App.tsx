@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useCallback, useMemo, useRef, useLayoutEffect } from 'react';
 import type { Frame, Project, Asset, StorySettings, IntegrationConfig, Sketch, Note, Position, Size, AppSettings, ActorDossier } from './types';
 import { initialFrames, initialAssets } from './constants';
@@ -24,7 +23,8 @@ import { ConfirmationModal } from './components/ConfirmationModal';
 import { SettingsModal } from './components/SettingsModal';
 import { SimpleImageViewerModal } from './components/SimpleImageViewerModal';
 import { DossierModal } from './components/DossierModal';
-import { generateImageFromPrompt, adaptImageToStory, adaptImageAspectRatio, createStoryFromAssets, analyzeStory, generateSinglePrompt, generateImageInContext, editImage, regenerateFrameImage } from './services/geminiService';
+import { DossierLibraryModal } from './components/DossierLibraryModal';
+import { generateImageFromPrompt, adaptImageToStory, adaptImageAspectRatio, createStoryFromAssets, analyzeStory, generateSinglePrompt, generateImageInContext, editImage, regenerateFrameImage, integrateAssetIntoFrame } from './services/geminiService';
 import { fileToBase64, dataUrlToFile, fetchCorsImage, getImageDimensions, calculateFileHash } from './utils/fileUtils';
 import { StoryGenerationUpdate } from './services/geminiService';
 
@@ -353,6 +353,7 @@ export default function App() {
     
     // Dossier Modal State
     const [selectedDossierData, setSelectedDossierData] = useState<{ dossier: ActorDossier, relatedFrames: Frame[] } | null>(null);
+    const [isDossierLibraryOpen, setIsDossierLibraryOpen] = useState(false);
 
     const [transform, setTransform] = useState({ scale: 1, x: 0, y: 0 });
     const [isAssetLibraryOpen, setIsAssetLibraryOpen] = useState(false);
@@ -589,7 +590,8 @@ export default function App() {
             let result: { imageUrl: string, prompt: string, analysis?: any };
             
             if (isAdaptationRetry) {
-                const knownCharacterRef = dossier ? { originalUrl: '', adaptedUrl: dossier.referenceImageUrl, characterDescription: dossier.characterDescription } : undefined;
+                const knownCharacterRef = dossier ? { originalUrl: '', adaptedUrl: dossier.referenceImageUrl, characterDescription: dossier.characterDescription } : null;
+                // Pass all frames to give context, and the ref if known
                 result = await adaptImageToStory(frame, localFrames, "Retry adaptation", knownCharacterRef);
             } else {
                 result = await regenerateFrameImage(frame, localFrames);
@@ -601,30 +603,15 @@ export default function App() {
             updateFrames(prev => prev.map(f => {
                 if (f.id === frameId) {
                     const newImageUrls = [...f.imageUrls, imageUrl];
+                    // IMPORTANT: Keep sourceHash to maintain identity connection!
                     return { ...f, imageUrls: newImageUrls, activeVersionIndex: newImageUrls.length - 1, prompt: newPrompt, file: newFile, isGenerating: false, generatingMessage: undefined, hasError: false, sourceHash: f.sourceHash };
                 }
                 return f;
             }));
             
              if (analysis && frame.sourceHash) {
-                 const originalUrl = frame.imageUrls[0];
-                  const newDossier: ActorDossier = { 
-                        sourceHash: frame.sourceHash, 
-                        characterDescription: analysis.subjectIdentity, 
-                        roleLabel: analysis.roleLabel, 
-                        type: analysis.subjectType, 
-                        referenceImageUrl: originalUrl,
-                        lastUsed: Date.now() 
-                    };
-                 updateDossiers(prev => {
-                     const existingIndex = prev.findIndex(d => d.sourceHash === frame.sourceHash);
-                     if (existingIndex !== -1) {
-                         const updated = [...prev];
-                         updated[existingIndex] = { ...updated[existingIndex], ...newDossier };
-                         return updated;
-                     }
-                     return [...prev, newDossier];
-                 });
+                 // We should not update the dossier reference image here on simple regenerate unless it was a direct adaptation flow.
+                 // For now, keeping it safe.
              }
 
         } catch (error) { updateFrames(prev => prev.map(f => f.id === frameId ? { ...f, isGenerating: false, generatingMessage: 'Ошибка', hasError: true } : f)); alert(`Не удалось перегенерировать кадр: ${error instanceof Error ? error.message : String(error)}`); }
@@ -690,36 +677,55 @@ export default function App() {
         if (frameToAdapt) {
              updateFrames(prev => prev.map(f => f.id === targetId ? { ...f, isGenerating: true, generatingMessage: 'Поиск в картотеке...', hasError: false } : f));
             try {
-                let knownCharacterRef: { originalUrl: string, adaptedUrl: string, characterDescription: string } | undefined = undefined;
+                let knownCharacterRef: { originalUrl: string, adaptedUrl: string, characterDescription: string } | null = null;
                 let fileHash = frameToAdapt.sourceHash || '';
+                const originalUrl = frameToAdapt.imageUrls[0]; // Store the original for reference identity
+
+                // If missing hash but has file, calculate it
                 if (frameToAdapt.file && !fileHash) { fileHash = await calculateFileHash(frameToAdapt.file); }
+                
                 if (fileHash) {
                      const dossier = localDossiers.find(d => d.sourceHash === fileHash);
                      if (dossier) {
+                        // Use the dossier's reference image (which should be the original or best representation)
                         knownCharacterRef = { originalUrl: '', adaptedUrl: dossier.referenceImageUrl, characterDescription: dossier.characterDescription };
                         updateFrames(prev => prev.map(f => f.id === targetId ? { ...f, generatingMessage: `${dossier.roleLabel || 'Персонаж'} опознан. Адаптация...` } : f));
                      } else { updateFrames(prev => prev.map(f => f.id === targetId ? { ...f, generatingMessage: 'Интеграция в сюжет...' } : f)); }
                 }
+
                 const adaptationResult = await adaptImageToStory(frameToAdapt, localFrames, instruction || "Улучшить качество и стиль", knownCharacterRef);
+                
                 const { imageUrl: newImageUrl, prompt: newPrompt, analysis } = adaptationResult;
                 const newFile = dataUrlToFile(newImageUrl, `adapted-${targetId}-${Date.now()}.png`);
-                updateFrames(prev => prev.map(f => { if (f.id === targetId) { const newImageUrls = [...f.imageUrls, newImageUrl]; return { ...f, imageUrls: newImageUrls, activeVersionIndex: newImageUrls.length - 1, prompt: newPrompt, file: newFile, isGenerating: false, generatingMessage: undefined, sourceHash: f.sourceHash, hasError: false }; } return f; }));
                 
+                updateFrames(prev => prev.map(f => { 
+                    if (f.id === targetId) { 
+                        const newImageUrls = [...f.imageUrls, newImageUrl]; 
+                        // CRITICAL: Copy sourceHash from original to maintain identity
+                        return { ...f, imageUrls: newImageUrls, activeVersionIndex: newImageUrls.length - 1, prompt: newPrompt, file: newFile, isGenerating: false, generatingMessage: undefined, sourceHash: f.sourceHash, hasError: false }; 
+                    } 
+                    return f; 
+                }));
+                
+                // Create or update dossier if Director returned analysis
                 if (fileHash && analysis) {
-                    const originalUrl = frameToAdapt.imageUrls[0];
+                    // Use the ORIGINAL URL as reference to maintain identity, NOT the adapted one.
+                    // The adapted one is good for style, but the original is the source of truth for facial features.
                     const newDossier: ActorDossier = { 
                         sourceHash: fileHash, 
                         characterDescription: analysis.subjectIdentity, 
                         roleLabel: analysis.roleLabel, 
                         type: analysis.subjectType, 
-                        referenceImageUrl: originalUrl, 
+                        referenceImageUrl: originalUrl, // KEEP ORIGINAL SOURCE AS REFERENCE
                         lastUsed: Date.now() 
                     };
                     updateDossiers(prev => { 
                         const existingIndex = prev.findIndex(d => d.sourceHash === fileHash); 
                         if (existingIndex !== -1) { 
+                            // We only update stats, we DO NOT overwrite the reference image if it already exists, 
+                            // to prevent identity drift.
                             const updated = [...prev]; 
-                            updated[existingIndex] = { ...updated[existingIndex], ...newDossier }; 
+                            updated[existingIndex] = { ...updated[existingIndex], lastUsed: Date.now() }; 
                             return updated; 
                         } 
                         return [...prev, newDossier]; 
@@ -729,7 +735,7 @@ export default function App() {
         } else if (sketchToAdapt) {
              try {
                  const tempFrame = sketchToFrame(sketchToAdapt);
-                 const { imageUrl: newImageUrl, prompt: newPrompt } = await adaptImageToStory(tempFrame, [], instruction || "Улучшить качество и стиль");
+                 const { imageUrl: newImageUrl, prompt: newPrompt } = await adaptImageToStory(tempFrame, localFrames, instruction || "Улучшить качество и стиль");
                 const newFile = dataUrlToFile(newImageUrl, `adapted-sketch-${targetId}-${Date.now()}.png`);
                 updateSketches(prev => prev.map(s => { if (s.id === targetId) { return { ...s, imageUrl: newImageUrl, file: newFile, prompt: newPrompt }; } return s; }));
             } catch (error) { alert(`Ошибка при адаптации наброска: ${error instanceof Error ? error.message : String(error)}`); }
@@ -798,17 +804,91 @@ export default function App() {
         setIntegrationConfig({ targetFrame: target }); setIsIntegrationModalOpen(true); 
     };
 
-    const handleApplyIntegration = useCallback(async (result: { imageUrl: string, prompt: string }) => { 
-        if (!integrationConfig) return; const t = integrationConfig.targetFrame.id; 
-        try { 
-            const f = dataUrlToFile(result.imageUrl, `integrated-${t}-${Date.now()}.png`); 
-            let updated = false;
-            const frameIndex = localFrames.findIndex(fr => fr.id === t);
-            if (frameIndex !== -1) { updateFrames(p => p.map(fr => { if (fr.id === t) { const niu = [...fr.imageUrls, result.imageUrl]; return { ...fr, imageUrls: niu, activeVersionIndex: niu.length - 1, file: f, prompt: result.prompt, isTransition: false, isGenerating: false, sourceHash: fr.sourceHash, hasError: false }; } return fr; })); updated = true; }
-            if (!updated) { updateSketches(prev => prev.map(s => { if (s.id === t) { return { ...s, imageUrl: result.imageUrl, file: f, prompt: result.prompt }; } return s; })); }
-            setIsIntegrationModalOpen(false); setIntegrationConfig(null); 
-        } catch (err) { alert(`Не удалось применить интеграцию: ${err instanceof Error ? err.message : String(err)}`); } 
-    }, [integrationConfig, updateFrames, updateSketches, localFrames]);
+    // Async handler for integration that runs in background after modal closes
+    const handlePerformIntegration = useCallback(async (instruction: string, mode: string) => {
+        if (!integrationConfig) return;
+        const { sourceAsset, targetFrame } = integrationConfig;
+        const t = targetFrame.id;
+        
+        // 1. Close Modal Immediately
+        setIsIntegrationModalOpen(false);
+        setIntegrationConfig(null);
+
+        // 2. Set loading state on frame
+        updateFrames(p => p.map(fr => fr.id === t ? { ...fr, isGenerating: true, generatingMessage: 'Интеграция объекта...', hasError: false } : fr));
+        
+        try {
+             // 3. Perform Integration API Call
+             const sourceAssetSafe = sourceAsset as { imageUrl: string; file: File; name: string }; // Type guard
+             
+             // Check for existing dossier via Source Hash
+             let sourceHash = '';
+             let existingDossier: ActorDossier | undefined;
+             if (sourceAssetSafe.file) {
+                 sourceHash = await calculateFileHash(sourceAssetSafe.file);
+                 existingDossier = localDossiers.find(d => d.sourceHash === sourceHash);
+             }
+
+             const result = await integrateAssetIntoFrame(sourceAssetSafe, targetFrame, instruction, mode, existingDossier);
+             
+             // 4. Handle Dossier creation/update
+             if (result.analysis && sourceHash) {
+                const newDossier: ActorDossier = {
+                    sourceHash: sourceHash,
+                    characterDescription: result.analysis.description,
+                    roleLabel: result.analysis.roleLabel,
+                    type: result.analysis.type,
+                    referenceImageUrl: sourceAssetSafe.imageUrl, // Use source as reference identity
+                    lastUsed: Date.now()
+                };
+                
+                updateDossiers(prev => {
+                    const existingIndex = prev.findIndex(d => d.sourceHash === sourceHash);
+                    if (existingIndex !== -1) {
+                        const updated = [...prev];
+                        updated[existingIndex] = { ...updated[existingIndex], lastUsed: Date.now() };
+                        return updated;
+                    }
+                    return [...prev, newDossier];
+                });
+             }
+
+             // 5. Update Frame with Result AND update SourceHash to match the integrated object for recognition
+             const f = dataUrlToFile(result.imageUrl, `integrated-${t}-${Date.now()}.png`); 
+             let updated = false;
+             
+             updateFrames(p => p.map(fr => { 
+                 if (fr.id === t) { 
+                     const niu = [...fr.imageUrls, result.imageUrl]; 
+                     return { 
+                         ...fr, 
+                         imageUrls: niu, 
+                         activeVersionIndex: niu.length - 1, 
+                         file: f, 
+                         prompt: result.prompt, 
+                         isTransition: false, 
+                         isGenerating: false, 
+                         // IMPORTANT: Update sourceHash to the Integrated Object's hash so the badge appears
+                         sourceHash: sourceHash || fr.sourceHash, 
+                         hasError: false 
+                    }; 
+                 } 
+                 return fr; 
+            })); 
+            updated = true; // Assuming frame exists if we got here
+
+            if (!updated) { 
+                // Fallback for sketches?
+                updateSketches(prev => prev.map(s => { if (s.id === t) { return { ...s, imageUrl: result.imageUrl, file: f, prompt: result.prompt }; } return s; })); 
+            }
+
+        } catch (err) {
+             alert(`Не удалось выполнить интеграцию: ${err instanceof Error ? err.message : String(err)}`);
+             updateFrames(p => p.map(fr => fr.id === t ? { ...fr, isGenerating: false, generatingMessage: 'Ошибка интеграции', hasError: true } : fr));
+        }
+
+    }, [integrationConfig, updateFrames, updateSketches, updateDossiers, localDossiers]);
+
 
     const handleStartIntegrationFromSketch = useCallback((sourceSketchId: string, targetFrameId: string) => {
         const sourceSketch = localSketches.find(s => s.id === sourceSketchId); const targetFrame = localFrames.find(f => f.id === targetFrameId);
@@ -1124,7 +1204,7 @@ export default function App() {
                             onStartIntegrationFromFrame={handleStartIntegrationFromFrame}
                             onOpenAddFrameMenu={handleOpenAddFrameMenu}
                             onRegisterDropZone={registerTimelineDropZone}
-                            onRegenerateFrame={handleRegenerateFrame}
+                            onRegenerate={handleRegenerateFrame}
                         />
                     </div>
 
@@ -1185,11 +1265,22 @@ export default function App() {
                 >
                     <span className="material-symbols-outlined text-[22px]">center_focus_strong</span>
                 </button>
+                <div className="h-8 w-px bg-white/10 mx-1"></div>
+                <button
+                    onClick={() => setIsDossierLibraryOpen(true)}
+                    className="glass-button flex items-center justify-center gap-2 rounded-full h-12 px-5 text-white font-medium transition-all shadow-glass group"
+                    aria-label="Открыть картотеку"
+                    title="Открыть картотеку персонажей и объектов"
+                >
+                    <span className="material-symbols-outlined text-[22px] text-primary-light group-hover:text-white transition-colors">folder_shared</span>
+                    <span className="hidden sm:inline">Картотека</span>
+                    <span className="bg-white/10 text-[10px] font-bold px-1.5 rounded-full min-w-[20px] text-center">{localDossiers.length}</span>
+                </button>
                 <button
                     onClick={() => setIsAssetLibraryOpen(true)}
                     className="glass-button flex items-center justify-center gap-2 rounded-full h-12 px-5 text-white font-medium transition-all shadow-glass"
                     aria-label="Открыть библиотеку"
-                    title="Открыть библиотеку"
+                    title="Открыть библиотеку ассетов"
                 >
                     <span className="material-symbols-outlined text-[22px]">photo_library</span>
                     <span className="hidden sm:inline">Библиотека</span>
@@ -1248,7 +1339,7 @@ export default function App() {
                     isOpen={isIntegrationModalOpen}
                     onClose={() => { setIsIntegrationModalOpen(false); setIntegrationConfig(null); }}
                     config={integrationConfig}
-                    onIntegrate={handleApplyIntegration}
+                    onIntegrateAction={handlePerformIntegration}
                     onZoomImage={(url, title) => setZoomedImage({ url, title })}
                 />
             )}
@@ -1267,6 +1358,17 @@ export default function App() {
                          if(globalIndex !== -1) {
                             setViewingFrameIndex(globalIndex);
                          }
+                    }}
+                />
+            )}
+            {isDossierLibraryOpen && (
+                <DossierLibraryModal
+                    dossiers={localDossiers}
+                    frames={localFrames}
+                    onClose={() => setIsDossierLibraryOpen(false)}
+                    onSelectDossier={(dossier) => {
+                        handleOpenDossier(dossier);
+                        setIsDossierLibraryOpen(false);
                     }}
                 />
             )}

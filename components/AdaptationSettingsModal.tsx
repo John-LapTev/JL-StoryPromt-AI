@@ -35,10 +35,8 @@ export const AdaptationSettingsModal: React.FC<AdaptationSettingsModalProps> = (
     }, [frame, leftFrame, rightFrame]);
 
     useEffect(() => {
-        if (frame) {
-            fetchSuggestions();
-        }
-    }, [frame, fetchSuggestions]);
+         setSuggestions([]); // Clear previous
+    }, [frame]);
     
     if (!frame) return null;
 
@@ -102,7 +100,7 @@ export const AdaptationSettingsModal: React.FC<AdaptationSettingsModalProps> = (
                             <div className="flex items-center justify-between">
                                 <h4 className="text-sm font-bold text-white/80">Идеи от AI</h4>
                                 <button onClick={fetchSuggestions} disabled={isLoadingSuggestions} className="text-white/60 hover:text-white disabled:text-white/30 disabled:cursor-wait p-1 rounded-full" title="Сгенерировать новые идеи">
-                                    <span className={`material-symbols-outlined text-lg ${isLoadingSuggestions ? 'animate-spin' : ''}`}>refresh</span>
+                                    <span className={`material-symbols-outlined text-lg ${isLoadingSuggestions ? 'animate-spin' : ''}`}>lightbulb</span>
                                 </button>
                             </div>
                             {isLoadingSuggestions ? (
@@ -118,7 +116,7 @@ export const AdaptationSettingsModal: React.FC<AdaptationSettingsModalProps> = (
                                     ))}
                                 </div>
                             ) : (
-                                <div className="text-xs text-white/50 text-center py-4 bg-white/5 rounded-lg">Не удалось сгенерировать идеи.</div>
+                                <div className="text-xs text-white/50 text-center py-4 bg-white/5 rounded-lg">Нажмите лампочку</div>
                             )}
                         </div>
                     </fieldset>

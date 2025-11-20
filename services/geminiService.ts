@@ -1,5 +1,6 @@
+
 import { GoogleGenAI, Type, Modality } from "@google/genai";
-import type { Frame, Asset, StorySettings, ActorDossier, Sketch } from '../types';
+import type { Frame, Asset, StorySettings, ActorDossier, Sketch, DirectorAnalysisResult } from '../types';
 import { fileToBase64, fetchCorsImage, dataUrlToFile } from '../utils/fileUtils';
 
 export type StoryGenerationUpdate = 
@@ -26,7 +27,7 @@ function handleApiError(error: unknown) {
     throw error;
 }
 
-async function urlOrFileToBase64(frame: Frame | Omit<Asset, 'file'> | Omit<Frame, 'file'> | Asset | Omit<Asset, 'id'> | { imageUrl: string } | Sketch): Promise<{ mimeType: string; data: string }> {
+async function urlOrFileToBase64(frame: Frame | Omit<Asset, 'file'> | Omit<Frame, 'file'> | Asset | Omit<Asset, 'id'> | { imageUrl: string } | Sketch | { imageUrl: string }): Promise<{ mimeType: string; data: string }> {
     let base64Data: string;
     let mimeType: string;
 
@@ -82,6 +83,262 @@ async function urlOrFileToBase64(frame: Frame | Omit<Asset, 'file'> | Omit<Frame
     }
 
     return { mimeType, data: base64Data.split(',')[1] };
+}
+
+// --- STAGE 1: DIRECTOR (Analysis) ---
+async function runDirectorAnalysis(
+    targetFrame: Frame | Sketch,
+    styleFrames: Frame[],
+    instruction: string,
+    knownDossier?: ActorDossier | null
+): Promise<DirectorAnalysisResult> {
+    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+    const model = "gemini-3-pro-preview"; // Using Pro for complex analysis
+
+    const inputs: any[] = [];
+    
+    // 1. Target Image (Subject)
+    try {
+        const { mimeType, data } = await urlOrFileToBase64(targetFrame);
+        inputs.push({ inlineData: { mimeType, data } });
+        inputs.push({ text: "[TARGET IMAGE / SUBJECT] - Это изображение для адаптации (главный герой/объект)." });
+    } catch(e) { console.error("Error loading target", e); }
+
+    // 2. Context Frames (Style Reference)
+    // Use provided styleFrames (Neighbors)
+    if (styleFrames.length > 0) {
+        for (let i = 0; i < styleFrames.length; i++) {
+            try {
+                const { mimeType, data } = await urlOrFileToBase64(styleFrames[i]);
+                inputs.push({ inlineData: { mimeType, data } });
+                inputs.push({ text: `[CONTEXT FRAME / STYLE REF ${i+1}] - Соседний кадр истории.` });
+            } catch (e) {}
+        }
+    } else {
+        inputs.push({ text: "[NO CONTEXT] - Это первый кадр истории." });
+    }
+
+    const systemPrompt = `
+    РОЛЬ: Ты — РЕЖИССЁР. Твоя задача — проанализировать визуальный материал и спланировать бесшовную интеграцию нового кадра в историю.
+
+    АЛГОРИТМ ДЕЙСТВИЙ:
+
+    1. АНАЛИЗ МИРА ИСТОРИИ (по контекстным кадрам)
+       - Определи визуальный стиль (2D/3D, мультфильм, реализм, техника).
+       - Определи законы мира (кто живет, физика, анатомия).
+
+    2. КЛАССИФИКАЦИЯ СУБЪЕКТА (по целевому изображению)
+       - Тип: [character | object | location]
+       - Ключевые черты (лицо, одежда, цвета, форма).
+       - Метка роли (2-3 слова).
+       ${knownDossier ? `ВНИМАНИЕ: Этот субъект уже известен как "${knownDossier.roleLabel}". Используй это знание.` : ''}
+
+    3. ОНТОЛОГИЧЕСКАЯ ТРАНСФОРМАЦИЯ
+       - ЕСЛИ законы мира отличаются от субъекта -> Опиши как трансформировать вид (человек -> животное, фото -> рисунок).
+       - СОХРАНИТЬ: Цветовую гамму, узнаваемые детали, характер.
+
+    4. КОНТЕКСТУАЛЬНАЯ ЛОГИКА
+       - Определи позицию вставки. Что было ДО? (см. Context Frames)
+       - Если субъект не может быть здесь физически, придумай кинематографический прием (параллельный монтаж, воспоминание, реакция).
+       
+    5. ПОСТРОЕНИЕ ДЕЙСТВИЯ
+       - Придумай логичное действие, связывающее кадры.
+       - Создай композицию.
+
+    6. VISUAL ANCHORS
+       ${knownDossier ? `Visual Anchor найден: Персонаж/Объект идентифицирован.` : 'Проверь, нужен ли визуальный якорь.'}
+
+    7. ГЕНЕРАЦИЯ ПРОМТОВ (ФИНАЛ)
+       Создай ДВА разных промта:
+       - "visualDescription" (Для генератора картинок Imagen): Техническое описание визуального стиля, освещения, текстур. Пиши на АНГЛИЙСКОМ для лучшего качества генерации.
+       - "videoPrompt" (Для генератора видео Veo): Описание ДЕЙСТВИЯ и ДВИЖЕНИЯ КАМЕРЫ. Игнорируй "8k", "best quality". Фокус на том, что происходит в кадре. СТРОГО НА РУССКОМ ЯЗЫКЕ.
+
+    ВЫВОД: Верни JSON строго следующей структуры.
+    ВАЖНО: 
+    - Все текстовые поля (roleLabel, subjectIdentity, transformation, narrativePosition, sceneAction, videoPrompt) ДОЛЖНЫ БЫТЬ НА РУССКОМ ЯЗЫКЕ.
+    - Только "visualDescription" должен быть на АНГЛИЙСКОМ ЯЗЫКЕ.
+    `;
+
+    const response = await ai.models.generateContent({
+        model: model,
+        contents: {
+            parts: [
+                { text: systemPrompt },
+                ...inputs,
+                { text: `Дополнительная инструкция от пользователя: "${instruction}"` }
+            ]
+        },
+        config: {
+            responseMimeType: "application/json",
+            responseSchema: {
+                type: Type.OBJECT,
+                properties: {
+                    storyStyle: { type: Type.STRING, description: "Описание визуального стиля всей истории на РУССКОМ." },
+                    worldRules: { type: Type.STRING, description: "Онтологические законы мира (кто населяет, как выглядят) на РУССКОМ." },
+                    subjectType: { type: Type.STRING, enum: ["character", "object", "location"] },
+                    roleLabel: { type: Type.STRING, description: "Краткая метка субъекта (2-3 слова) на РУССКОМ." },
+                    subjectIdentity: { type: Type.STRING, description: "Узнаваемые черты: лицо/форма, цвета, одежда/детали на РУССКОМ." },
+                    transformation: { type: Type.STRING, description: "Как субъект должен трансформироваться под мир на РУССКОМ." },
+                    narrativePosition: { type: Type.STRING, description: "Что происходит в истории в точке вставки на РУССКОМ." },
+                    sceneAction: { type: Type.STRING, description: "Конкретное действие для нового кадра на РУССКОМ." },
+                    visualAnchorIndex: { type: Type.NUMBER, nullable: true },
+                    visualDescription: { type: Type.STRING, description: "Technical visual description for the ARTIST (Imagen) to generate the image. MUST BE IN ENGLISH." },
+                    videoPrompt: { type: Type.STRING, description: "Описание движения камеры и действия сцены для генерации видео (Veo). СТРОГО НА РУССКОМ ЯЗЫКЕ. Не используй технические термины стиля (8k, cinematic), описывай только действие." }
+                },
+                required: ["storyStyle", "subjectType", "roleLabel", "subjectIdentity", "transformation", "visualDescription", "videoPrompt"]
+            }
+        }
+    });
+
+    return JSON.parse(response.text || "{}") as DirectorAnalysisResult;
+}
+
+// --- STAGE 2: ARTIST (Generation) ---
+async function runArtistGeneration(
+    directorBrief: DirectorAnalysisResult,
+    targetFrame: Frame | Sketch,
+    styleFrames: Frame[],
+    visualAnchorDossier?: ActorDossier | null
+): Promise<string> {
+    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+    const model = "gemini-2.5-flash-image"; // High quality image generation/editing
+
+    const parts: any[] = [];
+    
+    let artistPrompt = `
+    ТЫ — ХУДОЖНИК. Твоя задача — создать изображение, строго следуя инструкциям Режиссёра и референсам.
+
+    --- ИНСТРУКЦИИ РЕЖИССЁРА ---
+    СТИЛЬ ИСТОРИИ: ${directorBrief.storyStyle}
+    ТРАНСФОРМАЦИЯ СУБЪЕКТА: ${directorBrief.transformation}
+    СЦЕНАРИЙ КАДРА: ${directorBrief.visualDescription}
+    
+    --- КАТЕГОРИИ РЕФЕРЕНСОВ ---
+    `;
+
+    // 1. STYLE REFERENCE (Neighbors)
+    artistPrompt += `\n1. STYLE REFERENCE (Стиль отрисовки):
+    Используй следующие изображения ТОЛЬКО для копирования стиля (штрих, цвета, рендеринг). ИГНОРИРУЙ их содержание.`;
+    
+    for (const frame of styleFrames) {
+        try {
+            const { mimeType, data } = await urlOrFileToBase64(frame);
+            parts.push({ inlineData: { mimeType, data } });
+        } catch(e) {}
+    }
+
+    // 2. IDENTITY REFERENCE (Original Upload)
+    artistPrompt += `\n\n2. IDENTITY REFERENCE (Идентичность субъекта):
+    Используй следующее изображение ТОЛЬКО для лица и ключевых черт субъекта (${directorBrief.subjectIdentity}). 
+    ВАЖНО: 
+    - Лицо и ключевые черты персонажа ДОЛЖНЫ ОСТАТЬСЯ УЗНАВАЕМЫМИ. 
+    - Трансформируй стиль согласно Стилю Истории.
+    - НЕ копируй позу, используй позу из Сценария Кадра.`;
+    
+    try {
+        const { mimeType, data } = await urlOrFileToBase64(targetFrame);
+        parts.push({ inlineData: { mimeType, data } });
+    } catch(e) {}
+
+    // 3. VISUAL ANCHOR (Consistency)
+    if (visualAnchorDossier) {
+        artistPrompt += `\n\n3. VISUAL ANCHOR (Якорь консистентности):
+        КРИТИЧНО: Субъект должен выглядеть ИДЕНТИЧНО этому референсу (одежда, лицо, детали), но в новой позе.`;
+        try {
+            const blob = await fetchCorsImage(visualAnchorDossier.referenceImageUrl);
+            const base64 = await fileToBase64(new File([blob], "anchor.png"));
+            const data = base64.split(',')[1];
+            parts.push({ inlineData: { mimeType: blob.type, data } });
+        } catch(e) { console.warn("Failed to load visual anchor image"); }
+    }
+
+    artistPrompt += `\n\nГЕНЕРАЦИЯ: Создай финальное изображение высокого качества.`;
+
+    // Combine prompt text and images
+    const contents = {
+        parts: [
+            { text: artistPrompt },
+            ...parts
+        ]
+    };
+
+    const response = await ai.models.generateContent({
+        model: model,
+        contents: contents,
+        config: { responseModalities: [Modality.IMAGE] }
+    });
+
+    if (response.candidates?.[0]?.content?.parts?.[0]?.inlineData) {
+        const p = response.candidates[0].content.parts[0].inlineData;
+        return `data:${p.mimeType};base64,${p.data}`;
+    }
+
+    throw new Error("Artist failed to generate image.");
+}
+
+// --- MAIN ORCHESTRATOR ---
+export async function adaptImageToStory(
+    frameOrSketch: Frame | Sketch,
+    allFrames: Frame[],
+    instruction: string,
+    knownCharacterRef?: { originalUrl: string, adaptedUrl: string, characterDescription: string } | null
+): Promise<{ imageUrl: string; prompt: string; analysis?: DirectorAnalysisResult }> {
+    try {
+        // 0. Setup Context: Calculate Neighbors (Style Frames)
+        const targetId = frameOrSketch.id;
+        const index = allFrames.findIndex(f => f.id === targetId);
+        
+        const styleFrames: Frame[] = [];
+        
+        if (index > -1) {
+             // Target is inside the list (e.g. inserted placeholder)
+             // Get immediate neighbors (ignoring the target itself)
+             if (index > 0) styleFrames.push(allFrames[index - 1]);
+             if (index < allFrames.length - 1) styleFrames.push(allFrames[index + 1]);
+             
+             // If only one neighbor, maybe extend further?
+             if (styleFrames.length < 2 && allFrames.length > 2) {
+                 if (index > 1) styleFrames.unshift(allFrames[index - 2]);
+                 else if (index < allFrames.length - 2) styleFrames.push(allFrames[index + 2]);
+             }
+        } else {
+            // Target is new (e.g. Sketch not yet in list)
+            // Assuming it might be added to the end if not specified, or we just take the last few frames
+             if (allFrames.length > 0) styleFrames.push(allFrames[allFrames.length - 1]);
+             if (allFrames.length > 1) styleFrames.unshift(allFrames[allFrames.length - 2]);
+        }
+
+        // Convert knownCharacterRef back to a dossier-like structure if passed from App.tsx
+        let visualAnchorDossier: ActorDossier | null = null;
+        if (knownCharacterRef) {
+            visualAnchorDossier = {
+                sourceHash: '', // Not needed for generation
+                characterDescription: knownCharacterRef.characterDescription,
+                roleLabel: 'Known Subject',
+                referenceImageUrl: knownCharacterRef.adaptedUrl,
+                lastUsed: Date.now()
+            };
+        }
+
+        // 1. DIRECTOR PHASE
+        const directorBrief = await runDirectorAnalysis(frameOrSketch, styleFrames, instruction, visualAnchorDossier);
+        
+        // 2. ARTIST PHASE
+        const newImageUrl = await runArtistGeneration(directorBrief, frameOrSketch, styleFrames, visualAnchorDossier);
+
+        // Ensure we fallback to visual description if videoPrompt is unexpectedly empty, but videoPrompt is preferred for UI
+        const uiPrompt = directorBrief.videoPrompt || directorBrief.visualDescription;
+
+        return {
+            imageUrl: newImageUrl,
+            prompt: uiPrompt,
+            analysis: directorBrief
+        };
+
+    } catch (error) {
+        handleApiError(error);
+        throw error;
+    }
 }
 
 export async function analyzeStory(frames: Frame[]): Promise<string[]> {
@@ -440,132 +697,6 @@ export async function regenerateFrameImage(frame: Frame, allFrames: Frame[]): Pr
     return generateImageInContext(frame.prompt, left, right, frame);
 }
 
-export async function adaptImageToStory(
-    frameOrSketch: Frame | Sketch,
-    contextFrames: Frame[],
-    instruction: string,
-    knownCharacterRef?: { originalUrl: string, adaptedUrl: string, characterDescription: string }
-): Promise<{ imageUrl: string; prompt: string; analysis?: any }> {
-    try {
-        const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-        
-        const inputParts: any[] = [];
-        
-        // 1. Source Image (The Subject)
-        const { mimeType, data } = await urlOrFileToBase64(frameOrSketch);
-        inputParts.push({ inlineData: { mimeType, data } });
-
-        let promptText = `ROLE: You are an expert image editor/storyboard artist.
-    
-TASK: Adapt the FIRST image (SOURCE) according to the instruction, while adopting the visual style of the CONTEXT images.
-
-[SOURCE IMAGE]
-The first image provided is the SOURCE.
-CRITICAL: You MUST preserve the subject identity, pose, and composition of this Source image. Do not replace the main subject with characters from context images. If the source is a photo of a real person, keep their facial features recognizable, even if the style changes to cartoon.
-Instruction: "${instruction}".
-`;
-
-        if (knownCharacterRef) {
-            try {
-                // Use the reference URL if provided (this might be the adapted version or original depending on logic)
-                // For strict identity, we might prefer the original if available in the logic layer.
-                const refBlob = await fetchCorsImage(knownCharacterRef.adaptedUrl); 
-                const refBase64 = await fileToBase64(new File([refBlob], "ref.png"));
-                const refData = refBase64.split(',')[1];
-                const refMime = refBlob.type;
-                inputParts.push({ inlineData: { mimeType: refMime, data: refData } });
-                promptText += `\n[IDENTITY REFERENCE]
-The next image is the IDENTITY REFERENCE. Ensure the character in the output looks like this reference: "${knownCharacterRef.characterDescription}".`;
-            } catch (e) {
-                console.warn("Failed to load character reference image", e);
-            }
-        }
-
-        if (contextFrames.length > 0) {
-            promptText += `\n\n[STYLE CONTEXT]
-The following images are for STYLE REFERENCE ONLY (color palette, rendering style, lighting). 
-DO NOT copy the characters, objects, or composition from these images. ONLY copy the artistic style.
-`;
-            for (const ctxFrame of contextFrames.slice(0, 2)) {
-                 try {
-                    const { mimeType: m, data: d } = await urlOrFileToBase64(ctxFrame);
-                    inputParts.push({ inlineData: { mimeType: m, data: d } });
-                    promptText += `\n[Context Image - Style Only]`;
-                } catch (e) {}
-            }
-        }
-
-        const response = await ai.models.generateContent({
-            model: 'gemini-2.5-flash-image',
-            contents: {
-                parts: [
-                    { text: promptText },
-                    ...inputParts
-                ]
-            },
-            config: { responseModalities: [Modality.IMAGE] }
-        });
-
-        let newImageUrl = '';
-        if (response.candidates?.[0]?.content?.parts) {
-            for (const part of response.candidates[0].content.parts) {
-                if (part.inlineData) {
-                    newImageUrl = `data:${part.inlineData.mimeType};base64,${part.inlineData.data}`;
-                    break;
-                }
-            }
-        }
-
-        if (!newImageUrl) throw new Error("Failed to adapt image.");
-
-        // Analysis / Prompt generation using Schema for robust parsing
-        const analysisPromptText = `Analyze the generated image. 
-        1. Create a detailed visual description for a video generation prompt (Russian).
-        2. Create a detailed dossier description of the main subject (Russian).
-        3. Identify the subject type (character, object, or location).
-        4. Create a meaningful short label (1-2 words) for the role/subject.`;
-
-        const descResponse = await ai.models.generateContent({
-            model: 'gemini-2.5-flash',
-            contents: { 
-                parts: [
-                    { text: analysisPromptText }, 
-                    { inlineData: { mimeType: response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.mimeType || 'image/png', data: response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data || '' } }
-                ] 
-            },
-            config: {
-                responseMimeType: "application/json",
-                responseSchema: {
-                    type: Type.OBJECT,
-                    properties: {
-                        visualPrompt: { type: Type.STRING, description: "A detailed visual description for video generation prompt." },
-                        dossierDescription: { type: Type.STRING, description: "A detailed description of the character/object for the dossier." },
-                        roleLabel: { type: Type.STRING, description: "A very short label (1-2 words), e.g. 'Protagonist', 'Red Car'." },
-                        subjectType: { type: Type.STRING, enum: ["character", "object", "location"] }
-                    },
-                    required: ["visualPrompt", "dossierDescription", "roleLabel", "subjectType"]
-                }
-            }
-        });
-
-        const json = JSON.parse(descResponse.text || "{}");
-
-        // Check if fields are present, fallback if something went wrong (rare with Schema)
-        const finalPrompt = json.visualPrompt || "Generated Image";
-        const analysis = {
-            subjectIdentity: json.dossierDescription || "Описание отсутствует", // Mapping long description to subjectIdentity for UI
-            roleLabel: json.roleLabel || "Объект",
-            subjectType: json.subjectType || "object"
-        };
-
-        return { imageUrl: newImageUrl, prompt: finalPrompt, analysis };
-
-    } catch (error) {
-        handleApiError(error);
-        throw error;
-    }
-}
-
 export async function adaptImageAspectRatio(frame: Frame, targetAspectRatio: string): Promise<{ imageUrl: string; prompt: string }> {
     try {
         const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
@@ -701,7 +832,7 @@ export async function generateStoryIdeasFromAssets(assets: Asset[], settings: St
 export async function generatePromptSuggestions(leftFrame: Frame | null, rightFrame: Frame | null): Promise<string[]> {
     try {
         const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-        let prompt = "Generate 4 distinct prompt ideas for a storyboard frame (Russian). Return JSON array of strings.";
+        let prompt = "Generate 4 distinct prompt ideas for a storyboard frame (Russian). Return JSON array of strings. ";
         const parts: any[] = [{ text: prompt }];
         
         if (leftFrame) {
@@ -729,23 +860,79 @@ export async function generateAdaptationSuggestions(frame: Frame, left: Frame | 
      return generatePromptSuggestions(frame, null); // Simplified reuse
 }
 
-export async function integrateAssetIntoFrame(source: Asset | {imageUrl: string, name: string, file: File}, target: Frame, instruction: string, mode: string): Promise<{ imageUrl: string; prompt: string }> {
+export async function integrateAssetIntoFrame(
+    source: Asset | {imageUrl: string, name: string, file: File}, 
+    target: Frame, 
+    instruction: string, 
+    mode: string,
+    existingDossier?: ActorDossier | null
+): Promise<{ imageUrl: string; prompt: string; analysis?: { type: 'character'|'object'|'location', roleLabel: string, description: string } }> {
     try {
         const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
         const { mimeType: sMime, data: sData } = await urlOrFileToBase64(source);
         const { mimeType: tMime, data: tData } = await urlOrFileToBase64(target);
         
-        const prompt = `Integrate the first image (Source: ${source.name}) into the second image (Target). Instruction: ${instruction}. Mode: ${mode}.`;
+        // 1. ANALYSIS STEP (If no dossier exists or we want to double-check)
+        // We perform a quick analysis of the SOURCE asset to understand what we are integrating.
+        // This helps in creating a Dossier if one doesn't exist.
+        let subjectAnalysis: { type: 'character' | 'object' | 'location', roleLabel: string, description: string } = { type: 'object', roleLabel: source.name, description: source.name };
         
+        if (!existingDossier) {
+             const analysisPrompt = `Analyze this image (Source Asset). Identify if it is a character, object, or location. Give it a short label (2-3 words) and a visual description. Language: Russian.`;
+             const analysisResponse = await ai.models.generateContent({
+                 model: 'gemini-3-pro-preview',
+                 contents: {
+                     parts: [
+                         { text: analysisPrompt },
+                         { inlineData: { mimeType: sMime, data: sData } }
+                     ]
+                 },
+                 config: {
+                     responseMimeType: "application/json",
+                     responseSchema: {
+                         type: Type.OBJECT,
+                         properties: {
+                             type: { type: Type.STRING, enum: ['character', 'object', 'location'] },
+                             roleLabel: { type: Type.STRING },
+                             description: { type: Type.STRING }
+                         }
+                     }
+                 }
+             });
+             const json = JSON.parse(analysisResponse.text || "{}");
+             if (json.type) subjectAnalysis = json;
+        } else {
+            subjectAnalysis = {
+                type: existingDossier.type || 'object',
+                roleLabel: existingDossier.roleLabel || source.name,
+                description: existingDossier.characterDescription || ''
+            };
+        }
+
+        // 2. GENERATION STEP
+        let prompt = `INTEGRATION TASK:
+        Source: ${subjectAnalysis.roleLabel} (${subjectAnalysis.description}).
+        Target: A storyboard frame.
+        Instruction: ${instruction}.
+        Mode: ${mode}.
+        `;
+        
+        if (existingDossier) {
+            prompt += `\nIMPORTANT CONSISTENCY: The source object MUST look exactly like the reference provided in the dossier.`;
+        }
+
+        const parts: any[] = [
+            { text: prompt },
+            { inlineData: { mimeType: tMime, data: tData } } // Target is the canvas
+        ];
+
+        // If we have a specific reference URL in the dossier that is NOT the source image itself (e.g. a better adapted version), maybe use that?
+        // For now, we assume 'source' IS the reference image we want to integrate.
+        parts.push({ inlineData: { mimeType: sMime, data: sData } }); 
+
         const response = await ai.models.generateContent({
             model: 'gemini-2.5-flash-image',
-            contents: {
-                parts: [
-                    { text: prompt },
-                    { inlineData: { mimeType: sMime, data: sData } },
-                    { inlineData: { mimeType: tMime, data: tData } }
-                ]
-            },
+            contents: { parts },
             config: { responseModalities: [Modality.IMAGE] }
         });
 
@@ -760,7 +947,11 @@ export async function integrateAssetIntoFrame(source: Asset | {imageUrl: string,
         }
         if (!newImageUrl) throw new Error("Integration failed");
         
-        return { imageUrl: newImageUrl, prompt: target.prompt + " (Integrated)" };
+        return { 
+            imageUrl: newImageUrl, 
+            prompt: target.prompt + ` (Integrated: ${subjectAnalysis.roleLabel})`,
+            analysis: subjectAnalysis
+        };
 
     } catch (error) {
         handleApiError(error);
