@@ -1,4 +1,3 @@
-
 import React, { useState } from 'react';
 import type { Frame, ActorDossier } from '../types';
 import { FrameCard } from './FrameCard';
@@ -16,6 +15,8 @@ interface TimelineProps {
     sketchDropTargetIndex: number | null;
     isAnalyzingStory: boolean;
     dossiers?: ActorDossier[];
+    viewMode: 'compact' | 'expanded';
+    onViewModeChange: (mode: 'compact' | 'expanded') => void;
     onGlobalAspectRatioChange: (newRatio: string) => void;
     onToggleAspectRatioLock: () => void;
     onFrameAspectRatioChange: (frameId: string, newRatio: string) => void;
@@ -34,6 +35,7 @@ interface TimelineProps {
     onEditPrompt: (frame: Frame) => void;
     onViewImage: (index: number) => void;
     onOpenDetailView: (frame: Frame) => void;
+    onOpenDossier: (dossier: ActorDossier) => void;
     onContextMenu: (e: React.MouseEvent, frame: Frame) => void;
     onVersionChange: (frameId: string, direction: 'next' | 'prev') => void;
     onStartIntegration: (source: File | string, targetFrameId: string) => void;
@@ -58,6 +60,8 @@ export const Timeline: React.FC<TimelineProps> = ({
     sketchDropTargetIndex,
     isAnalyzingStory,
     dossiers,
+    viewMode,
+    onViewModeChange,
     onGlobalAspectRatioChange,
     onToggleAspectRatioLock,
     onFrameAspectRatioChange,
@@ -76,6 +80,7 @@ export const Timeline: React.FC<TimelineProps> = ({
     onEditPrompt,
     onViewImage,
     onOpenDetailView,
+    onOpenDossier,
     onContextMenu,
     onVersionChange,
     onStartIntegration,
@@ -88,8 +93,6 @@ export const Timeline: React.FC<TimelineProps> = ({
     const [draggedIndex, setDraggedIndex] = useState<number | null>(null);
     const [dropTargetIndex, setDropTargetIndex] = useState<number | null>(null);
     
-
-    // --- Drag and Drop Handlers ---
     const handleDragStart = (e: React.DragEvent, index: number) => {
         const frame = frames[index];
         if (!frame) return;
@@ -105,7 +108,7 @@ export const Timeline: React.FC<TimelineProps> = ({
 
     const handleDragOver = (e: React.DragEvent, index: number) => {
         e.preventDefault();
-        e.stopPropagation(); // <-- IMPORTANT: Prevents board's onDragOver from firing.
+        e.stopPropagation();
     
         let newDropTargetIndex: number | null = null;
     
@@ -141,7 +144,6 @@ export const Timeline: React.FC<TimelineProps> = ({
         const files = e.dataTransfer.files;
     
         if (files && files.length > 0 && dropTargetIndex !== null) {
-            // FIX: Explicitly type the 'file' parameter in the filter to resolve 'unknown' type error.
             const imageFiles = Array.from(files).filter((file: File) => file.type.startsWith('image/'));
             if (imageFiles.length > 0) {
                 onAddFramesFromFiles(imageFiles, dropTargetIndex);
@@ -166,57 +168,88 @@ export const Timeline: React.FC<TimelineProps> = ({
     };
 
     const StyledSelect: React.FC<{id: string, value: string, onChange: (e: React.ChangeEvent<HTMLSelectElement>) => void, children: React.ReactNode}> = ({ id, value, onChange, children }) => (
-        <div className="relative">
+        <div className="relative group/select">
             <select
                 id={id}
                 value={value}
                 onChange={onChange}
-                className="w-full appearance-none bg-white/5 px-3 py-1.5 rounded-lg text-xs font-bold text-white/90 focus:ring-2 focus:ring-primary border-none pr-8 h-8"
+                className="w-full appearance-none bg-black/30 hover:bg-black/50 transition-colors px-3 py-1.5 rounded-md text-xs font-bold text-white/90 focus:ring-1 focus:ring-primary border border-white/5 pr-8 h-8 cursor-pointer"
             >
                 {children}
             </select>
-            <span className="material-symbols-outlined pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-white/50">
+            <span className="material-symbols-outlined pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-white/50 text-sm group-hover/select:text-white/80">
                 expand_more
             </span>
         </div>
     );
 
     return (
-        <div className="bg-black/20 backdrop-blur-md border border-white/10 rounded-xl shadow-lg p-2 pointer-events-auto w-fit">
-            <div className="flex items-center justify-between px-2 pb-2">
-                <div className="flex items-center gap-3">
-                    <h3 className="text-white text-lg font-bold leading-tight tracking-[-0.015em]">Раскадровка</h3>
-                    <div className="flex items-center gap-1.5 rounded-full bg-white/10 px-3 py-1 text-xs font-medium text-white/80">
-                        <span className="material-symbols-outlined text-sm">timer</span>
-                        <span>{totalDuration.toFixed(2)} s</span>
+        <div className="glass-panel rounded-2xl p-4 pointer-events-auto w-fit min-w-[320px] mt-20">
+            <div className="flex items-center justify-between px-1 pb-4 border-b border-white/5 mb-4">
+                <div className="flex items-center gap-4">
+                    <h3 className="text-white text-lg font-bold tracking-wide font-display">Раскадровка</h3>
+                    <div className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-primary/10 border border-primary/20 text-primary-dark text-xs font-mono font-semibold shadow-neon-sm">
+                        <span className="material-symbols-outlined text-sm filled">timer</span>
+                        <span>{totalDuration.toFixed(2)}s</span>
                     </div>
                 </div>
-                <div className="flex items-center gap-2">
-                    <div className="flex items-center gap-2 p-1 bg-white/5 rounded-lg">
-                        <StyledSelect id="global-ar" value={globalAspectRatio} onChange={e => onGlobalAspectRatioChange(e.target.value)}>
-                             {aspectRatios.map(r => <option key={r} value={r} className="bg-[#191C2D] text-white">{r}</option>)}
-                        </StyledSelect>
-                        <button onClick={onToggleAspectRatioLock} className="flex h-8 w-8 items-center justify-center rounded-md bg-white/10 text-white hover:bg-white/20" title={isAspectRatioLocked ? 'Разблокировать соотношение сторон' : 'Заблокировать для всех кадров'}>
-                            <span className="material-symbols-outlined text-base">{isAspectRatioLocked ? 'lock' : 'lock_open'}</span>
+                <div className="flex items-center gap-3">
+                    <div className="flex items-center gap-1 bg-black/30 rounded-lg border border-white/5 p-1">
+                        <button 
+                            onClick={() => onViewModeChange('compact')}
+                            className={`p-1.5 rounded-md transition-all ${viewMode === 'compact' ? 'bg-white/10 text-white' : 'text-white/40 hover:text-white'}`}
+                            title="Компактный вид"
+                        >
+                            <span className="material-symbols-outlined text-[18px]">view_comfy</span>
                         </button>
-                        <button onClick={onAdaptAllFramesAspectRatio} className="flex h-8 items-center justify-center rounded-md bg-white/10 text-white hover:bg-white/20 px-2 gap-1 text-xs font-bold" title="Адаптировать все кадры к выбранному соотношению сторон">
-                            <span className="material-symbols-outlined text-base">auto_fix</span>
-                            <span>Адаптировать все</span>
+                        <button 
+                            onClick={() => onViewModeChange('expanded')}
+                            className={`p-1.5 rounded-md transition-all ${viewMode === 'expanded' ? 'bg-white/10 text-white' : 'text-white/40 hover:text-white'}`}
+                            title="Расширенный вид"
+                        >
+                            <span className="material-symbols-outlined text-[18px]">view_agenda</span>
                         </button>
                     </div>
-                    <button onClick={onAnalyzeStory} disabled={isAnalyzingStory} className="flex min-w-[84px] max-w-[480px] cursor-pointer items-center justify-center overflow-hidden rounded-lg h-10 px-4 bg-primary text-white text-sm font-bold leading-normal tracking-[0.015em] gap-2 hover:bg-primary/90 disabled:bg-primary/50 disabled:cursor-not-allowed">
+
+                    <div className="flex items-center gap-2 p-1 bg-black/30 rounded-lg border border-white/5">
+                        <StyledSelect id="global-ar" value={globalAspectRatio} onChange={e => onGlobalAspectRatioChange(e.target.value)}>
+                             {aspectRatios.map(r => <option key={r} value={r} className="bg-surface text-white">{r}</option>)}
+                        </StyledSelect>
+                        <div className="w-px h-4 bg-white/10 mx-1"></div>
+                        <button 
+                            onClick={onToggleAspectRatioLock} 
+                            className={`flex h-7 w-7 items-center justify-center rounded-md transition-colors ${isAspectRatioLocked ? 'text-primary bg-primary/10' : 'text-white/50 hover:text-white'}`} 
+                            title={isAspectRatioLocked ? 'Разблокировать соотношение сторон' : 'Заблокировать для всех кадров'}
+                        >
+                            <span className="material-symbols-outlined text-sm">{isAspectRatioLocked ? 'lock' : 'lock_open'}</span>
+                        </button>
+                        <button 
+                            onClick={onAdaptAllFramesAspectRatio} 
+                            className="flex h-7 items-center justify-center rounded-md px-2 gap-1.5 text-xs font-medium text-white/70 hover:text-white hover:bg-white/5 transition-colors" 
+                            title="Адаптировать все кадры"
+                        >
+                            <span className="material-symbols-outlined text-sm">auto_fix</span>
+                            <span>Адаптировать</span>
+                        </button>
+                    </div>
+                    <button 
+                        onClick={onAnalyzeStory} 
+                        disabled={isAnalyzingStory} 
+                        className="glass-button-primary h-9 px-4 rounded-lg text-xs font-bold text-white flex items-center gap-2"
+                    >
                         {isAnalyzingStory ? (
-                             <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                             <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
                         ) : (
-                             <span className="material-symbols-outlined text-base">auto_awesome</span>
+                             <span className="material-symbols-outlined text-[18px]">auto_awesome</span>
                         )}
-                        <span className="truncate">{isAnalyzingStory ? 'Анализ...' : 'Анализировать сюжет и создать промты'}</span>
+                        <span>Анализ сюжета</span>
                     </button>
                 </div>
             </div>
-            <div className="overflow-x-auto pb-2" onDragLeave={handleTimelineContainerDragLeave}>
+            
+            <div className="overflow-x-auto pb-2 custom-scrollbar" onDragLeave={handleTimelineContainerDragLeave}>
                 <div 
-                    className="flex items-start gap-0 h-full p-2 w-max"
+                    className="flex items-start gap-0 h-full w-max pt-2"
                     onDragOver={(e) => e.preventDefault()}
                 >
                     <AddFrameButton 
@@ -229,10 +262,11 @@ export const Timeline: React.FC<TimelineProps> = ({
                     />
                     {frames.map((frame, index) => (
                         <React.Fragment key={frame.id}>
-                            <div className="px-2">
+                            <div className="px-0">
                                 <FrameCard
                                     frame={frame}
                                     index={index}
+                                    viewMode={viewMode}
                                     isGeneratingPrompt={generatingPromptFrameId === frame.id}
                                     generatingVideoState={generatingVideoState?.frameId === frame.id ? generatingVideoState : null}
                                     isDragging={draggedIndex === index}
@@ -246,6 +280,7 @@ export const Timeline: React.FC<TimelineProps> = ({
                                     onViewImage={onViewImage}
                                     onGenerateVideo={onGenerateVideo}
                                     onOpenDetailView={onOpenDetailView}
+                                    onOpenDossier={onOpenDossier}
                                     onDragStart={(e) => handleDragStart(e, index)}
                                     onDragEnd={handleDragEnd}
                                     onContextMenu={onContextMenu}

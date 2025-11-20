@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import type { IntegrationConfig } from '../types';
 import { integrateAssetIntoFrame, generateIntegrationSuggestions } from '../services/geminiService';
@@ -15,22 +16,25 @@ type SourceAsset = IntegrationConfig['sourceAsset'];
 type IntegrationMode = 'object' | 'style' | 'background';
 
 const ImagePanel: React.FC<{ imageUrl: string | null, label: string, isLoading?: boolean, isResult?: boolean, onZoom: (imageUrl: string, title: string) => void }> = ({ imageUrl, label, isLoading = false, isResult = false, onZoom }) => (
-    <div className="flex flex-col gap-2 text-center h-full">
-        <h4 className="text-sm font-bold text-white/60 shrink-0">{label}</h4>
-        <div className="relative w-full flex-1 rounded-lg bg-black/30 flex items-center justify-center border border-white/10 overflow-hidden min-h-0">
+    <div className="flex flex-col gap-2 text-center h-full bg-white/5 p-2 rounded-xl border border-white/5">
+        <h4 className="text-xs font-bold text-white/60 uppercase tracking-wider shrink-0">{label}</h4>
+        <div className="relative w-full flex-1 rounded-lg bg-black/40 flex items-center justify-center border border-white/10 overflow-hidden min-h-0 group/panel">
             {imageUrl ? (
                 <>
-                    <img src={imageUrl} alt={label} className="absolute inset-0 w-full h-full object-contain" />
-                    <button onClick={() => onZoom(imageUrl, label)} className="absolute inset-0 bg-black/50 opacity-0 hover:opacity-100 transition-opacity flex items-center justify-center group/zoom" aria-label={`Увеличить ${label}`}>
-                        <span className="material-symbols-outlined text-4xl text-white">zoom_in</span>
-                    </button>
+                    <img src={imageUrl} alt={label} className="absolute inset-0 w-full h-full object-contain p-1" />
+                    <div className="absolute inset-0 bg-black/50 opacity-0 group-hover/panel:opacity-100 transition-opacity flex items-center justify-center">
+                        <button onClick={() => onZoom(imageUrl, label)} className="p-2 bg-white/10 rounded-full hover:bg-primary hover:text-white text-white/80 transition-colors" aria-label={`Увеличить ${label}`}>
+                            <span className="material-symbols-outlined text-2xl">zoom_in</span>
+                        </button>
+                    </div>
                 </>
             ) : (
                 (isLoading || isResult) && (
-                    <div className="flex flex-col items-center text-white/50 p-4">
-                        <div className={`w-10 h-10 border-4 border-primary rounded-full ${isLoading ? 'border-t-transparent animate-spin' : ''}`}></div>
-                        {isLoading && <p className="text-sm mt-2">Применяем магию...</p>}
-                        {!isLoading && isResult && <span className="material-symbols-outlined text-5xl absolute">auto_fix</span>}
+                    <div className="flex flex-col items-center text-white/50 p-4 gap-3">
+                        <div className={`w-12 h-12 border-4 border-primary/30 border-t-primary rounded-full ${isLoading ? 'animate-spin' : ''} flex items-center justify-center`}>
+                             {!isLoading && isResult && <span className="material-symbols-outlined text-2xl text-primary">auto_fix</span>}
+                        </div>
+                        {isLoading && <p className="text-xs font-bold animate-pulse">AI обрабатывает...</p>}
                     </div>
                 )
             )}
@@ -69,7 +73,6 @@ export const IntegrationModal: React.FC<IntegrationModalProps> = ({ isOpen, onCl
 
     useEffect(() => {
         if (isOpen) {
-            // Reset state on open
             setUiMode('auto');
             setIntegrationMode('object');
             setManualPrompt('');
@@ -93,11 +96,7 @@ export const IntegrationModal: React.FC<IntegrationModalProps> = ({ isOpen, onCl
         if (!file) return;
         try {
             const imageUrl = await fileToBase64(file);
-            setSourceAsset({
-                imageUrl,
-                file,
-                name: file.name
-            });
+            setSourceAsset({ imageUrl, file, name: file.name });
         } catch (error) {
             console.error("Error reading file:", error);
             alert("Не удалось загрузить файл изображения.");
@@ -119,7 +118,6 @@ export const IntegrationModal: React.FC<IntegrationModalProps> = ({ isOpen, onCl
             alert("Пожалуйста, загрузите исходный ассет для интеграции.");
             return;
         }
-
         setIsIntegrating(true);
         setResultImageUrl(null);
         try {
@@ -130,27 +128,16 @@ export const IntegrationModal: React.FC<IntegrationModalProps> = ({ isOpen, onCl
                 alert("Пожалуйста, введите инструкцию для ручного режима.");
                 setIsIntegrating(false);
                 return;
-            } else { // 'auto' mode
+            } else {
                  switch(integrationMode) {
-                    case 'object':
-                        instruction = `Бесшовно и логично интегрируй «${sourceAsset.name}» в эту сцену.`;
-                        break;
-                    case 'style':
-                        instruction = `Полностью перерисуй целевой кадр в художественном стиле ассета «${sourceAsset.name}», сохранив композицию и объекты целевого кадра.`;
-                        break;
-                    case 'background':
-                        instruction = `Используй ассет «${sourceAsset.name}» как новый фон для целевого кадра, аккуратно вырезав и переместив на него основной объект из целевого кадра.`;
-                        break;
+                    case 'object': instruction = `Бесшовно и логично интегрируй «${sourceAsset.name}» в эту сцену.`; break;
+                    case 'style': instruction = `Полностью перерисуй целевой кадр в художественном стиле ассета «${sourceAsset.name}», сохранив композицию и объекты целевого кадра.`; break;
+                    case 'background': instruction = `Используй ассет «${sourceAsset.name}» как новый фон для целевого кадра, аккуратно вырезав и переместив на него основной объект из целевого кадра.`; break;
                 }
             }
-            
             const result = await integrateAssetIntoFrame(sourceAsset, config.targetFrame, instruction, integrationMode);
             setResultImageUrl(result.imageUrl);
-            
-            setTimeout(() => {
-                onIntegrate(result);
-            }, 1500);
-
+            setTimeout(() => { onIntegrate(result); }, 1500);
         } catch (error) {
             console.error("Error during integration:", error);
             alert(`Не удалось выполнить интеграцию: ${error instanceof Error ? error.message : String(error)}`);
@@ -165,54 +152,49 @@ export const IntegrationModal: React.FC<IntegrationModalProps> = ({ isOpen, onCl
     };
 
     const mainButtonLabels: Record<IntegrationMode, string> = {
-        object: 'Интегрировать и применить',
+        object: 'Интегрировать объект',
         style: 'Применить стиль',
         background: 'Заменить фон'
     };
     
     return (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4" onClick={onClose}>
-            <div 
-                className="bg-[#191C2D] border border-white/10 rounded-xl p-6 flex flex-col gap-4 text-white max-w-6xl w-full h-[90vh]" 
-                onClick={e => e.stopPropagation()}
-            >
-                {/* Header */}
-                <h3 className="text-xl font-bold shrink-0">Интеграция ассета</h3>
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-md flex items-center justify-center z-50 p-4 animate-fade-in" onClick={onClose}>
+            <div className="glass-modal rounded-2xl p-1 flex flex-col w-full max-w-6xl h-[90vh]" onClick={e => e.stopPropagation()}>
+                <div className="p-6 flex items-center justify-between border-b border-white/10 shrink-0 bg-white/5 rounded-t-2xl">
+                    <h3 className="text-xl font-bold font-display text-white tracking-wide">Интеграция ассета</h3>
+                     <button onClick={onClose} className="text-white/50 hover:text-white transition-colors">
+                        <span className="material-symbols-outlined">close</span>
+                    </button>
+                </div>
                 
-                {/* Image Panels */}
-                <div className="grid grid-cols-3 gap-6 flex-1 min-h-0">
-                    {/* Source Asset Panel */}
-                    <div className="flex flex-col gap-2 text-center h-full">
+                <div className="grid grid-cols-3 gap-6 flex-1 min-h-0 p-6">
+                    <div className="flex flex-col gap-2 text-center h-full bg-white/5 p-2 rounded-xl border border-white/5">
                         <div className="flex items-center justify-between">
-                             <h4 className="text-sm font-bold text-white/60 shrink-0">Исходный ассет</h4>
-                             <p className="text-xs text-white/50 truncate max-w-[150px]">{sourceAsset?.name || ''}</p>
+                             <h4 className="text-xs font-bold text-white/60 uppercase tracking-wider shrink-0">Исходный ассет</h4>
+                             <p className="text-[10px] text-white/50 truncate max-w-[150px] font-mono">{sourceAsset?.name || ''}</p>
                         </div>
                         <div
                             onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); setIsSourceDragOver(true); }}
                             onDragLeave={(e) => { e.preventDefault(); e.stopPropagation(); setIsSourceDragOver(false); }}
                             onDrop={handleSourcePanelDrop}
-                            className={`relative w-full flex-1 rounded-lg bg-black/30 flex items-center justify-center border transition-colors overflow-hidden min-h-0 ${isSourceDragOver ? 'border-primary bg-primary/20' : 'border-white/10'}`}
+                            className={`relative w-full flex-1 rounded-lg bg-black/40 flex items-center justify-center border transition-all overflow-hidden min-h-0 group/source ${isSourceDragOver ? 'border-primary bg-primary/10' : 'border-white/10'}`}
                         >
                             {sourceAsset ? (
                                 <>
-                                    <img src={sourceAsset.imageUrl} alt="Source Asset" className="absolute inset-0 w-full h-full object-contain" />
-                                    <div className="absolute inset-0 opacity-0 hover:opacity-100 transition-opacity group/source-overlay">
-                                        <button onClick={() => onZoomImage(sourceAsset.imageUrl, 'Исходный ассет')} className="absolute inset-0 bg-black/50 flex items-center justify-center z-10" aria-label="Увеличить Исходный ассет">
-                                            <span className="material-symbols-outlined text-4xl text-white">zoom_in</span>
+                                    <img src={sourceAsset.imageUrl} alt="Source Asset" className="absolute inset-0 w-full h-full object-contain p-1" />
+                                    <div className="absolute inset-0 bg-black/50 opacity-0 group-hover/source:opacity-100 transition-opacity flex items-center justify-center gap-2">
+                                        <button onClick={() => onZoomImage(sourceAsset.imageUrl, 'Исходный ассет')} className="p-2 bg-white/10 rounded-full hover:bg-primary hover:text-white text-white/80 transition-colors" aria-label="Увеличить">
+                                            <span className="material-symbols-outlined text-2xl">zoom_in</span>
                                         </button>
-                                        <button onClick={(e) => { e.stopPropagation(); sourceFileInputRef.current?.click(); }} className="absolute bottom-2 right-2 flex items-center gap-1 px-2 py-1 rounded-md bg-white/10 text-white text-xs font-bold hover:bg-white/20 z-20">
-                                            <span className="material-symbols-outlined text-sm">swap_horiz</span>
-                                            Заменить
+                                        <button onClick={(e) => { e.stopPropagation(); sourceFileInputRef.current?.click(); }} className="p-2 bg-white/10 rounded-full hover:bg-white/30 text-white/80 transition-colors" title="Заменить">
+                                            <span className="material-symbols-outlined text-2xl">swap_horiz</span>
                                         </button>
                                     </div>
                                 </>
                             ) : (
-                                <div className="flex flex-col items-center justify-center p-4 text-white/50">
-                                    <span className="material-symbols-outlined text-5xl">upload_file</span>
-                                    <p className="mt-2 text-sm">Перетащите или</p>
-                                    <button onClick={() => sourceFileInputRef.current?.click()} className="mt-1 text-primary font-bold hover:underline">
-                                        загрузите ассет
-                                    </button>
+                                <div className="flex flex-col items-center justify-center p-4 text-white/30 hover:text-primary/80 transition-colors cursor-pointer" onClick={() => sourceFileInputRef.current?.click()}>
+                                    <span className="material-symbols-outlined text-5xl mb-2">upload_file</span>
+                                    <p className="text-xs font-bold">Перетащите или кликните</p>
                                 </div>
                             )}
                         </div>
@@ -224,95 +206,78 @@ export const IntegrationModal: React.FC<IntegrationModalProps> = ({ isOpen, onCl
                             className="hidden"
                         />
                     </div>
-                    <ImagePanel 
-                        imageUrl={config.targetFrame.imageUrls[config.targetFrame.activeVersionIndex]} 
-                        label="Целевой кадр"
-                        onZoom={onZoomImage}
-                    />
-                    <ImagePanel 
-                        imageUrl={resultImageUrl} 
-                        label="Результат" 
-                        isLoading={isIntegrating} 
-                        isResult 
-                        onZoom={onZoomImage}
-                    />
+                    <ImagePanel imageUrl={config.targetFrame.imageUrls[config.targetFrame.activeVersionIndex]} label="Целевой кадр" onZoom={onZoomImage} />
+                    <ImagePanel imageUrl={resultImageUrl} label="Результат AI" isLoading={isIntegrating} isResult onZoom={onZoomImage} />
                 </div>
 
-                {/* Controls Section */}
-                <div className="shrink-0 pt-4 border-t border-white/10">
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                        {/* Column 1: Mode Selection */}
+                <div className="shrink-0 p-6 bg-white/5 rounded-b-2xl border-t border-white/10 backdrop-blur-md">
+                    <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
                         <div className="flex flex-col gap-3">
-                             <h4 className="text-sm font-bold text-white/80">Режим</h4>
-                             <div className="flex flex-col gap-1 p-1 bg-black/20 rounded-lg">
-                                <button onClick={() => setIntegrationMode('object')} className={`flex items-center gap-3 w-full p-2 rounded-md text-sm font-bold transition-colors text-left ${integrationMode === 'object' ? 'bg-primary text-white' : 'text-white/80 hover:bg-white/10'}`}>
-                                    <span className="material-symbols-outlined">place_item</span> Интегрировать объект
+                             <h4 className="text-xs font-bold text-white/60 uppercase tracking-wider">Режим интеграции</h4>
+                             <div className="flex flex-col gap-2">
+                                <button onClick={() => setIntegrationMode('object')} className={`glass-button flex items-center gap-3 w-full p-3 rounded-lg text-sm font-bold ${integrationMode === 'object' ? 'bg-primary/20 border-primary text-white' : 'text-white/60'}`}>
+                                    <span className="material-symbols-outlined">place_item</span> Интеграция объекта
                                 </button>
-                                <button onClick={() => setIntegrationMode('style')} className={`flex items-center gap-3 w-full p-2 rounded-md text-sm font-bold transition-colors text-left ${integrationMode === 'style' ? 'bg-primary text-white' : 'text-white/80 hover:bg-white/10'}`}>
-                                    <span className="material-symbols-outlined">style</span> Применить стиль
+                                <button onClick={() => setIntegrationMode('style')} className={`glass-button flex items-center gap-3 w-full p-3 rounded-lg text-sm font-bold ${integrationMode === 'style' ? 'bg-primary/20 border-primary text-white' : 'text-white/60'}`}>
+                                    <span className="material-symbols-outlined">palette</span> Стиль / Текстура
                                 </button>
-                                <button onClick={() => setIntegrationMode('background')} className={`flex items-center gap-3 w-full p-2 rounded-md text-sm font-bold transition-colors text-left ${integrationMode === 'background' ? 'bg-primary text-white' : 'text-white/80 hover:bg-white/10'}`}>
-                                    <span className="material-symbols-outlined">landscape</span> Заменить фон
+                                <button onClick={() => setIntegrationMode('background')} className={`glass-button flex items-center gap-3 w-full p-3 rounded-lg text-sm font-bold ${integrationMode === 'background' ? 'bg-primary/20 border-primary text-white' : 'text-white/60'}`}>
+                                    <span className="material-symbols-outlined">wallpaper</span> Замена фона
                                 </button>
                              </div>
                         </div>
                         
-                        {/* Column 2 & 3: Manual Controls */}
-                        <div className="md:col-span-2 grid grid-cols-1 md:grid-cols-2 gap-6">
-                             <div className="flex flex-col gap-2">
-                                <label className="text-sm font-bold text-white/80" htmlFor="manual-prompt-textarea">Ручная настройка</label>
-                                <textarea
+                        <div className="lg:col-span-2 flex flex-col gap-4">
+                            <div className="flex items-center justify-between">
+                                <label className="text-xs font-bold text-white/60 uppercase tracking-wider">Промт / Инструкция</label>
+                                <button onClick={() => { setManualPrompt(''); setUiMode('auto'); }} className="text-[10px] font-bold text-primary hover:underline uppercase tracking-wide">Авто-режим</button>
+                            </div>
+                             <div className="flex gap-4 h-full">
+                                 <textarea
                                     id="manual-prompt-textarea"
                                     value={manualPrompt}
-                                    onChange={(e) => {
-                                        setManualPrompt(e.target.value)
-                                        setUiMode('manual')
-                                    }}
+                                    onChange={(e) => { setManualPrompt(e.target.value); setUiMode('manual'); }}
                                     placeholder={placeholders[integrationMode]}
-                                    className="w-full flex-1 bg-white/5 p-3 rounded-lg text-sm text-white/90 placeholder:text-white/40 focus:ring-2 focus:ring-primary border-none resize-none"
-                                    aria-label="Manual integration instruction"
+                                    className="flex-1 glass-input p-4 rounded-lg text-sm placeholder:text-white/20 resize-none"
                                 />
-                                <button onClick={() => { setManualPrompt(''); setUiMode('auto'); }} className="text-xs text-cyan-400 hover:underline self-start">Сбросить и использовать авто-режим</button>
+                                <div className="w-1/3 flex flex-col gap-2">
+                                    <div className="flex items-center justify-between px-1">
+                                        <span className="text-[10px] font-bold text-white/40 uppercase">Идеи AI</span>
+                                        <button onClick={fetchSuggestions} disabled={isLoadingSuggestions || !sourceAsset} className="text-white/50 hover:text-white transition-colors disabled:opacity-30">
+                                            <span className={`material-symbols-outlined text-sm ${isLoadingSuggestions ? 'animate-spin' : ''}`}>refresh</span>
+                                        </button>
+                                    </div>
+                                    <div className="flex-1 overflow-y-auto custom-scrollbar flex flex-col gap-2">
+                                         {suggestions.length > 0 ? (
+                                            suggestions.map((s, i) => (
+                                                <button key={i} onClick={() => { setManualPrompt(s); setUiMode('manual'); }} className="glass-button p-2 rounded-lg text-xs text-left text-white/70">
+                                                    {s}
+                                                </button>
+                                            ))
+                                        ) : (
+                                            <div className="h-full flex items-center justify-center text-xs text-white/30 text-center p-2 border-2 border-dashed border-white/5 rounded-lg">
+                                                {sourceAsset ? "Нажми обновить для идей" : "Нужен ассет"}
+                                            </div>
+                                        )}
+                                    </div>
+                                </div>
                             </div>
-                            <fieldset disabled={!sourceAsset} className="flex flex-col gap-2 disabled:opacity-50 transition-opacity">
-                                <div className="flex items-center justify-between">
-                                    <h4 className="text-sm font-bold text-white/80">Идеи от AI</h4>
-                                    <button onClick={fetchSuggestions} disabled={isLoadingSuggestions || !sourceAsset} className="text-white/60 hover:text-white disabled:text-white/30 disabled:cursor-wait p-1 rounded-full" title="Сгенерировать новые идеи">
-                                        <span className={`material-symbols-outlined text-lg ${isLoadingSuggestions ? 'animate-spin' : ''}`}>refresh</span>
-                                    </button>
-                                </div>
-                                <div className="flex-1 grid grid-cols-2 gap-2">
-                                    {isLoadingSuggestions ? (
-                                        Array.from({ length: 4 }).map((_, i) => <div key={i} className="h-full bg-white/5 rounded-lg animate-pulse min-h-[60px]"></div>)
-                                    ) : suggestions.length > 0 ? (
-                                        suggestions.slice(0, 4).map((s, i) => (
-                                            <button key={i} onClick={() => { setManualPrompt(s); setUiMode('manual'); }} className="p-2 bg-white/5 rounded-lg text-xs text-center text-white/80 hover:bg-white/10 hover:text-white transition-colors flex items-center justify-center">
-                                                {s}
-                                            </button>
-                                        ))
-                                    ) : (
-                                        <div className="col-span-2 text-xs text-white/50 text-center py-4 bg-white/5 rounded-lg flex items-center justify-center">
-                                            {sourceAsset ? "Не удалось сгенерировать идеи." : "Загрузите ассет, чтобы получить идеи."}
-                                        </div>
-                                    )}
-                                </div>
-                            </fieldset>
                         </div>
                     </div>
-                </div>
 
-                {/* Footer Buttons */}
-                <div className="flex justify-end gap-3 mt-4 pt-4 border-t border-white/10 shrink-0">
-                    <button onClick={onClose} className="flex min-w-[84px] cursor-pointer items-center justify-center overflow-hidden rounded-lg h-10 px-4 bg-white/10 text-white text-sm font-bold hover:bg-white/20">
-                        Отмена
-                    </button>
-                    <button 
-                        onClick={handleIntegrate}
-                        disabled={isIntegrating || !sourceAsset}
-                        className="flex min-w-[180px] cursor-pointer items-center justify-center overflow-hidden rounded-lg h-10 px-4 bg-primary text-white text-sm font-bold hover:bg-primary/90 disabled:bg-primary/50 disabled:cursor-not-allowed"
-                    >
-                        {isIntegrating ? 'Применение...' : mainButtonLabels[integrationMode]}
-                    </button>
+                    <div className="flex justify-end gap-3 mt-6">
+                        <button onClick={onClose} className="glass-button px-5 py-2.5 rounded-lg text-sm font-medium text-white/70">
+                            Отмена
+                        </button>
+                        <button 
+                            onClick={handleIntegrate}
+                            disabled={isIntegrating || !sourceAsset}
+                            className="glass-button-primary px-8 py-2.5 rounded-lg text-white text-sm font-bold flex items-center gap-2"
+                        >
+                            {isIntegrating ? <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" /> : <span className="material-symbols-outlined text-lg">auto_awesome</span>}
+                            <span>{isIntegrating ? 'Генерация...' : mainButtonLabels[integrationMode]}</span>
+                        </button>
+                    </div>
                 </div>
             </div>
         </div>

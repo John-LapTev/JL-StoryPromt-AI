@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useRef } from 'react';
 import type { Frame } from '../types';
 
@@ -51,7 +52,12 @@ export const ImageViewerModal: React.FC<ImageViewerModalProps> = ({ frames, star
     }
     
     const currentFrame = frames[currentIndex];
-    const activeImageUrl = currentFrame.imageUrls[currentFrame.activeVersionIndex];
+    const isGenerating = currentFrame.isGenerating;
+    const hasError = currentFrame.hasError;
+    // Only access imageUrl if it exists and is not generating (unless optimistic update provided)
+    const activeImageUrl = (!isGenerating && !hasError && currentFrame.imageUrls.length > 0) 
+        ? currentFrame.imageUrls[currentFrame.activeVersionIndex] 
+        : null;
 
     return (
         <div
@@ -63,11 +69,25 @@ export const ImageViewerModal: React.FC<ImageViewerModalProps> = ({ frames, star
             <div className="relative w-full h-full flex flex-col items-center" onClick={e => e.stopPropagation()}>
                 {/* Main Image Display */}
                 <div className="flex-1 flex items-center justify-center w-full min-h-0 relative">
-                     <img
-                        src={activeImageUrl}
-                        alt={`Enlarged frame view ${currentIndex + 1}`}
-                        className="object-contain max-w-full max-h-full rounded-lg shadow-2xl"
-                    />
+                     {isGenerating ? (
+                         <div className="flex flex-col items-center justify-center text-white gap-4">
+                             <div className="w-12 h-12 border-4 border-primary border-t-transparent rounded-full animate-spin"></div>
+                             <p className="font-bold text-lg animate-pulse">{currentFrame.generatingMessage || "Генерация..."}</p>
+                         </div>
+                     ) : hasError ? (
+                         <div className="flex flex-col items-center justify-center text-red-400 gap-4">
+                             <span className="material-symbols-outlined text-6xl">broken_image</span>
+                             <p className="font-bold text-lg">Ошибка загрузки изображения</p>
+                         </div>
+                     ) : activeImageUrl ? (
+                        <img
+                            src={activeImageUrl}
+                            alt={`Enlarged frame view ${currentIndex + 1}`}
+                            className="object-contain max-w-full max-h-full rounded-lg shadow-2xl"
+                        />
+                     ) : (
+                         <div className="text-white/50">Нет изображения</div>
+                     )}
                 </div>
 
                  {/* Navigation Buttons */}
@@ -101,15 +121,24 @@ export const ImageViewerModal: React.FC<ImageViewerModalProps> = ({ frames, star
                         <div className="flex items-center gap-3 overflow-x-auto pb-2">
                             {frames.map((frame, index) => (
                                 <div key={frame.id} className="relative shrink-0">
-                                    <img
-                                        ref={index === currentIndex ? activeThumbnailRef : null}
-                                        src={frame.imageUrls[frame.activeVersionIndex]}
-                                        alt={`Thumbnail ${index + 1}`}
-                                        className={`w-24 h-14 object-cover rounded-md cursor-pointer border-2 transition-all ${
-                                            currentIndex === index ? 'border-primary' : 'border-transparent opacity-60 hover:opacity-100'
-                                        }`}
-                                        onClick={() => setCurrentIndex(index)}
-                                    />
+                                    {frame.isGenerating ? (
+                                        <div 
+                                            className={`w-24 h-14 flex items-center justify-center bg-primary/10 rounded-md border-2 transition-all ${currentIndex === index ? 'border-primary' : 'border-transparent'}`}
+                                            onClick={() => setCurrentIndex(index)}
+                                        >
+                                            <div className="w-5 h-5 border-2 border-primary border-t-transparent rounded-full animate-spin"></div>
+                                        </div>
+                                    ) : (
+                                        <img
+                                            ref={index === currentIndex ? activeThumbnailRef : null}
+                                            src={frame.imageUrls[frame.activeVersionIndex]}
+                                            alt={`Thumbnail ${index + 1}`}
+                                            className={`w-24 h-14 object-cover rounded-md cursor-pointer border-2 transition-all ${
+                                                currentIndex === index ? 'border-primary' : 'border-transparent opacity-60 hover:opacity-100'
+                                            }`}
+                                            onClick={() => setCurrentIndex(index)}
+                                        />
+                                    )}
                                     <div className="absolute top-0.5 left-0.5 bg-black/60 text-white text-[10px] font-bold w-4 h-4 flex items-center justify-center rounded-full">{index + 1}</div>
                                 </div>
                             ))}

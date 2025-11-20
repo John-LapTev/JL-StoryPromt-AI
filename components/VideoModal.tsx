@@ -8,13 +8,22 @@ interface VideoModalProps {
 
 export const VideoModal: React.FC<VideoModalProps> = ({ videoUrl, onClose }) => {
     return (
-         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50" onClick={onClose}>
-            <div className="bg-[#191C2D] border border-white/10 rounded-xl p-4 flex flex-col items-center gap-4 text-white max-w-3xl w-full" onClick={e => e.stopPropagation()}>
-                <h3 className="text-xl font-bold">Сгенерированное видео</h3>
-                <video src={videoUrl} controls autoPlay className="w-full rounded-lg" />
-                 <button onClick={onClose} className="mt-2 flex min-w-[84px] max-w-[480px] cursor-pointer items-center justify-center overflow-hidden rounded-lg h-10 px-4 bg-primary text-white text-sm font-bold leading-normal tracking-[0.015em] gap-2 hover:bg-primary/90">
-                    Закрыть
-                </button>
+         <div className="fixed inset-0 bg-black/80 backdrop-blur-md flex items-center justify-center z-50 animate-fade-in" onClick={onClose}>
+            <div className="glass-modal rounded-2xl p-1 flex flex-col items-center gap-4 text-white max-w-3xl w-full" onClick={e => e.stopPropagation()}>
+                <div className="w-full p-4 flex items-center justify-between border-b border-white/10 bg-white/5 rounded-t-xl">
+                    <h3 className="text-xl font-bold font-display tracking-wide">Сгенерированное видео</h3>
+                    <button onClick={onClose} className="text-white/50 hover:text-white transition-colors">
+                        <span className="material-symbols-outlined">close</span>
+                    </button>
+                </div>
+                <div className="w-full p-4">
+                     <video src={videoUrl} controls autoPlay className="w-full rounded-lg border border-white/10 shadow-lg" />
+                </div>
+                 <div className="w-full p-4 flex justify-end border-t border-white/10 bg-white/5 rounded-b-xl">
+                     <button onClick={onClose} className="glass-button px-6 py-2 rounded-lg text-white text-sm font-bold">
+                        Закрыть
+                    </button>
+                 </div>
             </div>
         </div>
     );

@@ -59,7 +59,7 @@ export const ContextMenu: React.FC<ContextMenuProps> = ({ x, y, actions, onClose
         <div 
             ref={menuRef}
             style={{ top: position.y, left: position.x }}
-            className="absolute z-50 w-56 bg-[#191C2D] border border-white/10 rounded-lg shadow-lg p-1 animate-fade-in"
+            className="absolute z-50 w-56 glass-panel rounded-xl p-1.5 animate-fade-in"
         >
             {actions.map((action, index) => (
                 <button
@@ -68,13 +68,13 @@ export const ContextMenu: React.FC<ContextMenuProps> = ({ x, y, actions, onClose
                         action.onClick();
                         onClose();
                     }}
-                    className={`w-full text-left px-3 py-1.5 text-sm rounded-md flex items-center gap-3 ${
+                    className={`w-full text-left px-3 py-2 text-sm rounded-lg flex items-center gap-3 transition-colors ${
                         action.isDestructive 
-                        ? 'text-red-400 hover:bg-red-500/20' 
-                        : 'text-white/90 hover:bg-white/10'
+                        ? 'text-red-400 hover:bg-red-500/20 hover:text-red-300' 
+                        : 'text-white/90 hover:bg-white/10 hover:text-white'
                     }`}
                 >
-                    <span className="material-symbols-outlined text-base w-5 text-center">{action.icon}</span>
+                    <span className="material-symbols-outlined text-lg w-5 text-center">{action.icon}</span>
                     <span>{action.label}</span>
                 </button>
             ))}

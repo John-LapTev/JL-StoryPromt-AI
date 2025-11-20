@@ -1,5 +1,4 @@
 
-
 import React from 'react';
 import type { Project } from '../types';
 
@@ -16,51 +15,65 @@ export const ProjectLoadModal: React.FC<ProjectLoadModalProps> = ({ projects, cu
     const sortedProjects = [...projects].sort((a, b) => b.lastModified - a.lastModified);
 
     return (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4" onClick={onClose}>
-            <div className="bg-[#191C2D] border border-white/10 rounded-xl p-6 flex flex-col gap-4 text-white max-w-2xl w-full max-h-[80vh]" onClick={e => e.stopPropagation()}>
-                <div className="flex justify-between items-center">
-                    <h3 className="text-xl font-bold">Загрузить проект</h3>
-                    <button onClick={onNew} className="flex items-center justify-center rounded-lg h-10 px-4 bg-primary text-white text-sm font-bold gap-2 hover:bg-primary/90">
-                         <span className="material-symbols-outlined text-base">add</span>
-                        <span>Новый проект</span>
-                    </button>
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-md flex items-center justify-center z-50 p-4 animate-fade-in" onClick={onClose}>
+            <div className="glass-modal rounded-2xl p-1 flex flex-col max-w-2xl w-full max-h-[80vh]" onClick={e => e.stopPropagation()}>
+                <div className="p-6 border-b border-white/10 flex items-center justify-between shrink-0 bg-white/5 rounded-t-2xl backdrop-blur-md">
+                     <h3 className="text-xl font-bold font-display text-white tracking-wide">Проекты</h3>
+                     <div className="flex gap-4">
+                        <button onClick={onNew} className="flex items-center gap-2 text-primary hover:text-primary-light font-bold text-sm transition-colors">
+                            <span className="material-symbols-outlined text-lg">add_circle</span>
+                            Новый
+                        </button>
+                        <button onClick={onClose} className="text-white/50 hover:text-white transition-colors">
+                            <span className="material-symbols-outlined">close</span>
+                        </button>
+                     </div>
                 </div>
-                <div className="flex-1 overflow-y-auto pr-2 -mr-2">
+
+                <div className="flex-1 overflow-y-auto custom-scrollbar p-4">
                     <ul className="space-y-2">
                         {sortedProjects.length > 0 ? sortedProjects.map(project => (
-                            <li key={project.id} className="flex items-center justify-between p-3 bg-white/5 rounded-lg">
+                            <li key={project.id} className={`flex items-center justify-between p-4 rounded-xl border transition-all group glass-button ${project.id === currentProjectId ? 'bg-primary/10 border-primary/30' : 'bg-transparent hover:bg-white/5'}`}>
                                 <div>
-                                    <p className="font-bold text-white">{project.name}</p>
-                                    <p className="text-xs text-white/60">
-                                        Последнее изменение: {new Date(project.lastModified).toLocaleString()}
+                                    <div className="flex items-center gap-2">
+                                        <p className={`font-bold text-base ${project.id === currentProjectId ? 'text-primary-light' : 'text-white'}`}>{project.name}</p>
+                                        {project.id === currentProjectId && <span className="text-[10px] font-bold bg-primary/20 text-primary px-2 py-0.5 rounded-full uppercase">Текущий</span>}
+                                    </div>
+                                    <p className="text-xs text-white/40 mt-1 flex items-center gap-1">
+                                        <span className="material-symbols-outlined text-[14px]">schedule</span>
+                                        {new Date(project.lastModified).toLocaleString()}
                                     </p>
                                 </div>
-                                <div className="flex items-center gap-2">
-                                    {project.id !== 'demo-project' && (
-                                        <button
-                                            onClick={() => onDelete(project.id)}
-                                            className="flex size-8 items-center justify-center rounded-md text-white/60 hover:bg-red-500/20 hover:text-red-400"
-                                            title="Удалить"
-                                        >
-                                            <span className="material-symbols-outlined text-xl">delete</span>
-                                        </button>
-                                    )}
+                                <div className="flex items-center gap-2 opacity-60 group-hover:opacity-100 transition-opacity">
                                     <button
                                         onClick={() => onLoad(project.id)}
-                                        className="flex items-center justify-center rounded-md h-8 px-3 bg-white/10 text-white text-xs font-bold hover:bg-white/20"
                                         disabled={project.id === currentProjectId}
+                                        className="glass-button rounded-lg px-4 py-2 text-xs font-bold hover:bg-white/20 disabled:opacity-0"
                                     >
-                                        {project.id === currentProjectId ? 'Текущий' : 'Загрузить'}
+                                        Загрузить
                                     </button>
+                                     {project.id !== 'demo-project' && (
+                                        <button
+                                            onClick={() => onDelete(project.id)}
+                                            className="flex size-8 items-center justify-center rounded-lg text-white/40 hover:bg-red-500/10 hover:text-red-400 transition-colors"
+                                            title="Удалить"
+                                        >
+                                            <span className="material-symbols-outlined text-lg">delete</span>
+                                        </button>
+                                    )}
                                 </div>
                             </li>
                         )) : (
-                            <p className="text-center text-white/60 py-8">Сохраненных проектов нет.</p>
+                            <div className="flex flex-col items-center justify-center py-12 text-white/40">
+                                <span className="material-symbols-outlined text-5xl mb-2 opacity-50">folder_off</span>
+                                <p>Сохраненных проектов нет</p>
+                            </div>
                         )}
                     </ul>
                 </div>
-                 <div className="flex justify-end mt-2">
-                    <button onClick={onClose} className="flex min-w-[84px] cursor-pointer items-center justify-center overflow-hidden rounded-lg h-10 px-4 bg-white/10 text-white text-sm font-bold hover:bg-white/20">
+                 
+                 <div className="bg-white/5 p-4 rounded-b-2xl flex justify-end border-t border-white/10 shrink-0 backdrop-blur-md">
+                    <button onClick={onClose} className="glass-button px-5 py-2 rounded-lg text-sm font-medium text-white/70">
                         Закрыть
                     </button>
                 </div>

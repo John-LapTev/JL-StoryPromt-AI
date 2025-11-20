@@ -1,4 +1,3 @@
-
 import { GoogleGenAI, Type, Modality } from "@google/genai";
 import type { Frame, Asset, StorySettings, ActorDossier, Sketch } from '../types';
 import { fileToBase64, fetchCorsImage, dataUrlToFile } from '../utils/fileUtils';
@@ -165,14 +164,24 @@ export async function generateSinglePrompt(frameToUpdate: Frame, allFrames: Fram
             contextPrompt += `\nПромт следующего кадра: "${nextFrame.prompt}"`;
         }
 
-        contextPrompt += `\n\nОсновываясь на этом контексте, опиши предоставленное изображение для промта генерации видео. Сфокусируйся на действии, движении камеры и настроении, чтобы обеспечить плавный переход между кадрами. Выведи только сам текст промта на русском языке, без каких-либо дополнительных комментариев.`;
+        contextPrompt += `\n\nОсновываясь на этом контексте, опиши предоставленное изображение для промта генерации видео. Сфокусируйся на действии, движении камеры и настроении, чтобы обеспечить плавный переход между кадрами.`;
 
         const response = await ai.models.generateContent({
             model: 'gemini-2.5-flash',
             contents: { parts: [{ text: contextPrompt }, imagePart] },
+            config: {
+                 responseMimeType: "application/json",
+                 responseSchema: {
+                    type: Type.OBJECT,
+                    properties: {
+                        prompt: { type: Type.STRING, description: "The generated video prompt in Russian." }
+                    }
+                 }
+            }
         });
 
-        return response.text || "";
+        const json = JSON.parse(response.text || "{}");
+        return json.prompt || "";
     } catch (error) {
         handleApiError(error);
         return "";
@@ -305,9 +314,19 @@ export async function editImage(
         const promptGenResponse = await ai.models.generateContent({
             model: 'gemini-2.5-flash',
             contents: { parts: [{ text: promptGenText }, newImagePartForPromptGen] },
+             config: {
+                 responseMimeType: "application/json",
+                 responseSchema: {
+                    type: Type.OBJECT,
+                    properties: {
+                        prompt: { type: Type.STRING }
+                    }
+                 }
+            }
         });
 
-        const newPrompt = promptGenResponse.text?.trim() || `${originalFrame.prompt}, ${editInstruction}`;
+        const json = JSON.parse(promptGenResponse.text || "{}");
+        const newPrompt = json.prompt || `${originalFrame.prompt}, ${editInstruction}`;
 
         return { imageUrl: newImageUrl, prompt: newPrompt };
     } catch (error) {
@@ -382,8 +401,8 @@ export async function generateImageInContext(
 
         if (!newImageUrl) throw new Error("Failed to generate image.");
 
-        // Generate Prompt for the new image
-        const promptGenText = `Describe this image for a video generation prompt. Russian language.`;
+        // Generate Prompt for the new image using JSON Schema to strictly avoid conversational output
+        const promptGenText = `Describe this image for a video generation prompt. Russian language. Return JSON with a "prompt" field.`;
         const promptResponse = await ai.models.generateContent({
             model: 'gemini-2.5-flash',
             contents: { 
@@ -391,10 +410,21 @@ export async function generateImageInContext(
                     { text: promptGenText }, 
                     { inlineData: { mimeType: newImageMimeType, data: newImageBase64 } }
                 ] 
+            },
+            config: {
+                 responseMimeType: "application/json",
+                 responseSchema: {
+                    type: Type.OBJECT,
+                    properties: {
+                        prompt: { type: Type.STRING, description: "The generated video prompt in Russian." }
+                    },
+                    required: ["prompt"]
+                 }
             }
         });
 
-        return { imageUrl: newImageUrl, prompt: promptResponse.text?.trim() || userPrompt };
+        const json = JSON.parse(promptResponse.text || "{}");
+        return { imageUrl: newImageUrl, prompt: json.prompt || userPrompt };
 
     } catch (error) {
         handleApiError(error);
@@ -405,7 +435,8 @@ export async function generateImageInContext(
 export async function regenerateFrameImage(frame: Frame, allFrames: Frame[]): Promise<{ imageUrl: string; prompt: string }> {
     const index = allFrames.findIndex(f => f.id === frame.id);
     const left = index > 0 ? allFrames[index - 1] : null;
-    const right = index < allFrames.length - 1 ? allFrames[index + 1] : null;
+    const right = index < allFrames.length - 1 ? allFrames[index - 1] : null;
+    // Pass frame as currentFrame to trigger Identity Reference logic in generation
     return generateImageInContext(frame.prompt, left, right, frame);
 }
 
@@ -419,33 +450,47 @@ export async function adaptImageToStory(
         const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
         
         const inputParts: any[] = [];
+        
+        // 1. Source Image (The Subject)
         const { mimeType, data } = await urlOrFileToBase64(frameOrSketch);
         inputParts.push({ inlineData: { mimeType, data } });
 
-        let promptText = `Modify this image. Instruction: "${instruction}".`;
+        let promptText = `ROLE: You are an expert image editor/storyboard artist.
+    
+TASK: Adapt the FIRST image (SOURCE) according to the instruction, while adopting the visual style of the CONTEXT images.
+
+[SOURCE IMAGE]
+The first image provided is the SOURCE.
+CRITICAL: You MUST preserve the subject identity, pose, and composition of this Source image. Do not replace the main subject with characters from context images. If the source is a photo of a real person, keep their facial features recognizable, even if the style changes to cartoon.
+Instruction: "${instruction}".
+`;
 
         if (knownCharacterRef) {
-            // If we have a known character reference, pass it to the model
             try {
-                const refBlob = await fetchCorsImage(knownCharacterRef.adaptedUrl);
+                // Use the reference URL if provided (this might be the adapted version or original depending on logic)
+                // For strict identity, we might prefer the original if available in the logic layer.
+                const refBlob = await fetchCorsImage(knownCharacterRef.adaptedUrl); 
                 const refBase64 = await fileToBase64(new File([refBlob], "ref.png"));
                 const refData = refBase64.split(',')[1];
                 const refMime = refBlob.type;
                 inputParts.push({ inlineData: { mimeType: refMime, data: refData } });
-                promptText += `\n\nReference Character (Use this look): ${knownCharacterRef.characterDescription}`;
+                promptText += `\n[IDENTITY REFERENCE]
+The next image is the IDENTITY REFERENCE. Ensure the character in the output looks like this reference: "${knownCharacterRef.characterDescription}".`;
             } catch (e) {
                 console.warn("Failed to load character reference image", e);
             }
         }
 
-        // Add context for style if available
         if (contextFrames.length > 0) {
-            promptText += `\n\nMatch the style of the provided context images.`;
-            // Pick up to 2 neighbors
+            promptText += `\n\n[STYLE CONTEXT]
+The following images are for STYLE REFERENCE ONLY (color palette, rendering style, lighting). 
+DO NOT copy the characters, objects, or composition from these images. ONLY copy the artistic style.
+`;
             for (const ctxFrame of contextFrames.slice(0, 2)) {
                  try {
                     const { mimeType: m, data: d } = await urlOrFileToBase64(ctxFrame);
                     inputParts.push({ inlineData: { mimeType: m, data: d } });
+                    promptText += `\n[Context Image - Style Only]`;
                 } catch (e) {}
             }
         }
@@ -473,25 +518,45 @@ export async function adaptImageToStory(
 
         if (!newImageUrl) throw new Error("Failed to adapt image.");
 
-        // Analysis / Prompt generation
-        const descPrompt = `Describe this image in Russian. Also provide a JSON object with keys: subjectIdentity (string), roleLabel (short string), subjectType (character/object/location). Format: TEXT_DESCRIPTION | JSON_STRING`;
+        // Analysis / Prompt generation using Schema for robust parsing
+        const analysisPromptText = `Analyze the generated image. 
+        1. Create a detailed visual description for a video generation prompt (Russian).
+        2. Create a detailed dossier description of the main subject (Russian).
+        3. Identify the subject type (character, object, or location).
+        4. Create a meaningful short label (1-2 words) for the role/subject.`;
+
         const descResponse = await ai.models.generateContent({
             model: 'gemini-2.5-flash',
             contents: { 
                 parts: [
-                    { text: descPrompt }, 
+                    { text: analysisPromptText }, 
                     { inlineData: { mimeType: response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.mimeType || 'image/png', data: response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data || '' } }
                 ] 
+            },
+            config: {
+                responseMimeType: "application/json",
+                responseSchema: {
+                    type: Type.OBJECT,
+                    properties: {
+                        visualPrompt: { type: Type.STRING, description: "A detailed visual description for video generation prompt." },
+                        dossierDescription: { type: Type.STRING, description: "A detailed description of the character/object for the dossier." },
+                        roleLabel: { type: Type.STRING, description: "A very short label (1-2 words), e.g. 'Protagonist', 'Red Car'." },
+                        subjectType: { type: Type.STRING, enum: ["character", "object", "location"] }
+                    },
+                    required: ["visualPrompt", "dossierDescription", "roleLabel", "subjectType"]
+                }
             }
         });
 
-        const textOutput = descResponse.text?.trim() || "";
-        const parts = textOutput.split('|');
-        const finalPrompt = parts[0].trim();
-        let analysis = {};
-        try {
-            if (parts[1]) analysis = JSON.parse(parts[1].trim());
-        } catch (e) {}
+        const json = JSON.parse(descResponse.text || "{}");
+
+        // Check if fields are present, fallback if something went wrong (rare with Schema)
+        const finalPrompt = json.visualPrompt || "Generated Image";
+        const analysis = {
+            subjectIdentity: json.dossierDescription || "Описание отсутствует", // Mapping long description to subjectIdentity for UI
+            roleLabel: json.roleLabel || "Объект",
+            subjectType: json.subjectType || "object"
+        };
 
         return { imageUrl: newImageUrl, prompt: finalPrompt, analysis };
 

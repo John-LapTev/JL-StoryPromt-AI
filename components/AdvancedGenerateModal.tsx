@@ -21,13 +21,11 @@ type EditHistoryItem = { imageUrl: string; prompt: string };
 const aspectRatios = ['16:9', '4:3', '1:1', '9:16'];
 
 export const AdvancedGenerateModal: React.FC<AdvancedGenerateModalProps> = ({ onClose, onGenerate, onApplyEdit, config, frames }) => {
-    // State for 'generate' mode
     const [generateModePrompt, setGenerateModePrompt] = useState('');
     const [suggestions, setSuggestions] = useState<string[]>([]);
     const [isLoadingSuggestions, setIsLoadingSuggestions] = useState(false);
     const [aspectRatio, setAspectRatio] = useState('16:9');
     
-    // State for 'edit' mode
     const [editInstruction, setEditInstruction] = useState('');
     const [editHistory, setEditHistory] = useState<EditHistoryItem[]>([]);
     const [historyIndex, setHistoryIndex] = useState(0);
@@ -43,10 +41,8 @@ export const AdvancedGenerateModal: React.FC<AdvancedGenerateModalProps> = ({ on
         setIsLoadingSuggestions(true);
         setSuggestions([]);
         try {
-            // For sketch mode, there's no context
             const leftCtx = config.mode === 'generate-sketch' ? null : leftFrame;
             const rightCtx = config.mode === 'generate-sketch' ? null : rightFrame;
-
             const newSuggestions = await generatePromptSuggestions(leftCtx, rightCtx);
             setSuggestions(newSuggestions);
         } catch (error) {
@@ -58,11 +54,9 @@ export const AdvancedGenerateModal: React.FC<AdvancedGenerateModalProps> = ({ on
 
     const fetchEditSuggestions = useCallback(async () => {
         if (!config.frameToEdit) return;
-        
         const currentIndex = frames.findIndex(f => f.id === config.frameToEdit!.id);
         const leftFrameCtx = currentIndex > 0 ? frames[currentIndex - 1] : null;
         const rightFrameCtx = currentIndex < frames.length - 1 ? frames[currentIndex + 1] : null;
-
         setIsLoadingSuggestions(true);
         setSuggestions([]);
         try {
@@ -109,11 +103,9 @@ export const AdvancedGenerateModal: React.FC<AdvancedGenerateModalProps> = ({ on
     
     const handlePerformEdit = async () => {
         if (!editInstruction.trim() || isGeneratingEdit || !config.frameToEdit) return;
-        
         setIsGeneratingEdit(true);
         try {
             const currentHistoryItem = editHistory[historyIndex];
-            
             const tempFrameForEdit: Omit<Frame, 'file'> = {
                 id: config.frameToEdit.id,
                 imageUrls: [currentHistoryItem.imageUrl],
@@ -121,17 +113,12 @@ export const AdvancedGenerateModal: React.FC<AdvancedGenerateModalProps> = ({ on
                 prompt: currentHistoryItem.prompt,
                 duration: config.frameToEdit.duration,
             };
-
-            const { imageUrl: newImageUrl, prompt: newPrompt } = await editImage(
-                tempFrameForEdit,
-                editInstruction
-            );
-
+            const { imageUrl: newImageUrl, prompt: newPrompt } = await editImage(tempFrameForEdit, editInstruction);
             const newHistory = editHistory.slice(0, historyIndex + 1);
             newHistory.push({ imageUrl: newImageUrl, prompt: newPrompt });
             setEditHistory(newHistory);
             setHistoryIndex(newHistory.length - 1);
-            setEditInstruction(''); // Clear instruction field after use
+            setEditInstruction(''); 
         } catch (error) {
             console.error("Error performing edit:", error);
             alert(`Не удалось отредактировать изображение: ${error instanceof Error ? error.message : String(error)}`);
@@ -151,11 +138,11 @@ export const AdvancedGenerateModal: React.FC<AdvancedGenerateModalProps> = ({ on
     };
 
     const ContextFrame: React.FC<{ frame: Frame | null, label: string }> = ({ frame, label }) => (
-        <div className="flex flex-col gap-2 text-center">
-            <h4 className="text-sm font-bold text-white/60">{label}</h4>
-            <div className="aspect-video w-full rounded-lg bg-black/30 flex items-center justify-center border border-white/10">
+        <div className="flex flex-col gap-2 text-center bg-white/5 p-3 rounded-xl border border-white/5">
+            <h4 className="text-xs font-bold text-white/60 uppercase tracking-wider">{label}</h4>
+            <div className="aspect-video w-full rounded-lg bg-black/30 flex items-center justify-center border border-white/10 overflow-hidden">
                 {frame ? (
-                    <img src={frame.imageUrls[frame.activeVersionIndex]} alt={label} className="max-h-full max-w-full object-contain rounded-md" />
+                    <img src={frame.imageUrls[frame.activeVersionIndex]} alt={label} className="w-full h-full object-cover" />
                 ) : (
                     <span className="material-symbols-outlined text-4xl text-white/20">image</span>
                 )}
@@ -165,12 +152,11 @@ export const AdvancedGenerateModal: React.FC<AdvancedGenerateModalProps> = ({ on
 
     const renderGenerateMode = () => (
         <>
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 flex-1 min-h-0 overflow-y-auto p-1">
-                {/* Left Column - Context & Suggestions */}
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 flex-1 min-h-0 overflow-y-auto p-6 custom-scrollbar">
                 <div className="flex flex-col gap-6">
                      {config.mode === 'generate' && (
-                        <div>
-                            <h3 className="text-base font-bold text-white/80 border-b border-white/10 pb-2 mb-4">Контекст сюжета</h3>
+                        <div className="flex flex-col gap-3">
+                            <h3 className="text-xs font-bold text-white/60 uppercase tracking-wider">Контекст сюжета</h3>
                             <div className="grid grid-cols-2 gap-4">
                                 <ContextFrame frame={leftFrame} label="Кадр до" />
                                 <ContextFrame frame={rightFrame} label="Кадр после" />
@@ -178,76 +164,77 @@ export const AdvancedGenerateModal: React.FC<AdvancedGenerateModalProps> = ({ on
                         </div>
                     )}
     
-                    <div className="flex flex-col gap-2">
+                    <div className="flex flex-col gap-3">
                         <div className="flex items-center justify-between">
-                            <h4 className="text-sm font-bold text-white/80">Идеи от AI</h4>
-                            <button onClick={fetchGenerateSuggestions} disabled={isLoadingSuggestions} className="text-white/60 hover:text-white disabled:text-white/30 disabled:cursor-wait p-1 rounded-full" title="Сгенерировать новые идеи">
-                                <span className={`material-symbols-outlined text-lg ${isLoadingSuggestions ? 'animate-spin' : ''}`}>refresh</span>
+                            <h4 className="text-xs font-bold text-white/60 uppercase tracking-wider">Идеи от AI</h4>
+                            <button onClick={fetchGenerateSuggestions} disabled={isLoadingSuggestions} className="text-white/50 hover:text-white disabled:text-white/20 transition-colors" title="Обновить">
+                                <span className={`material-symbols-outlined text-sm ${isLoadingSuggestions ? 'animate-spin' : ''}`}>refresh</span>
                             </button>
                         </div>
                         {isLoadingSuggestions ? (
                             <div className="grid grid-cols-2 gap-3">
-                                {Array.from({ length: 4 }).map((_, i) => <div key={i} className="h-20 bg-white/5 rounded-lg animate-pulse"></div>)}
+                                {Array.from({ length: 4 }).map((_, i) => <div key={i} className="h-16 bg-white/5 rounded-lg animate-pulse"></div>)}
                             </div>
                         ) : suggestions.length > 0 ? (
                             <div className="grid grid-cols-2 gap-3">
                                 {suggestions.slice(0, 4).map((s, i) => (
-                                    <button key={i} onClick={() => setGenerateModePrompt(s)} className="p-3 min-h-[80px] bg-white/5 rounded-lg text-xs text-left text-white/80 hover:bg-white/10 hover:text-white transition-colors flex items-center justify-center text-center">
+                                    <button key={i} onClick={() => setGenerateModePrompt(s)} className="glass-button p-3 rounded-xl text-xs text-left text-white/80">
                                         {s}
                                     </button>
                                 ))}
                             </div>
                         ) : (
-                            <div className="text-xs text-white/50 text-center py-4 bg-white/5 rounded-lg">Не удалось сгенерировать идеи.</div>
+                            <div className="text-xs text-white/30 text-center py-4 border-2 border-dashed border-white/5 rounded-lg">Нет идей</div>
                         )}
                     </div>
                 </div>
     
-                {/* Right Column - Manual Prompt */}
-                <div className="flex flex-col gap-4">
+                <div className="flex flex-col gap-6">
                      {config.mode === 'generate-sketch' && (
-                        <div>
-                            <label className="text-sm font-bold text-white/80 mb-2 block" htmlFor="aspect-ratio-select">Соотношение сторон</label>
-                             <div className="relative">
+                        <div className="flex flex-col gap-2">
+                            <label className="text-xs font-bold text-white/60 uppercase tracking-wider" htmlFor="aspect-ratio-select">Соотношение сторон</label>
+                             <div className="relative group">
                                 <select
                                     id="aspect-ratio-select"
                                     value={aspectRatio}
                                     onChange={e => setAspectRatio(e.target.value)}
-                                    className="w-full appearance-none bg-white/5 px-3 py-2 rounded-lg text-sm font-bold text-white/90 focus:ring-2 focus:ring-primary border-none pr-8"
+                                    className="w-full appearance-none glass-input text-white/90 text-sm rounded-xl px-4 py-3"
                                 >
-                                    {aspectRatios.map(r => <option key={r} value={r} className="bg-[#191C2D] text-white">{r}</option>)}
+                                    {aspectRatios.map(r => <option key={r} value={r} className="bg-surface text-white">{r}</option>)}
                                 </select>
-                                <span className="material-symbols-outlined pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-white/50">
+                                <span className="material-symbols-outlined pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-white/50 group-hover:text-white/80 transition-colors">
                                     expand_more
                                 </span>
                             </div>
                         </div>
                     )}
                     <div className="flex flex-col gap-2 flex-1">
-                        <label className="text-sm font-bold text-white/80" htmlFor="manual-prompt-textarea">Введите промт вручную:</label>
+                        <label className="text-xs font-bold text-white/60 uppercase tracking-wider" htmlFor="manual-prompt-textarea">Ваш промт</label>
                         <textarea
                             id="manual-prompt-textarea"
                             value={generateModePrompt}
                             onChange={(e) => setGenerateModePrompt(e.target.value)}
-                            placeholder="Например: Крупный план, герой смотрит на неоновый город..."
-                            className="w-full flex-1 bg-white/5 p-3 rounded-lg text-sm text-white/90 placeholder:text-white/40 focus:ring-2 focus:ring-primary border-none resize-none"
-                            aria-label="Prompt for new frame"
+                            placeholder={config.mode === 'generate-sketch' ? "Опишите набросок, например: Схема космического корабля..." : "Опишите кадр, например: Крупный план героя под дождем..."}
+                            className="w-full flex-1 glass-input p-4 rounded-xl text-sm placeholder:text-white/30 resize-none custom-scrollbar leading-relaxed"
                         />
                     </div>
                 </div>
             </div>
-            <div className="flex justify-between items-center mt-4 pt-4 border-t border-white/10 shrink-0">
-                <div>
+            <div className="bg-white/5 p-4 rounded-b-2xl flex items-center justify-between border-t border-white/10 shrink-0 backdrop-blur-md">
+                 <div>
                      {config.mode === 'generate' && (
-                        <button onClick={handleAutoGenerateClick} disabled={!leftFrame || !rightFrame} className="flex min-w-[84px] cursor-pointer items-center justify-center overflow-hidden rounded-lg h-10 px-4 bg-white/20 text-white text-sm font-bold hover:bg-white/30 gap-2 disabled:opacity-50 disabled:cursor-not-allowed" title={!leftFrame || !rightFrame ? "Необходимы оба соседних кадра для автоматической генерации" : ""}>
-                            <span className="material-symbols-outlined text-base">auto_fix</span>
-                            Сгенерировать автоматически
+                        <button onClick={handleAutoGenerateClick} disabled={!leftFrame || !rightFrame} className="glass-button flex items-center gap-2 px-4 py-2 rounded-lg text-white/80 text-xs font-bold" title="Использовать контекст для генерации">
+                            <span className="material-symbols-outlined text-base text-primary">auto_fix</span>
+                            <span>Авто-режим</span>
                         </button>
                     )}
                 </div>
-                <div className="flex justify-end gap-3">
-                    <button onClick={onClose} className="flex min-w-[84px] cursor-pointer items-center justify-center overflow-hidden rounded-lg h-10 px-4 bg-white/10 text-white text-sm font-bold hover:bg-white/20">Отмена</button>
-                    <button onClick={handleGenerateClick} className="flex min-w-[84px] cursor-pointer items-center justify-center overflow-hidden rounded-lg h-10 px-4 bg-primary text-white text-sm font-bold hover:bg-primary/90">Создать</button>
+                <div className="flex gap-3">
+                    <button onClick={onClose} className="glass-button px-5 py-2.5 rounded-lg text-sm font-medium text-white/70 hover:text-white">Отмена</button>
+                    <button onClick={handleGenerateClick} className="glass-button-primary px-6 py-2.5 rounded-lg text-sm font-bold flex items-center gap-2">
+                         <span className="material-symbols-outlined text-lg">add_circle</span>
+                        Создать
+                    </button>
                 </div>
             </div>
         </>
@@ -255,82 +242,82 @@ export const AdvancedGenerateModal: React.FC<AdvancedGenerateModalProps> = ({ on
 
     const renderEditMode = () => (
         <>
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 flex-1 min-h-0">
-                {/* Left Column - Image & History */}
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 flex-1 min-h-0 p-6 overflow-y-auto custom-scrollbar">
                 <div className="lg:col-span-2 flex flex-col gap-4">
-                    <div className="relative w-full aspect-video bg-black/30 rounded-lg flex items-center justify-center overflow-hidden border border-white/10">
+                    <div className="relative w-full aspect-video bg-black/40 rounded-xl flex items-center justify-center overflow-hidden border border-white/10 shadow-inner">
                         {currentImage ? (
-                            <img src={currentImage} alt="Редактируемый кадр" className="max-h-full max-w-full object-contain" />
+                            <img src={currentImage} alt="Редактируемый кадр" className="w-full h-full object-contain" />
                         ) : (
                             <div className="text-white/50">Изображение не загружено</div>
                         )}
                         {isGeneratingEdit && (
-                            <div className="absolute inset-0 bg-black/70 backdrop-blur-sm flex flex-col items-center justify-center text-white gap-2">
-                                <div className="w-10 h-10 border-4 border-primary border-t-transparent rounded-full animate-spin"></div>
-                                <p className="font-medium">Применяем магию...</p>
+                            <div className="absolute inset-0 bg-black/70 backdrop-blur-sm flex flex-col items-center justify-center text-white gap-3">
+                                <div className="w-12 h-12 border-4 border-primary border-t-transparent rounded-full animate-spin shadow-neon"></div>
+                                <p className="font-bold text-sm tracking-wide animate-pulse">Применение изменений...</p>
                             </div>
                         )}
                     </div>
-                    <div className="flex items-center justify-center gap-4 shrink-0">
-                        <button onClick={handleUndo} disabled={historyIndex === 0 || isGeneratingEdit} className="flex items-center gap-2 px-3 py-1 rounded-md bg-white/10 text-white/80 hover:bg-white/20 disabled:opacity-40 disabled:cursor-not-allowed">
-                            <span className="material-symbols-outlined">undo</span>
+                    <div className="flex items-center justify-center gap-6 shrink-0 py-2 bg-white/5 rounded-xl border border-white/5">
+                        <button onClick={handleUndo} disabled={historyIndex === 0 || isGeneratingEdit} className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-white/70 hover:text-white hover:bg-white/10 disabled:opacity-30 disabled:hover:bg-transparent transition-colors text-xs font-bold uppercase tracking-wide">
+                            <span className="material-symbols-outlined text-lg">undo</span>
                             Отменить
                         </button>
-                        <div className="text-sm font-mono text-white/60 select-none">
-                            {historyIndex + 1} / {editHistory.length}
+                        <div className="text-xs font-mono font-bold text-white/50 select-none bg-black/30 px-3 py-1 rounded-md border border-white/5">
+                            ШАГ {historyIndex + 1} / {editHistory.length}
                         </div>
-                        <button onClick={handleRedo} disabled={historyIndex >= editHistory.length - 1 || isGeneratingEdit} className="flex items-center gap-2 px-3 py-1 rounded-md bg-white/10 text-white/80 hover:bg-white/20 disabled:opacity-40 disabled:cursor-not-allowed">
-                            <span className="material-symbols-outlined">redo</span>
+                        <button onClick={handleRedo} disabled={historyIndex >= editHistory.length - 1 || isGeneratingEdit} className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-white/70 hover:text-white hover:bg-white/10 disabled:opacity-30 disabled:hover:bg-transparent transition-colors text-xs font-bold uppercase tracking-wide">
+                            <span className="material-symbols-outlined text-lg">redo</span>
                             Повторить
                         </button>
                     </div>
                 </div>
 
-                {/* Right Column - Controls */}
-                <div className="lg:col-span-1 flex flex-col gap-4 min-h-0">
-                    <div className="flex flex-col gap-2">
-                        <label className="text-sm font-bold text-white/80" htmlFor="edit-instruction-textarea">Ваша инструкция для редактирования:</label>
+                <div className="lg:col-span-1 flex flex-col gap-6 min-h-0">
+                    <div className="flex flex-col gap-2 flex-1">
+                        <label className="text-xs font-bold text-white/60 uppercase tracking-wider" htmlFor="edit-instruction-textarea">Инструкция</label>
                         <textarea
                             id="edit-instruction-textarea"
                             value={editInstruction}
                             onChange={(e) => setEditInstruction(e.target.value)}
-                            placeholder="Например: Сделать кадр в стиле аниме, добавить дождь..."
-                            className="w-full h-32 bg-white/5 p-3 rounded-lg text-sm text-white/90 placeholder:text-white/40 focus:ring-2 focus:ring-primary border-none resize-none"
-                            aria-label="Instruction for editing frame"
+                            placeholder="Что изменить? Например: Добавить дождь, сделать черно-белым..."
+                            className="w-full flex-1 glass-input p-4 rounded-xl text-sm placeholder:text-white/30 resize-none"
                         />
                     </div>
-                     <div className="flex flex-col gap-2 flex-1 min-h-0 overflow-y-auto pr-1">
+                     <div className="flex flex-col gap-3 flex-1 min-h-0">
                         <div className="flex items-center justify-between">
-                            <h4 className="text-sm font-bold text-white/80">Умные подсказки</h4>
-                            <button onClick={fetchEditSuggestions} disabled={isLoadingSuggestions} className="text-white/60 hover:text-white disabled:text-white/30 disabled:cursor-wait p-1 rounded-full" title="Сгенерировать новые подсказки">
-                                <span className={`material-symbols-outlined text-lg ${isLoadingSuggestions ? 'animate-spin' : ''}`}>refresh</span>
+                            <h4 className="text-xs font-bold text-white/60 uppercase tracking-wider">Подсказки</h4>
+                            <button onClick={fetchEditSuggestions} disabled={isLoadingSuggestions} className="text-white/50 hover:text-white disabled:text-white/20 transition-colors">
+                                <span className={`material-symbols-outlined text-sm ${isLoadingSuggestions ? 'animate-spin' : ''}`}>refresh</span>
                             </button>
                         </div>
-                        {isLoadingSuggestions ? (
-                            <div className="grid grid-cols-2 gap-3">
-                                {Array.from({ length: 4 }).map((_, i) => <div key={i} className="h-20 bg-white/5 rounded-lg animate-pulse"></div>)}
-                            </div>
-                        ) : suggestions.length > 0 ? (
-                            <div className="grid grid-cols-2 gap-3">
-                                {suggestions.slice(0, 4).map((s, i) => (
-                                    <button key={i} onClick={() => setEditInstruction(s)} className="p-3 min-h-[80px] bg-white/5 rounded-lg text-xs text-left text-white/80 hover:bg-white/10 hover:text-white transition-colors flex items-center justify-center text-center">
+                        <div className="flex-1 overflow-y-auto custom-scrollbar space-y-2 pr-1">
+                            {isLoadingSuggestions ? (
+                                <div className="space-y-2">
+                                    {Array.from({ length: 3 }).map((_, i) => <div key={i} className="h-12 bg-white/5 rounded-lg animate-pulse"></div>)}
+                                </div>
+                            ) : suggestions.length > 0 ? (
+                                suggestions.slice(0, 5).map((s, i) => (
+                                    <button key={i} onClick={() => setEditInstruction(s)} className="glass-button w-full p-3 rounded-lg text-xs text-left text-white/70">
                                         {s}
                                     </button>
-                                ))}
-                            </div>
-                        ) : (
-                             <div className="text-xs text-white/50 text-center py-4 bg-white/5 rounded-lg">Не удалось сгенерировать подсказки.</div>
-                        )}
+                                ))
+                            ) : (
+                                 <div className="text-xs text-white/30 text-center py-8 border-2 border-dashed border-white/5 rounded-lg">Нет подсказок</div>
+                            )}
+                        </div>
                     </div>
                 </div>
             </div>
-            <div className="flex justify-end gap-3 mt-4 pt-4 border-t border-white/10 shrink-0">
-                <button onClick={onClose} className="flex min-w-[84px] cursor-pointer items-center justify-center overflow-hidden rounded-lg h-10 px-4 bg-white/10 text-white text-sm font-bold hover:bg-white/20">Отмена</button>
-                <button onClick={handlePerformEdit} disabled={isGeneratingEdit || !editInstruction.trim()} className="flex min-w-[120px] cursor-pointer items-center justify-center overflow-hidden rounded-lg h-10 px-4 bg-white/20 text-white text-sm font-bold hover:bg-white/30 disabled:opacity-50 disabled:cursor-not-allowed">
+            
+            <div className="bg-white/5 p-4 rounded-b-2xl flex justify-end gap-3 border-t border-white/10 shrink-0 backdrop-blur-md">
+                <button onClick={onClose} className="glass-button px-5 py-2.5 rounded-lg text-sm font-medium text-white/70">Отмена</button>
+                <button onClick={handlePerformEdit} disabled={isGeneratingEdit || !editInstruction.trim()} className="glass-button px-6 py-2.5 rounded-lg text-primary-light text-sm font-bold hover:bg-primary/10 disabled:opacity-50 flex items-center gap-2">
+                    {isGeneratingEdit ? <span className="w-4 h-4 border-2 border-current border-t-transparent rounded-full animate-spin"/> : <span className="material-symbols-outlined text-lg">auto_awesome</span>}
                     {isGeneratingEdit ? 'Генерация...' : 'Сгенерировать'}
                 </button>
-                <button onClick={handleApply} disabled={!hasEdits || isGeneratingEdit} className="flex min-w-[140px] cursor-pointer items-center justify-center overflow-hidden rounded-lg h-10 px-4 bg-primary text-white text-sm font-bold hover:bg-primary/90 disabled:bg-primary/50 disabled:cursor-not-allowed">
-                    Применить и закрыть
+                <button onClick={handleApply} disabled={!hasEdits || isGeneratingEdit} className="glass-button-primary px-6 py-2.5 rounded-lg text-white text-sm font-bold flex items-center gap-2">
+                    <span className="material-symbols-outlined text-lg">check</span>
+                    Применить
                 </button>
             </div>
         </>
@@ -343,11 +330,27 @@ export const AdvancedGenerateModal: React.FC<AdvancedGenerateModalProps> = ({ on
             case 'edit': return 'Редактировать кадр';
         }
     }
+    
+    const modalIcon = () => {
+         switch(config.mode) {
+            case 'generate': return 'add_a_photo';
+            case 'generate-sketch': return 'draw';
+            case 'edit': return 'tune';
+        }
+    }
 
     return (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4" onClick={onClose}>
-            <div className="bg-[#191C2D] border border-white/10 rounded-xl p-6 flex flex-col gap-4 text-white max-w-5xl w-full h-[90vh]" onClick={e => e.stopPropagation()}>
-                <h3 className="text-xl font-bold shrink-0">{modalTitle()}</h3>
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-md flex items-center justify-center z-50 p-4 animate-fade-in" onClick={onClose}>
+            <div className="glass-modal rounded-2xl p-1 flex flex-col w-full max-w-5xl h-[90vh]" onClick={e => e.stopPropagation()}>
+                <div className="p-6 flex items-center justify-between border-b border-white/10 shrink-0 bg-white/5 rounded-t-2xl backdrop-blur-md">
+                     <div className="flex items-center gap-3">
+                        <span className="material-symbols-outlined text-primary text-2xl">{modalIcon()}</span>
+                        <h3 className="text-xl font-bold font-display text-white tracking-wide">{modalTitle()}</h3>
+                    </div>
+                    <button onClick={onClose} className="text-white/50 hover:text-white transition-colors">
+                        <span className="material-symbols-outlined">close</span>
+                    </button>
+                </div>
                 {config.mode === 'edit' ? renderEditMode() : renderGenerateMode()}
             </div>
         </div>

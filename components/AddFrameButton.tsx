@@ -11,53 +11,35 @@ interface AddFrameButtonProps {
 }
 
 export const AddFrameButton: React.FC<AddFrameButtonProps> = ({ 
-    index, 
-    onOpenMenu,
-    onDragOver,
-    onDrop,
-    isDropTarget,
-    onRegisterDropZone,
+    index, onOpenMenu, onDragOver, onDrop, isDropTarget, onRegisterDropZone,
 }) => {
     const buttonRef = useRef<HTMLButtonElement>(null);
     const dropZoneRef = useRef<HTMLDivElement>(null);
 
     useEffect(() => {
         const element = dropZoneRef.current;
-        if (element && onRegisterDropZone) {
-            onRegisterDropZone(index, element);
-        }
-        return () => {
-            if (onRegisterDropZone) {
-                onRegisterDropZone(index, null);
-            }
-        };
+        if (element && onRegisterDropZone) { onRegisterDropZone(index, element); }
+        return () => { if (onRegisterDropZone) { onRegisterDropZone(index, null); } };
     }, [index, onRegisterDropZone]);
 
-    const handleClick = () => {
-        if (buttonRef.current) {
-            onOpenMenu(index, buttonRef.current.getBoundingClientRect());
-        }
-    };
-    
-    const dropZoneClasses = isDropTarget ? 'bg-primary/20' : '';
-    const buttonClasses = isDropTarget 
-        ? 'border-primary scale-110'
-        : 'border-white/20 group-hover:border-white/40 group-hover:text-white/80';
+    const handleClick = () => { if (buttonRef.current) { onOpenMenu(index, buttonRef.current.getBoundingClientRect()); } };
     
     return (
         <div 
             ref={dropZoneRef}
-            className={`group shrink-0 h-[228px] flex items-center justify-center px-2 transition-colors ${dropZoneClasses}`}
+            className={`group shrink-0 flex items-center justify-center px-1 transition-all duration-200 w-14 h-[135px] ${isDropTarget ? 'w-20' : ''}`}
             onDragOver={onDragOver}
             onDrop={onDrop}
         >
-            <button
-                ref={buttonRef}
-                onClick={handleClick}
-                className={`flex flex-col items-center justify-center rounded-lg border-2 border-dashed w-12 h-full p-2 text-white/50 transition-all duration-200 ${buttonClasses}`}
-            >
-                <span className="material-symbols-outlined text-3xl">add</span>
-            </button>
+            <div className={`h-full w-[2px] bg-white/5 group-hover:bg-primary/50 transition-colors rounded-full relative ${isDropTarget ? 'bg-primary w-1' : ''}`}>
+                <button
+                    ref={buttonRef}
+                    onClick={handleClick}
+                    className={`absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 size-6 rounded-full bg-surface border border-white/10 text-white/30 flex items-center justify-center transition-all duration-200 group-hover:scale-125 group-hover:border-primary group-hover:text-primary z-20 ${isDropTarget ? 'scale-150 border-primary text-primary' : ''}`}
+                >
+                    <span className="material-symbols-outlined text-[16px]">add</span>
+                </button>
+            </div>
         </div>
     );
 };

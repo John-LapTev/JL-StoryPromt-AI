@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useRef } from 'react';
 import { GoogleGenAI, Chat } from "@google/genai";
 import type { Frame } from '../types';
@@ -12,18 +13,17 @@ const ChatMessage: React.FC<ChatMessageProps> = ({ text, onGenerateFrame }) => {
     const parts = text.split(suggestionRegex);
 
     return (
-        <p className="text-sm whitespace-pre-wrap">
+        <p className="text-sm whitespace-pre-wrap leading-relaxed">
             {parts.map((part, index) => {
-                // Every odd index is a captured prompt
                 if (index % 2 === 1) {
                     return (
                         <button
                             key={index}
                             onClick={() => onGenerateFrame(part)}
-                            className="inline-flex items-center gap-2 text-left bg-primary/20 text-cyan-300 border border-primary/50 rounded-lg px-3 py-1.5 my-1 hover:bg-primary/40 transition-colors"
+                            className="inline-flex items-center gap-2 text-left w-full bg-primary/10 text-primary-light border border-primary/30 rounded-lg px-3 py-2 my-2 hover:bg-primary/20 transition-all group"
                         >
-                            <span className="material-symbols-outlined text-base">add_photo_alternate</span>
-                            <span>{part}</span>
+                            <span className="material-symbols-outlined text-base shrink-0 group-hover:scale-110 transition-transform">add_photo_alternate</span>
+                            <span className="italic">"{part}"</span>
                         </button>
                     );
                 }
@@ -32,7 +32,6 @@ const ChatMessage: React.FC<ChatMessageProps> = ({ text, onGenerateFrame }) => {
         </p>
     );
 };
-
 
 interface ChatbotProps {
     isOpen: boolean;
@@ -90,22 +89,17 @@ export const Chatbot: React.FC<ChatbotProps> = ({ isOpen, onClose, frames, onGen
         setIsLoading(true);
 
         try {
-             // Prepare context to send along with the user's prompt
             const contextHeader = "## КОНТЕКСТ ТЕКУЩЕГО ПРОЕКТА ##\n";
             const frameContext = frames.length > 0
                 ? frames.map((f, i) => `Кадр ${i + 1} (Длительность: ${f.duration}s): ${f.prompt || '(Без промта)'}`).join('\n')
                 : "Проект пуст.";
             const fullMessage = `${contextHeader}${frameContext}\n\n## ЗАПРОС ПОЛЬЗОВАТЕЛЯ ##\n${input}`;
-
             const responseStream = await chat.sendMessageStream({ message: fullMessage });
-            
             let botResponse = '';
-            // Add a placeholder message for the bot
             setMessages(prev => [...prev, { sender: 'bot', text: '' }]); 
 
             for await (const chunk of responseStream) {
                 botResponse += chunk.text;
-                // Update the last message (the bot's placeholder) in the stream
                 setMessages(prev => {
                     const newMessages = [...prev];
                     newMessages[newMessages.length - 1] = { sender: 'bot', text: botResponse };
@@ -114,7 +108,6 @@ export const Chatbot: React.FC<ChatbotProps> = ({ isOpen, onClose, frames, onGen
             }
         } catch (error) {
             console.error("Chat error:", error);
-            // Replace the bot placeholder with an error message
             setMessages(prev => {
                 const newMessages = [...prev];
                 newMessages[newMessages.length - 1] = { sender: 'bot', text: 'Извините, произошла ошибка.' };
@@ -126,31 +119,36 @@ export const Chatbot: React.FC<ChatbotProps> = ({ isOpen, onClose, frames, onGen
     };
 
     return (
-        <div className={`fixed top-0 right-0 h-full bg-[#191C2D] border-l border-white/10 shadow-2xl z-40 transition-transform duration-300 ease-in-out ${isOpen ? 'translate-x-0' : 'translate-x-full'} w-full max-w-md flex flex-col`}>
-            <div className="flex items-center justify-between p-4 border-b border-white/10 shrink-0">
-                <h3 className="text-lg font-bold text-white">
-                    JL Ассистент
-                </h3>
-                <button onClick={onClose} className="text-white/70 hover:text-white">
+        <div className={`fixed top-0 right-0 h-full glass-panel z-[60] transition-transform duration-300 ease-in-out ${isOpen ? 'translate-x-0' : 'translate-x-full'} w-full max-w-md flex flex-col border-l border-white/10 shadow-glass`}>
+            <div className="flex items-center justify-between p-5 border-b border-white/10 shrink-0 bg-white/5 backdrop-blur-md">
+                <div className="flex items-center gap-3">
+                    <div className="size-2 rounded-full bg-green-400 animate-pulse shadow-[0_0_10px_rgba(74,222,128,0.5)]"></div>
+                    <h3 className="text-lg font-bold font-display text-white tracking-wide">AI Ассистент</h3>
+                </div>
+                <button onClick={onClose} className="text-white/50 hover:text-white transition-colors">
                     <span className="material-symbols-outlined">close</span>
                 </button>
             </div>
 
-            <div className="flex-1 p-4 overflow-y-auto space-y-4">
+            <div className="flex-1 p-4 overflow-y-auto space-y-4 custom-scrollbar bg-transparent">
                 {messages.map((msg, index) => (
-                    <div key={index} className={`flex gap-3 ${msg.sender === 'user' ? 'justify-end' : 'justify-start'}`}>
-                        <div className={`max-w-xs md:max-w-sm rounded-xl px-4 py-2 ${msg.sender === 'user' ? 'bg-primary text-white rounded-br-none' : 'bg-white/10 text-white/90 rounded-bl-none'}`}>
-                           {msg.sender === 'bot' ? (
-                                <ChatMessage text={msg.text} onGenerateFrame={onGenerateFrame} />
-                            ) : (
-                                <p className="text-sm whitespace-pre-wrap">{msg.text}</p>
-                            )}
+                    <div key={index} className={`flex gap-3 animate-fade-in ${msg.sender === 'user' ? 'justify-end' : 'justify-start'}`}>
+                         {msg.sender === 'bot' && (
+                            <div className="size-8 rounded-full bg-primary/20 border border-primary/30 flex items-center justify-center shrink-0 mt-1">
+                                <span className="material-symbols-outlined text-primary text-sm">smart_toy</span>
+                            </div>
+                        )}
+                        <div className={`max-w-[85%] rounded-2xl px-4 py-3 shadow-sm border ${msg.sender === 'user' ? 'bg-primary/20 border-primary/50 text-white rounded-br-none' : 'bg-white/10 border-white/10 text-white/90 rounded-bl-none'}`}>
+                           {msg.sender === 'bot' ? <ChatMessage text={msg.text} onGenerateFrame={onGenerateFrame} /> : <p className="text-sm whitespace-pre-wrap leading-relaxed">{msg.text}</p>}
                         </div>
                     </div>
                 ))}
                  {isLoading && messages[messages.length - 1]?.sender !== 'bot' && (
                      <div className="flex gap-3 justify-start">
-                         <div className="max-w-xs md:max-w-sm rounded-xl px-4 py-2 bg-white/10 text-white/90 rounded-bl-none">
+                          <div className="size-8 rounded-full bg-primary/20 border border-primary/30 flex items-center justify-center shrink-0 mt-1">
+                                <span className="material-symbols-outlined text-primary text-sm">smart_toy</span>
+                            </div>
+                         <div className="max-w-xs rounded-2xl px-4 py-4 bg-white/5 border border-white/10 text-white/90 rounded-bl-none">
                             <div className="flex gap-1.5 items-center">
                                 <div className="size-1.5 bg-white/50 rounded-full animate-pulse delay-0"></div>
                                 <div className="size-1.5 bg-white/50 rounded-full animate-pulse delay-150"></div>
@@ -162,18 +160,18 @@ export const Chatbot: React.FC<ChatbotProps> = ({ isOpen, onClose, frames, onGen
                 <div ref={messagesEndRef} />
             </div>
 
-            <div className="p-4 border-t border-white/10 shrink-0">
-                <form onSubmit={handleSend} className="flex items-center gap-3">
+            <div className="p-4 border-t border-white/10 shrink-0 bg-white/5 backdrop-blur-md">
+                <form onSubmit={handleSend} className="relative">
                     <input
                         type="text"
                         value={input}
                         onChange={(e) => setInput(e.target.value)}
-                        placeholder="Спросите что-нибудь..."
-                        className="w-full bg-white/5 p-2 rounded-lg text-sm text-white/90 placeholder:text-white/40 focus:ring-2 focus:ring-primary border-none"
+                        placeholder="Задайте вопрос или попросите идею..."
+                        className="w-full glass-input rounded-xl pl-4 pr-12 py-3.5 text-sm placeholder:text-white/30"
                         disabled={isLoading}
                     />
-                    <button type="submit" disabled={isLoading || !input.trim()} className="flex items-center justify-center size-9 rounded-lg bg-primary text-white disabled:bg-gray-500">
-                        <span className="material-symbols-outlined">send</span>
+                    <button type="submit" disabled={isLoading || !input.trim()} className="absolute right-1.5 top-1.5 size-9 rounded-lg bg-primary/80 text-white flex items-center justify-center hover:bg-primary hover:shadow-neon transition-all disabled:opacity-50 disabled:shadow-none disabled:bg-transparent">
+                        <span className="material-symbols-outlined text-sm">send</span>
                     </button>
                 </form>
             </div>
