@@ -33,7 +33,8 @@ export interface Size {
 
 export interface Sketch {
   id: string;
-  imageUrl: string;
+  imageUrls: string[]; // Changed from single imageUrl to array
+  activeVersionIndex: number; // Track current version
   prompt: string;
   position: Position;
   size: Size;

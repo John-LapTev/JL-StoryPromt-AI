@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useCallback, useMemo, useRef, useLayoutEffect } from 'react';
 import type { Frame, Project, Asset, StorySettings, IntegrationConfig, Sketch, Note, Position, Size, AppSettings, ActorDossier } from './types';
 import { initialFrames, initialAssets } from './constants';
@@ -79,20 +78,26 @@ const hydrateFrame = async (frameData: Omit<Frame, 'file'>): Promise<Frame> => {
 
 
 const hydrateSketch = async (sketchData: Omit<Sketch, 'file'>): Promise<Sketch> => {
-    const { imageUrl } = sketchData;
+    // Handle migration from single imageUrl to imageUrls array
+    const imageUrls = (sketchData as any).imageUrls || [(sketchData as any).imageUrl];
+    const activeVersionIndex = (sketchData as any).activeVersionIndex || 0;
+    const activeImageUrl = imageUrls[activeVersionIndex];
+
     let file: File;
     try {
-        if (imageUrl.startsWith('data:')) {
-            file = dataUrlToFile(imageUrl, `sketch-${sketchData.id}.png`);
-        } else {
-            const blob = await fetchCorsImage(imageUrl);
+        if (activeImageUrl && activeImageUrl.startsWith('data:')) {
+            file = dataUrlToFile(activeImageUrl, `sketch-${sketchData.id}.png`);
+        } else if (activeImageUrl) {
+            const blob = await fetchCorsImage(activeImageUrl);
             file = new File([blob], `sketch-${sketchData.id}.png`, { type: blob.type });
+        } else {
+            file = new File([], `empty-sketch-${sketchData.id}.txt`, {type: 'text/plain'});
         }
     } catch (e) {
         console.error(`Could not create file for sketch image ${sketchData.id}:`, e);
         file = new File([], `failed-sketch-${sketchData.id}.txt`, {type: 'text/plain'});
     }
-    return { ...sketchData, file };
+    return { ...sketchData, imageUrls, activeVersionIndex, file };
 };
 
 
@@ -138,8 +143,13 @@ const SketchCard: React.FC<{
     onDragStart: (e: React.DragEvent, sketch: Sketch) => void;
     onDragEnd: () => void;
     onDrop: (e: React.DragEvent, sketch: Sketch) => void;
-}> = ({ sketch, isDragging, onContextMenu, onDragStart, onDragEnd, onDrop }) => {
+    onVersionChange: (sketchId: string, direction: 'prev' | 'next') => void;
+    onView: () => void;
+}> = ({ sketch, isDragging, onContextMenu, onDragStart, onDragEnd, onDrop, onVersionChange, onView }) => {
     const [isDragOver, setIsDragOver] = useState(false);
+    
+    const activeImageUrl = sketch.imageUrls[sketch.activeVersionIndex];
+    const hasVersions = sketch.imageUrls.length > 1;
 
     const handleDragOver = (e: React.DragEvent) => {
         e.preventDefault();
@@ -200,12 +210,13 @@ const SketchCard: React.FC<{
                     </div>
                 ) : null}
                 
-                {sketch.imageUrl ? (
+                {activeImageUrl ? (
                     <div
-                        className="w-full h-full bg-contain bg-no-repeat bg-center"
-                        style={{ backgroundImage: `url(${sketch.imageUrl})` }}
+                        className="w-full h-full bg-contain bg-no-repeat bg-center pointer-events-auto cursor-zoom-in"
+                        style={{ backgroundImage: `url(${activeImageUrl})` }}
                         role="img"
                         aria-label={sketch.prompt}
+                        onClick={onView}
                     ></div>
                 ) : (
                     <div className="w-full h-full flex items-center justify-center">
@@ -213,8 +224,34 @@ const SketchCard: React.FC<{
                     </div>
                 )}
                 
+                {/* Version Controls */}
+                {hasVersions && (
+                    <>
+                         <button 
+                            onClick={(e) => { e.stopPropagation(); onVersionChange(sketch.id, 'prev'); }} 
+                            disabled={sketch.activeVersionIndex === 0}
+                            className="absolute top-0 bottom-0 left-0 w-8 flex items-center justify-center bg-gradient-to-r from-black/60 to-transparent opacity-0 group-hover:opacity-100 hover:bg-black/70 transition-all z-30 disabled:hidden cursor-pointer pointer-events-auto"
+                            title="Предыдущая версия"
+                        >
+                            <span className="material-symbols-outlined text-white drop-shadow-lg">chevron_left</span>
+                        </button>
+                        <button 
+                            onClick={(e) => { e.stopPropagation(); onVersionChange(sketch.id, 'next'); }} 
+                            disabled={sketch.activeVersionIndex === sketch.imageUrls.length - 1}
+                            className="absolute top-0 bottom-0 right-0 w-8 flex items-center justify-center bg-gradient-to-l from-black/60 to-transparent opacity-0 group-hover:opacity-100 hover:bg-black/70 transition-all z-30 disabled:hidden cursor-pointer pointer-events-auto"
+                            title="Следующая версия"
+                        >
+                            <span className="material-symbols-outlined text-white drop-shadow-lg">chevron_right</span>
+                        </button>
+                        
+                        <div className="absolute bottom-2 left-1/2 -translate-x-1/2 z-20 flex items-center justify-center px-2 py-0.5 bg-black/60 backdrop-blur-md rounded-full border border-white/10 shadow-sm pointer-events-none">
+                            <span className="text-[9px] font-bold text-white/90 tracking-widest">{sketch.activeVersionIndex + 1} / {sketch.imageUrls.length}</span>
+                        </div>
+                    </>
+                )}
+
                 {isDragOver && !sketch.isGenerating && (
-                    <div className="absolute inset-0 z-20 bg-primary/20 backdrop-blur-sm border-2 border-primary flex flex-col items-center justify-center text-white animate-pulse rounded-lg">
+                    <div className="absolute inset-0 z-20 bg-primary/20 backdrop-blur-sm border-2 border-primary flex flex-col items-center justify-center text-white animate-pulse rounded-lg pointer-events-none">
                         <span className="material-symbols-outlined text-4xl drop-shadow-glow">add_photo_alternate</span>
                         <p className="text-xs font-bold mt-1 drop-shadow-md">Интеграция</p>
                     </div>
@@ -354,8 +391,8 @@ const gcd = (a: number, b: number): number => (b ? gcd(b, a % b) : a);
 
 const sketchToFrame = (sketch: Sketch): Frame => ({
     id: sketch.id,
-    imageUrls: [sketch.imageUrl],
-    activeVersionIndex: 0,
+    imageUrls: sketch.imageUrls,
+    activeVersionIndex: sketch.activeVersionIndex,
     prompt: sketch.prompt,
     duration: 3.0,
     file: sketch.file,
@@ -405,6 +442,7 @@ export default function App() {
     const [isChatOpen, setIsChatOpen] = useState(false);
     const [editingFrame, setEditingFrame] = useState<Frame | null>(null);
     const [viewingFrameIndex, setViewingFrameIndex] = useState<number | null>(null);
+    const [viewingSketchIndex, setViewingSketchIndex] = useState<number | null>(null);
     const [detailedFrame, setDetailedFrame] = useState<Frame | null>(null);
     
     // Dossier Modal State
@@ -684,7 +722,17 @@ export default function App() {
     const handleApplyEdit = useCallback(async (targetId: string, newImageUrl: string, newPrompt: string) => {
         const newFile = dataUrlToFile(newImageUrl, `edited-${targetId}-${Date.now()}.png`);
         const sketchIndex = localSketches.findIndex(s => s.id === targetId);
-        if (sketchIndex !== -1) { updateSketches(prev => prev.map(s => { if (s.id === targetId) { return { ...s, imageUrl: newImageUrl, file: newFile, prompt: newPrompt }; } return s; })); setIsAdvancedGenerateModalOpen(false); return; }
+        if (sketchIndex !== -1) { 
+            updateSketches(prev => prev.map(s => { 
+                if (s.id === targetId) { 
+                    const newImageUrls = [...s.imageUrls, newImageUrl];
+                    return { ...s, imageUrls: newImageUrls, activeVersionIndex: newImageUrls.length - 1, file: newFile, prompt: newPrompt }; 
+                } 
+                return s; 
+            })); 
+            setIsAdvancedGenerateModalOpen(false); 
+            return; 
+        }
         const frameIndex = localFrames.findIndex(f => f.id === targetId);
         if (frameIndex !== -1) { updateFrames(prev => prev.map(f => { if (f.id === targetId) { const newImageUrls = [...f.imageUrls, newImageUrl]; return { ...f, imageUrls: newImageUrls, activeVersionIndex: newImageUrls.length - 1, file: newFile, prompt: newPrompt, isTransition: false, hasError: false }; } return f; })); setIsAdvancedGenerateModalOpen(false); return; }
     }, [localSketches, localFrames, updateSketches, updateFrames]);
@@ -778,7 +826,13 @@ export default function App() {
                  const tempFrame = sketchToFrame(sketchToAdapt);
                  const { imageUrl: newImageUrl, prompt: newPrompt } = await adaptImageToStory(tempFrame, localFrames, instruction || "Улучшить качество и стиль");
                 const newFile = dataUrlToFile(newImageUrl, `adapted-sketch-${targetId}-${Date.now()}.png`);
-                updateSketches(prev => prev.map(s => { if (s.id === targetId) { return { ...s, imageUrl: newImageUrl, file: newFile, prompt: newPrompt }; } return s; }));
+                updateSketches(prev => prev.map(s => { 
+                    if (s.id === targetId) { 
+                         const newImageUrls = [...s.imageUrls, newImageUrl];
+                        return { ...s, imageUrls: newImageUrls, activeVersionIndex: newImageUrls.length - 1, file: newFile, prompt: newPrompt }; 
+                    } 
+                    return s; 
+                }));
             } catch (error) { alert(`Ошибка при адаптации наброска: ${error instanceof Error ? error.message : String(error)}`); }
         }
     }, [localFrames, localSketches, updateFrames, updateSketches, localDossiers, updateDossiers]);
@@ -830,6 +884,16 @@ export default function App() {
         updateFrames(prev => { const updatedFrames = [...prev]; updatedFrames[frameIndex] = { ...frame, activeVersionIndex: newVersionIndex, file: newFile }; return updatedFrames; });
     }, [localFrames, updateFrames]);
     
+    const handleSketchVersionChange = useCallback((sketchId: string, direction: 'next' | 'prev') => {
+        const sketchIndex = localSketches.findIndex(s => s.id === sketchId); if (sketchIndex === -1) return;
+        const sketch = localSketches[sketchIndex];
+        const newVersionIndex = direction === 'next' ? Math.min(sketch.activeVersionIndex + 1, sketch.imageUrls.length - 1) : Math.max(sketch.activeVersionIndex - 1, 0);
+        if (newVersionIndex === sketch.activeVersionIndex) return;
+        const newImageUrl = sketch.imageUrls[newVersionIndex];
+        // Optimistic UI update for sketch image file is not strictly necessary here as SketchCard uses imageUrl directly, but consistency is good
+        updateSketches(prev => { const updated = [...prev]; updated[sketchIndex] = { ...sketch, activeVersionIndex: newVersionIndex }; return updated; });
+    }, [localSketches, updateSketches]);
+
     const handleStartIntegration = useCallback(async (source: File | string, targetFrameId: string) => { 
         const frameTarget = localFrames.find(f => f.id === targetFrameId);
         const sketchTarget = localSketches.find(s => s.id === targetFrameId);
@@ -841,7 +905,9 @@ export default function App() {
     }, [localFrames, localSketches, localAssets]);
 
     const handleStartIntegrationWithEmptySource = (targetFrameOrSketch: Frame | Sketch) => { 
-        const target = 'imageUrls' in targetFrameOrSketch ? targetFrameOrSketch : sketchToFrame(targetFrameOrSketch);
+        const target = 'duration' in targetFrameOrSketch 
+            ? (targetFrameOrSketch as Frame) 
+            : sketchToFrame(targetFrameOrSketch as Sketch);
         setIntegrationConfig({ targetFrame: target }); setIsIntegrationModalOpen(true); 
     };
     
@@ -859,7 +925,7 @@ export default function App() {
         if (sketchId && sketchId !== targetSketch.id) {
             const source = localSketches.find(s => s.id === sketchId);
             if (source && source.file) {
-                sourceAsset = { id: source.id, imageUrl: source.imageUrl, file: source.file, name: source.prompt };
+                sourceAsset = { id: source.id, imageUrl: source.imageUrls[source.activeVersionIndex], file: source.file, name: source.prompt };
             }
         } else if (frameId) {
             const source = localFrames.find(f => f.id === frameId);
@@ -938,10 +1004,10 @@ export default function App() {
                     if (existingIndex !== -1) {
                         const updated = [...prev];
                         updated[existingIndex] = { ...updated[existingIndex], lastUsed: Date.now() }; 
-                        return updated;
-                    }
-                    return [...prev, newDossier];
-                });
+                        return updated; 
+                    } 
+                    return [...prev, newDossier]; 
+                }); 
              }
 
              const f = dataUrlToFile(result.imageUrl, `integrated-${t}-${Date.now()}.png`); 
@@ -967,12 +1033,14 @@ export default function App() {
              } else if (isSketch) {
                  updateSketches(p => p.map(s => {
                      if (s.id === t) {
+                         const newImageUrls = [...s.imageUrls, result.imageUrl];
                          return {
                              ...s,
-                             imageUrl: result.imageUrl,
-                             file: f,
-                             prompt: result.prompt,
-                             isGenerating: false,
+                             imageUrls: newImageUrls,
+                             activeVersionIndex: newImageUrls.length - 1, 
+                             file: f, 
+                             prompt: result.prompt, 
+                             isGenerating: false, 
                              generatingMessage: undefined
                          };
                      }
@@ -996,7 +1064,7 @@ export default function App() {
     const handleStartIntegrationFromSketch = useCallback((sourceSketchId: string, targetFrameId: string) => {
         const sourceSketch = localSketches.find(s => s.id === sourceSketchId); const targetFrame = localFrames.find(f => f.id === targetFrameId);
         if (!sourceSketch || !targetFrame || !sourceSketch.file) return;
-        setIntegrationConfig({ sourceAsset: { id: sourceSketch.id, imageUrl: sourceSketch.imageUrl, file: sourceSketch.file, name: sourceSketch.prompt || 'Набросок' }, targetFrame });
+        setIntegrationConfig({ sourceAsset: { id: sourceSketch.id, imageUrl: sourceSketch.imageUrls[sourceSketch.activeVersionIndex], file: sourceSketch.file, name: sourceSketch.prompt || 'Набросок' }, targetFrame });
         setIsIntegrationModalOpen(true);
     }, [localSketches, localFrames]);
 
@@ -1045,7 +1113,8 @@ export default function App() {
                 // Stagger multiple files slightly
                 const newSketch: Sketch = {
                     id: crypto.randomUUID(),
-                    imageUrl,
+                    imageUrls: [imageUrl],
+                    activeVersionIndex: 0,
                     prompt: file.name.replace(/\.[^/.]+$/, ""),
                     file,
                     position: { x: position.x + index * 20, y: position.y + index * 20 },
@@ -1079,7 +1148,8 @@ export default function App() {
 
                     const newSketch: Sketch = {
                         id: crypto.randomUUID(),
-                        imageUrl,
+                        imageUrls: [imageUrl],
+                        activeVersionIndex: 0,
                         prompt: "Вставленное изображение",
                         file,
                         position: position,
@@ -1112,11 +1182,11 @@ export default function App() {
     const handleGenerateSketch = async (data: { prompt: string, position?: Position, aspectRatio?: string }) => {
         setIsAdvancedGenerateModalOpen(false); if (!data.prompt || !data.position || !data.aspectRatio) return;
         const placeholderId = crypto.randomUUID(); const aspectRatio = data.aspectRatio; const [w, h] = aspectRatio.split(':').map(Number); const placeholderSize = { width: 320, height: (320 * h) / w };
-        const placeholderSketch: Sketch = { id: placeholderId, imageUrl: '', prompt: 'Генерация наброска...', position: data.position, size: placeholderSize, aspectRatio, };
+        const placeholderSketch: Sketch = { id: placeholderId, imageUrls: [], activeVersionIndex: 0, prompt: 'Генерация наброска...', position: data.position, size: placeholderSize, aspectRatio, isGenerating: true };
         updateSketches(prev => [...prev, placeholderSketch]);
         try {
             const imageUrl = await generateImageFromPrompt(data.prompt, aspectRatio); const file = dataUrlToFile(imageUrl, `sketch-${Date.now()}.png`);
-            const finalSketch: Sketch = { id: crypto.randomUUID(), imageUrl, prompt: data.prompt, file, position: data.position, size: placeholderSize, aspectRatio, };
+            const finalSketch: Sketch = { id: crypto.randomUUID(), imageUrls: [imageUrl], activeVersionIndex: 0, prompt: data.prompt, file, position: data.position, size: placeholderSize, aspectRatio, isGenerating: false };
             updateSketches(prev => prev.map(s => s.id === placeholderId ? finalSketch : s));
         } catch (error) { alert(`Не удалось создать набросок: ${error instanceof Error ? error.message : String(error)}`); updateSketches(prev => prev.filter(s => s.id !== placeholderId)); }
     };
@@ -1175,7 +1245,7 @@ export default function App() {
             const frame = localFrames.find(f => f.id === frameId); if (!frame || !boardRef.current) return;
             const boardRect = boardRef.current.getBoundingClientRect(); const x = (e.clientX - boardRect.left - transform.x) / transform.scale; const y = (e.clientY - boardRect.top - transform.y) / transform.scale;
             const aspectRatio = frame.aspectRatio || '16:9'; const [w, h] = aspectRatio.split(':').map(Number); const size = { width: 320, height: (320 * h) / w };
-            const newSketch: Sketch = { id: crypto.randomUUID(), imageUrl: frame.imageUrls[frame.activeVersionIndex], prompt: frame.prompt, file: frame.file, position: { x, y }, size: size, aspectRatio: aspectRatio, };
+            const newSketch: Sketch = { id: crypto.randomUUID(), imageUrls: [frame.imageUrls[frame.activeVersionIndex]], activeVersionIndex: 0, prompt: frame.prompt, file: frame.file, position: { x, y }, size: size, aspectRatio: aspectRatio, };
             updateSketches(prev => [...prev, newSketch]); updateFrames(prev => prev.filter(f => f.id !== frameId));
         } else if (sketchId) {
             const sketch = localSketches.find(s => s.id === sketchId);
@@ -1188,7 +1258,7 @@ export default function App() {
                 assetIds.forEach((assetId, index) => {
                     const asset = localAssets.find(a => a.id === assetId); if (!asset) return;
                     const aspectRatio = '16:9'; const [w, h] = aspectRatio.split(':').map(Number); const size = { width: 320, height: (320 * h) / w };
-                    const newSketch: Sketch = { id: crypto.randomUUID(), imageUrl: asset.imageUrl, prompt: asset.name, file: asset.file, position: { x: startX + index * 20, y: startY + index * 20 }, size: size, aspectRatio: aspectRatio, };
+                    const newSketch: Sketch = { id: crypto.randomUUID(), imageUrls: [asset.imageUrl], activeVersionIndex: 0, prompt: asset.name, file: asset.file, position: { x: startX + index * 20, y: startY + index * 20 }, size: size, aspectRatio: aspectRatio, };
                     newSketches.push(newSketch);
                 });
                 updateSketches(prev => [...prev, ...newSketches]);
@@ -1199,7 +1269,7 @@ export default function App() {
                 const boardRect = boardRef.current.getBoundingClientRect(); const startX = (e.clientX - boardRect.left - transform.x) / transform.scale; const startY = (e.clientY - boardRect.top - transform.y) / transform.scale;
                 const newSketchesPromises = imageFiles.map(async (file, index) => {
                     const imageUrl = await fileToBase64(file); const { width, height } = await getImageDimensions(file); const commonDivisor = gcd(width, height); const aspectRatio = `${width / commonDivisor}:${height / commonDivisor}`; const sketchWidth = 320; const sketchHeight = (sketchWidth * height) / width;
-                    const newSketch: Sketch = { id: crypto.randomUUID(), imageUrl, prompt: file.name.replace(/\.[^/.]+$/, ""), file, position: { x: startX + index * 20, y: startY + index * 20 }, size: { width: sketchWidth, height: sketchHeight }, aspectRatio: aspectRatio, };
+                    const newSketch: Sketch = { id: crypto.randomUUID(), imageUrls: [imageUrl], activeVersionIndex: 0, prompt: file.name.replace(/\.[^/.]+$/, ""), file, position: { x: startX + index * 20, y: startY + index * 20 }, size: { width: sketchWidth, height: sketchHeight }, aspectRatio: aspectRatio, };
                     return newSketch;
                 });
                 const newSketches = await Promise.all(newSketchesPromises); updateSketches(prev => [...prev, ...newSketches]);
@@ -1217,12 +1287,12 @@ export default function App() {
     const handleAddFrameFromSketch = useCallback(async (sketchId: string, index: number) => {
         const sketch = localSketches.find(s => s.id === sketchId); if (!sketch || !sketch.file) return;
         const hash = await calculateFileHash(sketch.file);
-        const newFrame: Frame = { id: crypto.randomUUID(), imageUrls: [sketch.imageUrl], activeVersionIndex: 0, prompt: sketch.prompt, duration: 3.0, file: sketch.file, aspectRatio: sketch.aspectRatio, sourceHash: hash, hasError: false };
+        const newFrame: Frame = { id: crypto.randomUUID(), imageUrls: [sketch.imageUrls[sketch.activeVersionIndex]], activeVersionIndex: 0, prompt: sketch.prompt, duration: 3.0, file: sketch.file, aspectRatio: sketch.aspectRatio, sourceHash: hash, hasError: false };
         updateFrames(prev => { const framesCopy = [...prev]; framesCopy.splice(index, 0, newFrame); return framesCopy; });
         updateSketches(prev => prev.filter(s => s.id !== sketchId));
     }, [localSketches, updateFrames, updateSketches]);
     
-    const handleAddAssetFromSketch = useCallback((sketchId: string) => { const sketch = localSketches.find(s => s.id === sketchId); if (!sketch || !sketch.file) return; const newAsset: Asset = { id: crypto.randomUUID(), imageUrl: sketch.imageUrl, file: sketch.file, name: sketch.prompt || 'Набросок', }; updateAssets(prev => [...prev, newAsset]); updateSketches(prev => prev.filter(s => s.id !== sketchId)); }, [localSketches, updateAssets, updateSketches]);
+    const handleAddAssetFromSketch = useCallback((sketchId: string) => { const sketch = localSketches.find(s => s.id === sketchId); if (!sketch || !sketch.file) return; const newAsset: Asset = { id: crypto.randomUUID(), imageUrl: sketch.imageUrls[sketch.activeVersionIndex], file: sketch.file, name: sketch.prompt || 'Набросок', }; updateAssets(prev => [...prev, newAsset]); updateSketches(prev => prev.filter(s => s.id !== sketchId)); }, [localSketches, updateAssets, updateSketches]);
     const registerTimelineDropZone = useCallback((index: number, element: HTMLElement | null) => { const map = timelineDropZoneRefs.current; if (element) { map.set(index, element); } else { map.delete(index); } }, []);
 
     const addFrameMenuActions: AddFrameMenuAction[] = [];
@@ -1232,6 +1302,9 @@ export default function App() {
         addFrameMenuActions.push({ label: 'Сгенерировать', icon: 'auto_awesome', onClick: closeAndRun(() => handleAddFrame(addFrameMenu.index, 'generate')) });
         if (addFrameMenu.index > 0 && addFrameMenu.index < localFrames.length) { addFrameMenuActions.push({ label: 'Промт для перехода', icon: 'transition_push', onClick: closeAndRun(() => handleGenerateTransition(addFrameMenu.index - 1)) }); }
     }
+    
+    // Prepare sketches as Frames for the ImageViewer
+    const sketchesAsFrames = useMemo(() => localSketches.map(s => sketchToFrame(s)), [localSketches]);
 
     return (
         <div className="relative flex h-screen w-full flex-col group/design-root overflow-hidden select-none font-body text-white bg-[#050608]">
@@ -1311,7 +1384,7 @@ export default function App() {
                         />
                     </div>
 
-                    {localSketches.map(sketch => (
+                    {localSketches.map((sketch, index) => (
                          <div key={sketch.id} className="board-interactive-item">
                             <SketchCard 
                                 sketch={sketch} 
@@ -1320,6 +1393,8 @@ export default function App() {
                                 onDragStart={handleSketchDragStart}
                                 onDragEnd={handleSketchDragEnd}
                                 onDrop={handleSketchDrop}
+                                onVersionChange={handleSketchVersionChange}
+                                onView={() => setViewingSketchIndex(index)}
                             />
                          </div>
                     ))}
@@ -1449,6 +1524,7 @@ export default function App() {
             )}
             {editingFrame && ( <EditPromptModal frame={editingFrame} onClose={() => setEditingFrame(null)} onSave={handleSavePrompt} /> )}
             {viewingFrameIndex !== null && ( <ImageViewerModal frames={localFrames} startIndex={viewingFrameIndex} onClose={() => setViewingFrameIndex(null)} /> )}
+            {viewingSketchIndex !== null && ( <ImageViewerModal frames={sketchesAsFrames} startIndex={viewingSketchIndex} onClose={() => setViewingSketchIndex(null)} /> )}
             {detailedFrame && ( <FrameDetailModal frame={detailedFrame} onClose={() => setDetailedFrame(null)} onSave={handleSaveFrameDetails} /> )}
             {selectedDossierData && (
                 <DossierModal 
