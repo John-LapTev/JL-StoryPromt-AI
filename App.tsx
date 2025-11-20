@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useCallback, useMemo, useRef, useLayoutEffect } from 'react';
 import type { Frame, Project, Asset, StorySettings, IntegrationConfig, Sketch, Note, Position, Size, AppSettings, ActorDossier } from './types';
 import { initialFrames, initialAssets } from './constants';
@@ -1204,7 +1205,7 @@ export default function App() {
                             onStartIntegrationFromFrame={handleStartIntegrationFromFrame}
                             onOpenAddFrameMenu={handleOpenAddFrameMenu}
                             onRegisterDropZone={registerTimelineDropZone}
-                            onRegenerate={handleRegenerateFrame}
+                            onRegenerateFrame={handleRegenerateFrame}
                         />
                     </div>
 
@@ -1368,7 +1369,6 @@ export default function App() {
                     onClose={() => setIsDossierLibraryOpen(false)}
                     onSelectDossier={(dossier) => {
                         handleOpenDossier(dossier);
-                        setIsDossierLibraryOpen(false);
                     }}
                 />
             )}
