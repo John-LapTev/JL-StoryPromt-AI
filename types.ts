@@ -84,8 +84,15 @@ export interface IntegrationConfig {
   targetFrame: Frame;
 }
 
+export interface ModelSettings {
+    analysisModel: string; // For creating stories, analyzing context
+    generationModel: string; // For generating new images from scratch
+    editingModel: string; // For adaptations, integration, in-painting
+}
+
 export interface AppSettings {
     doubleClickToGenerate: boolean;
+    models: ModelSettings;
 }
 
 export interface DirectorAnalysisResult {

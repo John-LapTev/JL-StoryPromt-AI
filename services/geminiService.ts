@@ -1,11 +1,22 @@
 
 import { GoogleGenAI, Type, Modality } from "@google/genai";
-import type { Frame, Asset, StorySettings, ActorDossier, Sketch, DirectorAnalysisResult } from '../types';
+import type { Frame, Asset, StorySettings, ActorDossier, Sketch, DirectorAnalysisResult, ModelSettings } from '../types';
 import { fileToBase64, fetchCorsImage, dataUrlToFile } from '../utils/fileUtils';
 
 export type StoryGenerationUpdate = 
   | { type: 'progress'; message: string; index?: number }
   | { type: 'frame'; index: number; frame: Omit<Frame, 'file'> };
+
+// Default settings if not initialized
+let currentModelSettings: ModelSettings = {
+    analysisModel: 'gemini-3-pro-preview',
+    generationModel: 'imagen-4.0-generate-001',
+    editingModel: 'gemini-2.5-flash-image',
+};
+
+export const updateGeminiModelSettings = (settings: ModelSettings) => {
+    currentModelSettings = settings;
+};
 
 // Centralized error handler to provide user-friendly messages
 function handleApiError(error: unknown) {
@@ -93,7 +104,8 @@ async function runDirectorAnalysis(
     knownDossier?: ActorDossier | null
 ): Promise<DirectorAnalysisResult> {
     const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-    const model = "gemini-3-pro-preview"; // Using Pro for complex analysis
+    // Use the configured analysis model
+    const model = currentModelSettings.analysisModel;
 
     const inputs: any[] = [];
     
@@ -201,7 +213,8 @@ async function runArtistGeneration(
     visualAnchorDossier?: ActorDossier | null
 ): Promise<string> {
     const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-    const model = "gemini-2.5-flash-image"; // High quality image generation/editing
+    // Use the configured editing model (Artist role typically involves adapting images)
+    const model = currentModelSettings.editingModel;
 
     const parts: any[] = [];
     
@@ -344,6 +357,7 @@ export async function adaptImageToStory(
 export async function analyzeStory(frames: Frame[]): Promise<string[]> {
     try {
         const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+        const model = currentModelSettings.analysisModel;
 
         const imageParts = await Promise.all(
             frames.map(async (frame) => {
@@ -364,7 +378,7 @@ export async function analyzeStory(frames: Frame[]): Promise<string[]> {
 Верни ТОЛЬКО валидный JSON-массив строк, где каждая строка — это промт для соответствующего изображения в предоставленном порядке. Все промты должны быть на русском языке. Не включай никакой другой текст, объяснения или markdown-разметку.`;
 
         const response = await ai.models.generateContent({
-            model: 'gemini-3-pro-preview',
+            model: model,
             contents: {
                 parts: [
                     { text: promptText },
@@ -402,6 +416,9 @@ export async function analyzeStory(frames: Frame[]): Promise<string[]> {
 export async function generateSinglePrompt(frameToUpdate: Frame, allFrames: Frame[]): Promise<string> {
     try {
         const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+        // Use analysis model for prompt generation logic or a fast text model
+        // For prompt generation, 2.5-flash (which might be selected as analysisModel) is appropriate
+        const model = currentModelSettings.analysisModel.includes('flash') ? currentModelSettings.analysisModel : 'gemini-2.5-flash'; 
         
         const { mimeType, data } = await urlOrFileToBase64(frameToUpdate);
         const imagePart = { inlineData: { mimeType, data } };
@@ -424,7 +441,7 @@ export async function generateSinglePrompt(frameToUpdate: Frame, allFrames: Fram
         contextPrompt += `\n\nОсновываясь на этом контексте, опиши предоставленное изображение для промта генерации видео. Сфокусируйся на действии, движении камеры и настроении, чтобы обеспечить плавный переход между кадрами.`;
 
         const response = await ai.models.generateContent({
-            model: 'gemini-2.5-flash',
+            model: model,
             contents: { parts: [{ text: contextPrompt }, imagePart] },
             config: {
                  responseMimeType: "application/json",
@@ -456,6 +473,7 @@ export async function generateVideoFromFrame(frame: Frame, setLoadingMessage: (m
         const { mimeType, data } = await urlOrFileToBase64(frame);
 
         setLoadingMessage("Запуск генерации видео... (Это может занять несколько минут)");
+        // Video generation model is specialized and usually fixed to Veo for now
         let operation = await ai.models.generateVideos({
           model: 'veo-3.1-fast-generate-preview',
           prompt: frame.prompt,
@@ -503,21 +521,45 @@ export async function generateVideoFromFrame(frame: Frame, setLoadingMessage: (m
 export async function generateImageFromPrompt(prompt: string, aspectRatio: string = '16:9'): Promise<string> {
     try {
         const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+        const model = currentModelSettings.generationModel;
 
-        const response = await ai.models.generateImages({
-            model: 'imagen-4.0-generate-001',
-            prompt: prompt,
-            config: {
-                numberOfImages: 1,
-                outputMimeType: 'image/png',
-                aspectRatio: aspectRatio,
-            },
-        });
-
-        const base64ImageBytes: string | undefined = response.generatedImages[0]?.image.imageBytes;
-
-        if (base64ImageBytes) {
-            return `data:image/png;base64,${base64ImageBytes}`;
+        if (model.startsWith('imagen')) {
+             // Use Imagen API
+             const response = await ai.models.generateImages({
+                model: model,
+                prompt: prompt,
+                config: {
+                    numberOfImages: 1,
+                    outputMimeType: 'image/png',
+                    aspectRatio: aspectRatio,
+                },
+            });
+            const base64ImageBytes: string | undefined = response.generatedImages[0]?.image.imageBytes;
+            if (base64ImageBytes) {
+                return `data:image/png;base64,${base64ImageBytes}`;
+            }
+        } else {
+             // Use Gemini 2.5 Flash Image (NanoBanana) via GenerateContent
+             // Note: Aspect ratio control via prompt for Gemini models generally, 
+             // or rely on post-processing/native capability if available. 
+             // For 2.5 Flash Image, we pass prompt.
+             const response = await ai.models.generateContent({
+                 model: model,
+                 contents: {
+                     parts: [{ text: `Generate an image: ${prompt}. Aspect ratio: ${aspectRatio}` }]
+                 },
+                 config: {
+                     responseModalities: [Modality.IMAGE]
+                 }
+             });
+             
+             if (response.candidates?.[0]?.content?.parts) {
+                for (const part of response.candidates[0].content.parts) {
+                    if (part.inlineData) {
+                        return `data:${part.inlineData.mimeType};base64,${part.inlineData.data}`;
+                    }
+                }
+            }
         }
 
         throw new Error("No image was generated by the model.");
@@ -533,12 +575,13 @@ export async function editImage(
 ): Promise<{ imageUrl: string, prompt: string }> {
     try {
         const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+        const model = currentModelSettings.editingModel;
 
         const { mimeType, data } = await urlOrFileToBase64(originalFrame);
         const imagePart = { inlineData: { mimeType, data } };
         
         const editResponse = await ai.models.generateContent({
-            model: 'gemini-2.5-flash-image',
+            model: model,
             contents: { parts: [{ text: editInstruction }, imagePart] },
             config: {
                 responseModalities: [Modality.IMAGE],
@@ -600,6 +643,8 @@ export async function generateImageInContext(
 ): Promise<{ imageUrl: string; prompt: string }> {
     try {
         const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+        // Contextual generation often benefits from the editing model (multimodal in/out)
+        const model = currentModelSettings.editingModel;
 
         const imageGenParts: any[] = [];
         
@@ -631,7 +676,7 @@ export async function generateImageInContext(
         }
 
         const response = await ai.models.generateContent({
-            model: 'gemini-2.5-flash-image',
+            model: model,
             contents: {
                 parts: [
                     { text: instructionText },
@@ -690,22 +735,24 @@ export async function generateImageInContext(
 }
 
 export async function regenerateFrameImage(frame: Frame, allFrames: Frame[]): Promise<{ imageUrl: string; prompt: string }> {
+    // Reuses generateImageInContext which uses configured editing/generation model
     const index = allFrames.findIndex(f => f.id === frame.id);
     const left = index > 0 ? allFrames[index - 1] : null;
     const right = index < allFrames.length - 1 ? allFrames[index - 1] : null;
-    // Pass frame as currentFrame to trigger Identity Reference logic in generation
     return generateImageInContext(frame.prompt, left, right, frame);
 }
 
 export async function adaptImageAspectRatio(frame: Frame, targetAspectRatio: string): Promise<{ imageUrl: string; prompt: string }> {
     try {
         const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+        const model = currentModelSettings.editingModel;
+
         const { mimeType, data } = await urlOrFileToBase64(frame);
         
         const promptText = `Regenerate this image with aspect ratio ${targetAspectRatio}. Keep the main subject and composition but extend or crop to fit. Prompt: ${frame.prompt}`;
         
         const response = await ai.models.generateContent({
-            model: 'gemini-2.5-flash-image',
+            model: model,
             contents: {
                 parts: [
                     { text: promptText },
@@ -735,6 +782,8 @@ export async function adaptImageAspectRatio(frame: Frame, targetAspectRatio: str
 
 export async function* createStoryFromAssets(assets: Asset[], settings: StorySettings, frameCount: number): AsyncGenerator<StoryGenerationUpdate, void, unknown> {
     const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+    const analysisModel = currentModelSettings.analysisModel;
+    const scriptModel = currentModelSettings.analysisModel; // Use analysis model for script writing
 
     // 1. Analyze Assets
     yield { type: 'progress', message: 'Анализ ассетов...' };
@@ -746,7 +795,7 @@ export async function* createStoryFromAssets(assets: Asset[], settings: StorySet
     const analysisPrompt = `Analyze these images. Identify characters, locations, and objects. Create a story outline based on genre: "${settings.genre || 'General'}", ending: "${settings.ending || 'Happy'}", and user idea: "${settings.prompt || ''}".`;
     
     await ai.models.generateContent({
-        model: 'gemini-2.5-flash',
+        model: analysisModel,
         contents: { parts: [{ text: analysisPrompt }, ...assetParts] }
     });
 
@@ -755,7 +804,7 @@ export async function* createStoryFromAssets(assets: Asset[], settings: StorySet
     const scriptPrompt = `Create a storyboard script with exactly ${frameCount} frames. For each frame, provide a visual description prompt (Russian). Return JSON array of strings.`;
     
     const scriptResponse = await ai.models.generateContent({
-        model: 'gemini-3-pro-preview',
+        model: scriptModel,
         contents: { parts: [{ text: scriptPrompt }, ...assetParts] },
         config: { 
             responseMimeType: "application/json",
@@ -776,9 +825,8 @@ export async function* createStoryFromAssets(assets: Asset[], settings: StorySet
         yield { type: 'progress', message: `Генерация кадра ${i+1}/${frameCount}...`, index: i };
         
         try {
-            // Generate image using imagen (or gemini image with reference)
-            // We use gemini-image-flash here to maintain consistency if we pass context, but calling generateImageInContext is easier
-            const { imageUrl, prompt } = await generateImageInContext(prompts[i], prevFrame as Frame, null, null); // Cast prevFrame to Frame, it's close enough for this context
+            // generateImageInContext uses configured models internally
+            const { imageUrl, prompt } = await generateImageInContext(prompts[i], prevFrame as Frame, null, null);
             
             const newFrame: Omit<Frame, 'file'> = {
                 id: crypto.randomUUID(),
@@ -800,6 +848,8 @@ export async function* createStoryFromAssets(assets: Asset[], settings: StorySet
 export async function generateStoryIdeasFromAssets(assets: Asset[], settings: StorySettings): Promise<{title: string, synopsis: string}[]> {
     try {
         const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+        const model = currentModelSettings.analysisModel;
+        
         const assetParts = await Promise.all(assets.slice(0, 5).map(async a => {
             const { mimeType, data } = await urlOrFileToBase64(a);
             return { inlineData: { mimeType, data } };
@@ -808,7 +858,7 @@ export async function generateStoryIdeasFromAssets(assets: Asset[], settings: St
         const prompt = `Generate 3 story ideas based on these images. Genre: ${settings.genre}. User idea: ${settings.prompt}. Return JSON array of objects with 'title' and 'synopsis' (Russian).`;
         
         const response = await ai.models.generateContent({
-            model: 'gemini-2.5-flash',
+            model: model,
             contents: { parts: [{ text: prompt }, ...assetParts] },
             config: { 
                 responseMimeType: "application/json",
@@ -832,6 +882,9 @@ export async function generateStoryIdeasFromAssets(assets: Asset[], settings: St
 export async function generatePromptSuggestions(leftFrame: Frame | null, rightFrame: Frame | null): Promise<string[]> {
     try {
         const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+        // Text task -> Analysis Model
+        const model = currentModelSettings.analysisModel;
+        
         let prompt = "Generate 4 distinct prompt ideas for a storyboard frame (Russian). Return JSON array of strings. ";
         const parts: any[] = [{ text: prompt }];
         
@@ -842,7 +895,7 @@ export async function generatePromptSuggestions(leftFrame: Frame | null, rightFr
         }
         
         const response = await ai.models.generateContent({
-            model: 'gemini-2.5-flash',
+            model: model,
             contents: { parts },
             config: { responseMimeType: "application/json", responseSchema: { type: Type.ARRAY, items: { type: Type.STRING } } }
         });
@@ -851,13 +904,11 @@ export async function generatePromptSuggestions(leftFrame: Frame | null, rightFr
 }
 
 export async function generateEditSuggestions(frame: Frame, left: Frame | null, right: Frame | null): Promise<string[]> {
-    // Similar logic
-    return generatePromptSuggestions(frame, null); // Simplified reuse
+    return generatePromptSuggestions(frame, null); 
 }
 
 export async function generateAdaptationSuggestions(frame: Frame, left: Frame | null, right: Frame | null): Promise<string[]> {
-     // Similar logic
-     return generatePromptSuggestions(frame, null); // Simplified reuse
+     return generatePromptSuggestions(frame, null); 
 }
 
 export async function integrateAssetIntoFrame(
@@ -869,18 +920,19 @@ export async function integrateAssetIntoFrame(
 ): Promise<{ imageUrl: string; prompt: string; analysis?: { type: 'character'|'object'|'location', roleLabel: string, description: string } }> {
     try {
         const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+        const analysisModel = currentModelSettings.analysisModel;
+        const editingModel = currentModelSettings.editingModel;
+        
         const { mimeType: sMime, data: sData } = await urlOrFileToBase64(source);
         const { mimeType: tMime, data: tData } = await urlOrFileToBase64(target);
         
-        // 1. ANALYSIS STEP (If no dossier exists or we want to double-check)
-        // We perform a quick analysis of the SOURCE asset to understand what we are integrating.
-        // This helps in creating a Dossier if one doesn't exist.
+        // 1. ANALYSIS STEP 
         let subjectAnalysis: { type: 'character' | 'object' | 'location', roleLabel: string, description: string } = { type: 'object', roleLabel: source.name, description: source.name };
         
         if (!existingDossier) {
              const analysisPrompt = `Analyze this image (Source Asset). Identify if it is a character, object, or location. Give it a short label (2-3 words) and a visual description. Language: Russian.`;
              const analysisResponse = await ai.models.generateContent({
-                 model: 'gemini-3-pro-preview',
+                 model: analysisModel,
                  contents: {
                      parts: [
                          { text: analysisPrompt },
@@ -926,12 +978,10 @@ export async function integrateAssetIntoFrame(
             { inlineData: { mimeType: tMime, data: tData } } // Target is the canvas
         ];
 
-        // If we have a specific reference URL in the dossier that is NOT the source image itself (e.g. a better adapted version), maybe use that?
-        // For now, we assume 'source' IS the reference image we want to integrate.
         parts.push({ inlineData: { mimeType: sMime, data: sData } }); 
 
         const response = await ai.models.generateContent({
-            model: 'gemini-2.5-flash-image',
+            model: editingModel,
             contents: { parts },
             config: { responseModalities: [Modality.IMAGE] }
         });
@@ -960,15 +1010,16 @@ export async function integrateAssetIntoFrame(
 }
 
 export async function generateIntegrationSuggestions(source: Asset | {imageUrl: string, name: string, file: File}, target: Frame, mode: string): Promise<string[]> {
-    // Simple text gen
     try {
         const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+        const model = currentModelSettings.analysisModel;
+        
         const prompt = `Suggest 4 ways to integrate the source object into the target scene (Russian). Mode: ${mode}. Return JSON array of strings.`;
         const { mimeType: sMime, data: sData } = await urlOrFileToBase64(source);
         const { mimeType: tMime, data: tData } = await urlOrFileToBase64(target);
 
         const response = await ai.models.generateContent({
-            model: 'gemini-2.5-flash',
+            model: model,
             contents: {
                 parts: [
                     { text: prompt },

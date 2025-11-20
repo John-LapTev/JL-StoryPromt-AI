@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useCallback, useMemo, useRef, useLayoutEffect } from 'react';
 import type { Frame, Project, Asset, StorySettings, IntegrationConfig, Sketch, Note, Position, Size, AppSettings, ActorDossier } from './types';
 import { initialFrames, initialAssets } from './constants';
@@ -24,7 +25,7 @@ import { SettingsModal } from './components/SettingsModal';
 import { SimpleImageViewerModal } from './components/SimpleImageViewerModal';
 import { DossierModal } from './components/DossierModal';
 import { DossierLibraryModal } from './components/DossierLibraryModal';
-import { generateImageFromPrompt, adaptImageToStory, adaptImageAspectRatio, createStoryFromAssets, analyzeStory, generateSinglePrompt, generateImageInContext, editImage, regenerateFrameImage, integrateAssetIntoFrame } from './services/geminiService';
+import { generateImageFromPrompt, adaptImageToStory, adaptImageAspectRatio, createStoryFromAssets, analyzeStory, generateSinglePrompt, generateImageInContext, editImage, regenerateFrameImage, integrateAssetIntoFrame, updateGeminiModelSettings } from './services/geminiService';
 import { fileToBase64, dataUrlToFile, fetchCorsImage, getImageDimensions, calculateFileHash } from './utils/fileUtils';
 import { StoryGenerationUpdate } from './services/geminiService';
 
@@ -497,7 +498,10 @@ export default function App() {
             projectService.setLastProjectId(projectToLoad.id);
             projectService.saveProjects(allProjects);
         }
-        setAppSettings(settingsService.getSettings());
+        const savedSettings = settingsService.getSettings();
+        setAppSettings(savedSettings);
+        // Sync loaded settings with gemini service immediately
+        updateGeminiModelSettings(savedSettings.models);
     }, []);
 
     useEffect(() => {
@@ -543,7 +547,12 @@ export default function App() {
     const updateSketches = useCallback((updater: React.SetStateAction<Sketch[]>) => { setLocalSketches(updater); setHasUnsavedChanges(true); }, []);
     const updateNotes = useCallback((updater: React.SetStateAction<Note[]>) => { setLocalNotes(updater); setHasUnsavedChanges(true); }, []);
     const updateDossiers = useCallback((updater: React.SetStateAction<ActorDossier[]>) => { setLocalDossiers(updater); setHasUnsavedChanges(true); }, []);
-    const handleSaveSettings = (newSettings: AppSettings) => { setAppSettings(newSettings); settingsService.saveSettings(newSettings); };
+    
+    const handleSaveSettings = (newSettings: AppSettings) => { 
+        setAppSettings(newSettings); 
+        settingsService.saveSettings(newSettings);
+        updateGeminiModelSettings(newSettings.models);
+    };
 
     useEffect(() => {
         const checkKey = async () => {
