@@ -842,6 +842,90 @@ export default function App() {
         setBoardContextMenu({ x: e.clientX, y: e.clientY, boardPosition: { x: boardX, y: boardY } });
     };
 
+    const handleUploadToBoard = (position: Position) => {
+        const input = document.createElement('input');
+        input.type = 'file';
+        input.accept = 'image/*';
+        input.multiple = true;
+        input.onchange = async (e) => {
+            const files = Array.from((e.target as HTMLInputElement).files || []);
+            if (files.length === 0) return;
+
+            const newSketchesPromises = files.map(async (file, index) => {
+                const imageUrl = await fileToBase64(file);
+                const { width, height } = await getImageDimensions(file);
+                const commonDivisor = gcd(width, height);
+                const aspectRatio = `${width / commonDivisor}:${height / commonDivisor}`;
+                const sketchWidth = 320;
+                const sketchHeight = (sketchWidth * height) / width;
+                
+                // Stagger multiple files slightly
+                const newSketch: Sketch = {
+                    id: crypto.randomUUID(),
+                    imageUrl,
+                    prompt: file.name.replace(/\.[^/.]+$/, ""),
+                    file,
+                    position: { x: position.x + index * 20, y: position.y + index * 20 },
+                    size: { width: sketchWidth, height: sketchHeight },
+                    aspectRatio: aspectRatio,
+                };
+                return newSketch;
+            });
+
+            const newSketches = await Promise.all(newSketchesPromises);
+            updateSketches(prev => [...prev, ...newSketches]);
+        };
+        input.click();
+    };
+
+    const handlePasteToBoard = async (position: Position) => {
+        try {
+            const items = await navigator.clipboard.read();
+            for (const item of items) {
+                // Handle Images
+                if (item.types.some(type => type.startsWith('image/'))) {
+                    const blob = await item.getType(item.types.find(t => t.startsWith('image/'))!);
+                    const file = new File([blob], "pasted-image.png", { type: blob.type });
+                    
+                    const imageUrl = await fileToBase64(file);
+                    const { width, height } = await getImageDimensions(file);
+                    const commonDivisor = gcd(width, height);
+                    const aspectRatio = `${width / commonDivisor}:${height / commonDivisor}`;
+                    const sketchWidth = 320;
+                    const sketchHeight = (sketchWidth * height) / width;
+
+                    const newSketch: Sketch = {
+                        id: crypto.randomUUID(),
+                        imageUrl,
+                        prompt: "Вставленное изображение",
+                        file,
+                        position: position,
+                        size: { width: sketchWidth, height: sketchHeight },
+                        aspectRatio: aspectRatio,
+                    };
+                    updateSketches(prev => [...prev, newSketch]);
+                }
+                // Handle Text
+                else if (item.types.includes('text/plain')) {
+                    const blob = await item.getType('text/plain');
+                    const text = await blob.text();
+                    if (text.trim()) {
+                        const newNote: Note = {
+                            id: crypto.randomUUID(),
+                            text: text,
+                            position,
+                            size: { width: 220, height: 180 },
+                        };
+                        updateNotes(prev => [...prev, newNote]);
+                    }
+                }
+            }
+        } catch (err) {
+            console.error("Paste failed", err);
+            alert("Не удалось вставить из буфера обмена. Убедитесь, что вы предоставили разрешение.");
+        }
+    };
+
     const handleGenerateSketch = async (data: { prompt: string, position?: Position, aspectRatio?: string }) => {
         setIsAdvancedGenerateModalOpen(false); if (!data.prompt || !data.position || !data.aspectRatio) return;
         const placeholderId = crypto.randomUUID(); const aspectRatio = data.aspectRatio; const [w, h] = aspectRatio.split(':').map(Number); const placeholderSize = { width: 320, height: (320 * h) / w };
@@ -1249,6 +1333,21 @@ export default function App() {
                             label: 'Новая заметка',
                             icon: 'note_add',
                             onClick: () => handleAddNote(boardContextMenu.boardPosition),
+                        },
+                        {
+                            label: 'Загрузить изображение',
+                            icon: 'upload_file',
+                            onClick: () => handleUploadToBoard(boardContextMenu.boardPosition),
+                        },
+                        {
+                            label: 'Вставить из буфера',
+                            icon: 'content_paste',
+                            onClick: () => handlePasteToBoard(boardContextMenu.boardPosition),
+                        },
+                        {
+                            label: 'Сбросить масштаб',
+                            icon: 'center_focus_strong',
+                            onClick: handleResetView,
                         }
                     ]}
                 />
