@@ -39,6 +39,8 @@ export interface Sketch {
   size: Size;
   aspectRatio: string;
   file?: File;
+  isGenerating?: boolean;
+  generatingMessage?: string;
 }
 
 export interface Note {

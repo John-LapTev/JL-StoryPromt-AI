@@ -137,38 +137,93 @@ const SketchCard: React.FC<{
     onContextMenu: (e: React.MouseEvent, sketch: Sketch) => void;
     onDragStart: (e: React.DragEvent, sketch: Sketch) => void;
     onDragEnd: () => void;
-}> = ({ sketch, isDragging, onContextMenu, onDragStart, onDragEnd }) => (
-    <div
-        className={`absolute group glass-panel p-2 pb-8 rounded-xl ${isDragging ? 'opacity-50 grayscale z-50' : 'hover:border-primary/30 hover:shadow-neon hover:z-20'} cursor-grab active:cursor-grabbing`}
-        style={{
-            left: sketch.position.x,
-            top: sketch.position.y,
-            width: sketch.size.width,
-            height: sketch.size.height,
-        }}
-        draggable={true}
-        onDragStart={(e) => onDragStart(e, sketch)}
-        onDragEnd={onDragEnd}
-        onContextMenu={(e) => onContextMenu(e, sketch)}
-        onMouseDown={(e) => e.stopPropagation()}
-    >
-        <div className="w-full h-full bg-black/40 rounded-lg overflow-hidden pointer-events-none border border-white/5">
-            {sketch.imageUrl ? (
-                <div
-                    className="w-full h-full bg-contain bg-no-repeat bg-center"
-                    style={{ backgroundImage: `url(${sketch.imageUrl})` }}
-                    role="img"
-                    aria-label={sketch.prompt}
-                ></div>
-            ) : (
-                <div className="w-full h-full flex items-center justify-center">
-                    <div className="w-6 h-6 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
-                </div>
-            )}
+    onDrop: (e: React.DragEvent, sketch: Sketch) => void;
+}> = ({ sketch, isDragging, onContextMenu, onDragStart, onDragEnd, onDrop }) => {
+    const [isDragOver, setIsDragOver] = useState(false);
+
+    const handleDragOver = (e: React.DragEvent) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const isAsset = e.dataTransfer.types.includes('application/json;type=asset-ids');
+        const isFile = e.dataTransfer.types.includes('Files');
+        const isSketchId = e.dataTransfer.types.includes('application/json;type=sketch-id');
+        const isFrameId = e.dataTransfer.types.includes('application/json;type=frame-id');
+
+        if (isAsset || isFile || isSketchId || isFrameId) {
+             // Don't show drop state if dragging self
+            if (isSketchId && e.dataTransfer.getData('application/json;type=sketch-id') === sketch.id) {
+                e.dataTransfer.dropEffect = 'none';
+                setIsDragOver(false);
+                return;
+            }
+            e.dataTransfer.dropEffect = 'copy';
+            setIsDragOver(true);
+        }
+    };
+
+    const handleDragLeave = (e: React.DragEvent) => {
+        e.preventDefault();
+        e.stopPropagation();
+        setIsDragOver(false);
+    };
+
+    const handleDrop = (e: React.DragEvent) => {
+        e.preventDefault();
+        e.stopPropagation();
+        setIsDragOver(false);
+        onDrop(e, sketch);
+    };
+
+    return (
+        <div
+            className={`absolute group glass-panel p-2 pb-8 rounded-xl ${isDragging ? 'opacity-50 grayscale z-50' : 'hover:border-primary/30 hover:shadow-neon hover:z-20'} cursor-grab active:cursor-grabbing`}
+            style={{
+                left: sketch.position.x,
+                top: sketch.position.y,
+                width: sketch.size.width,
+                height: sketch.size.height,
+            }}
+            draggable={true}
+            onDragStart={(e) => onDragStart(e, sketch)}
+            onDragEnd={onDragEnd}
+            onContextMenu={(e) => onContextMenu(e, sketch)}
+            onMouseDown={(e) => e.stopPropagation()}
+            onDragOver={handleDragOver}
+            onDragLeave={handleDragLeave}
+            onDrop={handleDrop}
+        >
+            <div className="w-full h-full bg-black/40 rounded-lg overflow-hidden pointer-events-none border border-white/5 relative">
+                {sketch.isGenerating ? (
+                    <div className="absolute inset-0 z-30 flex flex-col items-center justify-center bg-black/60 backdrop-blur-sm">
+                        <div className="w-8 h-8 border-2 border-primary border-t-transparent rounded-full animate-spin mb-2"></div>
+                        <p className="text-[10px] font-bold text-white/80 animate-pulse">{sketch.generatingMessage || 'Обработка...'}</p>
+                    </div>
+                ) : null}
+                
+                {sketch.imageUrl ? (
+                    <div
+                        className="w-full h-full bg-contain bg-no-repeat bg-center"
+                        style={{ backgroundImage: `url(${sketch.imageUrl})` }}
+                        role="img"
+                        aria-label={sketch.prompt}
+                    ></div>
+                ) : (
+                    <div className="w-full h-full flex items-center justify-center">
+                        <div className="w-6 h-6 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
+                    </div>
+                )}
+                
+                {isDragOver && !sketch.isGenerating && (
+                    <div className="absolute inset-0 z-20 bg-primary/20 backdrop-blur-sm border-2 border-primary flex flex-col items-center justify-center text-white animate-pulse rounded-lg">
+                        <span className="material-symbols-outlined text-4xl drop-shadow-glow">add_photo_alternate</span>
+                        <p className="text-xs font-bold mt-1 drop-shadow-md">Интеграция</p>
+                    </div>
+                )}
+            </div>
+            <p className="absolute bottom-2 left-3 right-3 text-center text-[11px] font-medium text-white/70 truncate pointer-events-none font-display tracking-wide">{sketch.prompt}</p>
         </div>
-        <p className="absolute bottom-2 left-3 right-3 text-center text-[11px] font-medium text-white/70 truncate pointer-events-none font-display tracking-wide">{sketch.prompt}</p>
-    </div>
-);
+    );
+};
 
 
 // --- Note Card Component ---
@@ -305,7 +360,7 @@ const sketchToFrame = (sketch: Sketch): Frame => ({
     duration: 3.0,
     file: sketch.file,
     aspectRatio: sketch.aspectRatio,
-    isGenerating: false,
+    isGenerating: sketch.isGenerating,
 });
 
 export default function App() {
@@ -501,7 +556,7 @@ export default function App() {
         }
         const framesToSave = localFrames.map(({ file, ...rest }) => ({ ...rest, isGenerating: undefined, generatingMessage: undefined }));
         const assetsToSave = localAssets.map(({ file, ...rest }) => rest);
-        const sketchesToSave = localSketches.map(({ file, ...rest }) => rest);
+        const sketchesToSave = localSketches.map(({ file, ...rest }) => ({ ...rest, isGenerating: undefined, generatingMessage: undefined }));
         const updatedProject = { ...currentProject, frames: framesToSave, assets: assetsToSave, sketches: sketchesToSave, notes: localNotes, dossiers: localDossiers, lastModified: Date.now() };
         const updatedProjects = projects.map(p => p.id === currentProject.id ? updatedProject : p);
         setProjects(updatedProjects);
@@ -512,7 +567,7 @@ export default function App() {
 
     const handleSaveAs = (newName: string) => {
         if (!currentProject) return;
-        const projectToSave: Project = { ...currentProject, id: currentProject.id === DEMO_PROJECT_ID ? crypto.randomUUID() : currentProject.id, name: newName, frames: localFrames.map(({ file, ...rest }) => ({...rest, isGenerating: undefined, generatingMessage: undefined })), assets: localAssets.map(({ file, ...rest }) => rest), sketches: localSketches.map(({ file, ...rest}) => rest), notes: localNotes, dossiers: localDossiers, lastModified: Date.now() };
+        const projectToSave: Project = { ...currentProject, id: currentProject.id === DEMO_PROJECT_ID ? crypto.randomUUID() : currentProject.id, name: newName, frames: localFrames.map(({ file, ...rest }) => ({...rest, isGenerating: undefined, generatingMessage: undefined })), assets: localAssets.map(({ file, ...rest }) => rest), sketches: localSketches.map(({ file, ...rest}) => ({ ...rest, isGenerating: undefined, generatingMessage: undefined })), notes: localNotes, dossiers: localDossiers, lastModified: Date.now() };
         const updatedProjects = projects.some(p => p.id === projectToSave.id) ? projects.map(p => p.id === projectToSave.id ? projectToSave : p) : [...projects, projectToSave];
         setProjects(updatedProjects);
         setCurrentProjectId(projectToSave.id);
@@ -592,7 +647,6 @@ export default function App() {
             
             if (isAdaptationRetry) {
                 const knownCharacterRef = dossier ? { originalUrl: '', adaptedUrl: dossier.referenceImageUrl, characterDescription: dossier.characterDescription } : null;
-                // Pass all frames to give context, and the ref if known
                 result = await adaptImageToStory(frame, localFrames, "Retry adaptation", knownCharacterRef);
             } else {
                 result = await regenerateFrameImage(frame, localFrames);
@@ -604,17 +658,11 @@ export default function App() {
             updateFrames(prev => prev.map(f => {
                 if (f.id === frameId) {
                     const newImageUrls = [...f.imageUrls, imageUrl];
-                    // IMPORTANT: Keep sourceHash to maintain identity connection!
                     return { ...f, imageUrls: newImageUrls, activeVersionIndex: newImageUrls.length - 1, prompt: newPrompt, file: newFile, isGenerating: false, generatingMessage: undefined, hasError: false, sourceHash: f.sourceHash };
                 }
                 return f;
             }));
             
-             if (analysis && frame.sourceHash) {
-                 // We should not update the dossier reference image here on simple regenerate unless it was a direct adaptation flow.
-                 // For now, keeping it safe.
-             }
-
         } catch (error) { updateFrames(prev => prev.map(f => f.id === frameId ? { ...f, isGenerating: false, generatingMessage: 'Ошибка', hasError: true } : f)); alert(`Не удалось перегенерировать кадр: ${error instanceof Error ? error.message : String(error)}`); }
     }, [localFrames, updateFrames, localDossiers, updateDossiers]);
 
@@ -680,15 +728,13 @@ export default function App() {
             try {
                 let knownCharacterRef: { originalUrl: string, adaptedUrl: string, characterDescription: string } | null = null;
                 let fileHash = frameToAdapt.sourceHash || '';
-                const originalUrl = frameToAdapt.imageUrls[0]; // Store the original for reference identity
+                const originalUrl = frameToAdapt.imageUrls[0]; 
 
-                // If missing hash but has file, calculate it
                 if (frameToAdapt.file && !fileHash) { fileHash = await calculateFileHash(frameToAdapt.file); }
                 
                 if (fileHash) {
                      const dossier = localDossiers.find(d => d.sourceHash === fileHash);
                      if (dossier) {
-                        // Use the dossier's reference image (which should be the original or best representation)
                         knownCharacterRef = { originalUrl: '', adaptedUrl: dossier.referenceImageUrl, characterDescription: dossier.characterDescription };
                         updateFrames(prev => prev.map(f => f.id === targetId ? { ...f, generatingMessage: `${dossier.roleLabel || 'Персонаж'} опознан. Адаптация...` } : f));
                      } else { updateFrames(prev => prev.map(f => f.id === targetId ? { ...f, generatingMessage: 'Интеграция в сюжет...' } : f)); }
@@ -702,29 +748,23 @@ export default function App() {
                 updateFrames(prev => prev.map(f => { 
                     if (f.id === targetId) { 
                         const newImageUrls = [...f.imageUrls, newImageUrl]; 
-                        // CRITICAL: Copy sourceHash from original to maintain identity
                         return { ...f, imageUrls: newImageUrls, activeVersionIndex: newImageUrls.length - 1, prompt: newPrompt, file: newFile, isGenerating: false, generatingMessage: undefined, sourceHash: f.sourceHash, hasError: false }; 
                     } 
                     return f; 
                 }));
                 
-                // Create or update dossier if Director returned analysis
                 if (fileHash && analysis) {
-                    // Use the ORIGINAL URL as reference to maintain identity, NOT the adapted one.
-                    // The adapted one is good for style, but the original is the source of truth for facial features.
                     const newDossier: ActorDossier = { 
                         sourceHash: fileHash, 
                         characterDescription: analysis.subjectIdentity, 
                         roleLabel: analysis.roleLabel, 
                         type: analysis.subjectType, 
-                        referenceImageUrl: originalUrl, // KEEP ORIGINAL SOURCE AS REFERENCE
+                        referenceImageUrl: originalUrl, 
                         lastUsed: Date.now() 
                     };
                     updateDossiers(prev => { 
                         const existingIndex = prev.findIndex(d => d.sourceHash === fileHash); 
                         if (existingIndex !== -1) { 
-                            // We only update stats, we DO NOT overwrite the reference image if it already exists, 
-                            // to prevent identity drift.
                             const updated = [...prev]; 
                             updated[existingIndex] = { ...updated[existingIndex], lastUsed: Date.now() }; 
                             return updated; 
@@ -804,6 +844,54 @@ export default function App() {
         const target = 'imageUrls' in targetFrameOrSketch ? targetFrameOrSketch : sketchToFrame(targetFrameOrSketch);
         setIntegrationConfig({ targetFrame: target }); setIsIntegrationModalOpen(true); 
     };
+    
+    const handleSketchDrop = useCallback(async (e: React.DragEvent, targetSketch: Sketch) => {
+        e.preventDefault();
+        e.stopPropagation();
+
+        const sketchId = e.dataTransfer.getData('application/json;type=sketch-id');
+        const frameId = e.dataTransfer.getData('application/json;type=frame-id');
+        const assetIdsJson = e.dataTransfer.getData('application/json;type=asset-ids');
+        const files = e.dataTransfer.files;
+
+        let sourceAsset: { id?: string, imageUrl: string, file: File, name: string } | null = null;
+
+        if (sketchId && sketchId !== targetSketch.id) {
+            const source = localSketches.find(s => s.id === sketchId);
+            if (source && source.file) {
+                sourceAsset = { id: source.id, imageUrl: source.imageUrl, file: source.file, name: source.prompt };
+            }
+        } else if (frameId) {
+            const source = localFrames.find(f => f.id === frameId);
+            if (source && source.file) {
+                 const url = source.imageUrls[source.activeVersionIndex];
+                 sourceAsset = { id: source.id, imageUrl: url, file: source.file, name: source.prompt || 'Frame' };
+            }
+        } else if (assetIdsJson) {
+            try {
+                const assetIds = JSON.parse(assetIdsJson);
+                if (Array.isArray(assetIds) && assetIds.length > 0) {
+                    const asset = localAssets.find(a => a.id === assetIds[0]);
+                    if (asset) {
+                         sourceAsset = asset;
+                    }
+                }
+            } catch(e) {}
+        } else if (files && files.length > 0) {
+            const file = Array.from(files).find(f => f.type.startsWith('image/'));
+            if (file) {
+                 const imageUrl = await fileToBase64(file);
+                 sourceAsset = { imageUrl, file, name: file.name };
+            }
+        }
+
+        if (sourceAsset) {
+            const targetFrame = sketchToFrame(targetSketch);
+            setIntegrationConfig({ sourceAsset, targetFrame });
+            setIsIntegrationModalOpen(true);
+        }
+
+    }, [localSketches, localFrames, localAssets]);
 
     // Async handler for integration that runs in background after modal closes
     const handlePerformIntegration = useCallback(async (instruction: string, mode: string) => {
@@ -811,18 +899,21 @@ export default function App() {
         const { sourceAsset, targetFrame } = integrationConfig;
         const t = targetFrame.id;
         
-        // 1. Close Modal Immediately
         setIsIntegrationModalOpen(false);
         setIntegrationConfig(null);
 
-        // 2. Set loading state on frame
-        updateFrames(p => p.map(fr => fr.id === t ? { ...fr, isGenerating: true, generatingMessage: 'Интеграция объекта...', hasError: false } : fr));
+        const isFrame = localFrames.some(f => f.id === t);
+        const isSketch = localSketches.some(s => s.id === t);
+
+        if (isFrame) {
+            updateFrames(p => p.map(fr => fr.id === t ? { ...fr, isGenerating: true, generatingMessage: 'Интеграция объекта...', hasError: false } : fr));
+        } else if (isSketch) {
+            updateSketches(p => p.map(s => s.id === t ? { ...s, isGenerating: true, generatingMessage: 'Интеграция объекта...' } : s));
+        }
         
         try {
-             // 3. Perform Integration API Call
              const sourceAssetSafe = sourceAsset as { imageUrl: string; file: File; name: string }; // Type guard
              
-             // Check for existing dossier via Source Hash
              let sourceHash = '';
              let existingDossier: ActorDossier | undefined;
              if (sourceAssetSafe.file) {
@@ -832,14 +923,13 @@ export default function App() {
 
              const result = await integrateAssetIntoFrame(sourceAssetSafe, targetFrame, instruction, mode, existingDossier);
              
-             // 4. Handle Dossier creation/update
              if (result.analysis && sourceHash) {
                 const newDossier: ActorDossier = {
                     sourceHash: sourceHash,
                     characterDescription: result.analysis.description,
                     roleLabel: result.analysis.roleLabel,
                     type: result.analysis.type,
-                    referenceImageUrl: sourceAssetSafe.imageUrl, // Use source as reference identity
+                    referenceImageUrl: sourceAssetSafe.imageUrl,
                     lastUsed: Date.now()
                 };
                 
@@ -847,48 +937,60 @@ export default function App() {
                     const existingIndex = prev.findIndex(d => d.sourceHash === sourceHash);
                     if (existingIndex !== -1) {
                         const updated = [...prev];
-                        updated[existingIndex] = { ...updated[existingIndex], lastUsed: Date.now() };
+                        updated[existingIndex] = { ...updated[existingIndex], lastUsed: Date.now() }; 
                         return updated;
                     }
                     return [...prev, newDossier];
                 });
              }
 
-             // 5. Update Frame with Result AND update SourceHash to match the integrated object for recognition
              const f = dataUrlToFile(result.imageUrl, `integrated-${t}-${Date.now()}.png`); 
-             let updated = false;
              
-             updateFrames(p => p.map(fr => { 
-                 if (fr.id === t) { 
-                     const niu = [...fr.imageUrls, result.imageUrl]; 
-                     return { 
-                         ...fr, 
-                         imageUrls: niu, 
-                         activeVersionIndex: niu.length - 1, 
-                         file: f, 
-                         prompt: result.prompt, 
-                         isTransition: false, 
-                         isGenerating: false, 
-                         // IMPORTANT: Update sourceHash to the Integrated Object's hash so the badge appears
-                         sourceHash: sourceHash || fr.sourceHash, 
-                         hasError: false 
-                    }; 
-                 } 
-                 return fr; 
-            })); 
-            updated = true; // Assuming frame exists if we got here
-
-            if (!updated) { 
-                // Fallback for sketches?
-                updateSketches(prev => prev.map(s => { if (s.id === t) { return { ...s, imageUrl: result.imageUrl, file: f, prompt: result.prompt }; } return s; })); 
-            }
+             if (isFrame) {
+                 updateFrames(p => p.map(fr => { 
+                     if (fr.id === t) { 
+                         const niu = [...fr.imageUrls, result.imageUrl]; 
+                         return { 
+                             ...fr, 
+                             imageUrls: niu, 
+                             activeVersionIndex: niu.length - 1, 
+                             file: f, 
+                             prompt: result.prompt, 
+                             isTransition: false, 
+                             isGenerating: false, 
+                             sourceHash: sourceHash || fr.sourceHash, 
+                             hasError: false 
+                        }; 
+                     } 
+                     return fr; 
+                }));
+             } else if (isSketch) {
+                 updateSketches(p => p.map(s => {
+                     if (s.id === t) {
+                         return {
+                             ...s,
+                             imageUrl: result.imageUrl,
+                             file: f,
+                             prompt: result.prompt,
+                             isGenerating: false,
+                             generatingMessage: undefined
+                         };
+                     }
+                     return s;
+                 }));
+             }
 
         } catch (err) {
+             const msg = 'Ошибка интеграции';
+             if (isFrame) {
+                 updateFrames(p => p.map(fr => fr.id === t ? { ...fr, isGenerating: false, generatingMessage: msg, hasError: true } : fr));
+             } else if (isSketch) {
+                 updateSketches(p => p.map(s => s.id === t ? { ...s, isGenerating: false, generatingMessage: msg } : s));
+             }
              alert(`Не удалось выполнить интеграцию: ${err instanceof Error ? err.message : String(err)}`);
-             updateFrames(p => p.map(fr => fr.id === t ? { ...fr, isGenerating: false, generatingMessage: 'Ошибка интеграции', hasError: true } : fr));
         }
 
-    }, [integrationConfig, updateFrames, updateSketches, updateDossiers, localDossiers]);
+    }, [integrationConfig, updateFrames, updateSketches, updateDossiers, localDossiers, localFrames, localSketches]);
 
 
     const handleStartIntegrationFromSketch = useCallback((sourceSketchId: string, targetFrameId: string) => {
@@ -1217,6 +1319,7 @@ export default function App() {
                                 onContextMenu={handleSketchContextMenu}
                                 onDragStart={handleSketchDragStart}
                                 onDragEnd={handleSketchDragEnd}
+                                onDrop={handleSketchDrop}
                             />
                          </div>
                     ))}
