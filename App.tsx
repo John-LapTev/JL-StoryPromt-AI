@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useCallback, useMemo, useRef, useLayoutEffect } from 'react';
 import type { Frame, Project, Asset, StorySettings, IntegrationConfig, Sketch, Note, Position, Size, AppSettings, ActorDossier } from './types';
 import { initialFrames, initialAssets } from './constants';
@@ -1181,7 +1182,6 @@ export default function App() {
                          const globalIndex = localFrames.findIndex(f => f.id === targetId);
                          if(globalIndex !== -1) {
                             setViewingFrameIndex(globalIndex);
-                            setSelectedDossierData(null);
                          }
                     }}
                 />

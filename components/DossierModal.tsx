@@ -1,3 +1,4 @@
+
 import React from 'react';
 import type { ActorDossier, Frame } from '../types';
 
@@ -49,15 +50,19 @@ export const DossierModal: React.FC<DossierModalProps> = ({ dossier, relatedFram
                         {/* Left Column: Reference Image */}
                         <div className="w-full md:w-1/3 shrink-0 flex flex-col gap-3">
                             <div className="text-xs font-bold text-white/50 uppercase tracking-wider">Референс</div>
-                            <div className="w-full aspect-square rounded-xl overflow-hidden border-2 border-white/10 bg-black/30 shadow-lg relative group">
+                            {/* Resizable container with resize-y */}
+                            <div className="w-full h-72 min-h-[200px] rounded-xl overflow-hidden border-2 border-white/10 bg-black/50 shadow-lg relative group resize-y">
                                 <img 
                                     src={dossier.referenceImageUrl} 
                                     alt="Reference" 
-                                    className="w-full h-full object-cover"
+                                    className="w-full h-full object-contain"
                                 />
-                                <div className="absolute inset-0 bg-gradient-to-t from-black/80 to-transparent opacity-60"></div>
-                                <div className="absolute bottom-3 left-3 right-3">
-                                    <p className="text-[10px] text-white/60 font-mono">ORIGINAL SOURCE</p>
+                                <div className="absolute bottom-3 left-3 right-3 pointer-events-none">
+                                    <p className="text-[10px] text-white/40 font-mono bg-black/60 inline-block px-1 rounded">ORIGINAL SOURCE</p>
+                                </div>
+                                {/* Resize handle hint */}
+                                <div className="absolute bottom-1 right-1 pointer-events-none opacity-50">
+                                     <span className="material-symbols-outlined text-[12px] text-white/50 rotate-45">open_in_full</span>
                                 </div>
                             </div>
                         </div>
@@ -102,16 +107,16 @@ export const DossierModal: React.FC<DossierModalProps> = ({ dossier, relatedFram
                                     <button 
                                         key={frame.id}
                                         onClick={() => onJumpToFrame(idx)}
-                                        className="relative shrink-0 w-32 aspect-video rounded-lg border border-white/10 hover:border-primary hover:scale-105 transition-all duration-200 group shadow-md hover:shadow-neon"
+                                        className="relative shrink-0 w-32 h-32 rounded-lg border border-white/10 hover:border-primary hover:scale-105 transition-all duration-200 group shadow-md hover:shadow-neon bg-black/40 overflow-hidden"
                                     >
-                                        <div className="w-full h-full rounded-lg overflow-hidden">
+                                        <div className="w-full h-full flex items-center justify-center">
                                              <img 
                                                 src={frame.imageUrls[frame.activeVersionIndex]} 
                                                 alt={`Scene ${idx}`} 
-                                                className="w-full h-full object-cover"
+                                                className="w-full h-full object-contain"
                                             />
                                         </div>
-                                        <div className="absolute inset-0 bg-black/40 group-hover:bg-transparent transition-colors rounded-lg pointer-events-none"></div>
+                                        <div className="absolute inset-0 bg-white/5 group-hover:bg-transparent transition-colors pointer-events-none"></div>
                                         <div className="absolute top-1 left-1 text-[9px] font-bold bg-black/60 px-1.5 py-0.5 rounded text-white border border-white/10 shadow-sm">
                                             #{globalIndex}
                                         </div>
